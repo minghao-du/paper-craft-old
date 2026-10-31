@@ -479,3 +479,16 @@ For managed execution, public runtime `waitAttempt` records bounded wait timeout
 For a requested Issue/EPIC, use `pc workflow orchestrator start <issue> --provider <codex|agy|claude> --config <authoritative-config>`. Inspect with `pc workflow orchestrator status --config <authoritative-config>`. Intake is complete when the registry links the requested subject, fixed provider, immutable brief and acknowledged Orchestrator attempt. A reserved or blocked Run is pending, not a successful startup. Repeated intake reconnects it; never remove reservations to force a replacement. Each Run has its own Orchestrator reservation; unrelated Runs may progress concurrently. Shared physical checkout ownership remains exclusive. Existing `workflow orchestrator` operations remain available for legacy callers; missing legacy Run identity stays unknown. The shared launch/evidence contract is implemented by Managed Runtime; role procedures must not infer acceptance from tmux presence.
 
 For stage dispatch, durable reporting and acceptance, follow [the shared managed lifecycle](managed-lifecycle.md). A reported result is pending until independently accepted; only accepted prerequisites permit dependent dispatch.
+
+### Lightweight worker dispatch
+
+After intake, use `pc worker spawn <issue-id> <role> --run <run-id>`.
+Use `--runner <command>` only to override the Run's runner. `--root <directory>`
+and `--fleet <id>` select the same runtime location used at intake. The default
+runner receives the immutable `BRIEF.md` path as its final argument; use a wrapper
+command when a runner expects prompt contents instead. Dispatch allocates a Git
+worktree and launches the command in tmux. Each issue/role holds a directory lock;
+never remove an occupied lock to force another launch. Read `dispatch.json` for
+worktree, pane, and receipt paths. Workers publish `RECEIPT.md` atomically with
+outcome, summary, tested revision, and validation evidence. Launch failures retain
+state and locks for inspection rather than claiming the slot is free.
