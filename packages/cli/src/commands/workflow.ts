@@ -21,7 +21,7 @@ import {
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { managedRunner } from '@paper-craft/core/workflow/runtime';
 import { inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
-import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
+import { readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { inspectIssueRun } from '@paper-craft/core/workflow/issue-driver';
 import { readFileSync, existsSync } from 'node:fs';
@@ -208,37 +208,12 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     orchestrator
       .command('issue <number>')
-      .description('Deliver only the requested Issue, retaining parent constraints'),
-  ).action(async (number: string, options: Options) => {
-    try {
-      const config = loadFleetConfig(options.config);
-      const issue = readIssue(config.project, Number(number));
-      const runner = managedRunner(
-        orchestratorForSubject(config, issue.repository, issue.number).runner,
-      );
-      const task = await driveIssue(config, runner, issue);
-      output(
-        await landDelivery(
-          config,
-          runner,
-          new GitHubPullRequests(
-            existsSync(task.checkout) ? task.checkout : config.project,
-            issue.repository,
-          ),
-          {
-            repository: issue.repository,
-            issue: issue.number,
-            checkout: task.checkout,
-          },
-        ),
-
-        opts.human(),
-      );
-    } catch (error) {
-      run(() => {
-        throw error;
-      });
-    }
+      .description('Deprecated: use pc-orchestrator and pc run create'),
+  ).action(() => {
+    console.error(
+      'workflow orchestrator issue is deprecated. Use pc-orchestrator with pc run create --issue <number> --runner <command>.',
+    );
+    process.exitCode = 2;
   });
   configured(
     orchestrator
