@@ -9,4 +9,7 @@ while [ -L "$PC_ENTRY" ]; do
   esac
 done
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$PC_ENTRY")" && pwd -P) || exit 1
+case "${1-}" in
+  run) shift; exec bash "$SCRIPT_DIR/scripts/pc-run.sh" "$@" ;;
+esac
 exec "$SCRIPT_DIR/node_modules/.bin/tsx" --conditions=paper-craft-source "$SCRIPT_DIR/packages/cli/src/main.ts" "$@"
