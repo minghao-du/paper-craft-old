@@ -508,3 +508,15 @@ Inspection never consumes receipts. After reviewing and acting on one, use
 `pc worker status <run-id> --ack <dispatch-id>` to record consumption.
 An `in-flight` attempt has no completion evidence yet; use `pc worker wait`
 to establish liveness and synthesize crash evidence for terminated workers.
+### Verified worker landing
+
+Use `pc pr ready-and-merge <pr-id> --dispatch <dispatch-id> --tested-head <full-sha>`
+with optional `--root <directory>`. Independently validate that revision first;
+the succeeded worker receipt must identify it. Landing requires a clean worker
+worktree at that HEAD, verified termination, matching issue/role lock ownership,
+an open ready PR on the worker branch, and passing required checks. A second
+landing cannot run concurrently. The command creates and verifies a Git bundle,
+archives the dispatch/receipt/worklog, then squash merges with GitHub's matching
+HEAD gate and removes the worktree and its owned lock. Failures retain evidence
+and resources for inspection; never force cleanup after an ambiguous merge.
+

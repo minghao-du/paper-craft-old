@@ -11,6 +11,7 @@ done
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$PC_ENTRY")" && pwd -P) || exit 1
 case "${1-}" in
   status) shift; exec bash "$SCRIPT_DIR/scripts/pc-worker-status.sh" "$@" ;;
+  pr) shift; exec bash "$SCRIPT_DIR/scripts/pc-pr-land.sh" "$@" ;;
   worker) shift; exec bash "$SCRIPT_DIR/scripts/pc-worker-spawn.sh" "$@" ;;
   run) shift; exec bash "$SCRIPT_DIR/scripts/pc-run.sh" "$@" ;;
 esac
