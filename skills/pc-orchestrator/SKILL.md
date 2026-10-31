@@ -499,3 +499,12 @@ terminates without a receipt, it publishes an immutable `outcome: crashed`
 receipt and exits nonzero. An unavailable liveness check reports an error and
 retains the dispatch; it does not prove a crash. Waiting again returns the
 existing receipt without replacing it. Review the outcome before accepting work.
+
+### Recover an interrupted session
+
+Run `pc worker status [run-id]` (or `pc status [run-id]`) with the intake
+`--root` and `--fleet` to inspect attempts and full unhandled receipts.
+Inspection never consumes receipts. After reviewing and acting on one, use
+`pc worker status <run-id> --ack <dispatch-id>` to record consumption.
+An `in-flight` attempt has no completion evidence yet; use `pc worker wait`
+to establish liveness and synthesize crash evidence for terminated workers.
