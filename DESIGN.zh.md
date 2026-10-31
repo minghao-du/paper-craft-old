@@ -32,7 +32,21 @@ Skills 以 TypeScript 模块编写——可测试、可调试且类型安全。s
 
 ## VII. 独立于运行时的工作流
 
-工作流逻辑通过 `pc` CLI 背后的 TypeScript、Git 和文件实现。JSON 输出和退出码是所有能读取文件、执行命令的 agent 共用的契约，不依赖模型或运行框架。Fleet 的终端编排可依赖 tmux 作为共享基础设施。agent runner 独立选择：tmux 管理终端会话，runner 提供自身的调用方式、提示输入与重置行为。Claude Code 不是必需的 runner。原生消息传递与 runner 专用会话 API 是可选能力。无需启动终端会话，Git/文件命令仍可使用。每个 Run 拥有唯一的 Orchestrator 调度权限，由恰好一个活跃的受管执行尝试承载。每个受管尝试都属于一个 Run。Fleet 是配置与资源边界，没有调度代理。Run Registry 以确定性规则仲裁资源；提供方在入口固定，之后从 Run 记录读取。受管启动、检查与恢复都要求指定 Run；批量恢复使用同一逐 Run 路径。不提供兼容入口，也不读取旧版运行时记录（见 [ADR 0002](docs/adr/0002-run-scoped-orchestrator.zh.md)）。无法进行占用检查意味着未知，绝不意味着空闲。在占用情况及所有保全、完成检查都得到验证之前，自动回收始终被阻止；可移植 CLI 提供只读证据。
+交互式 Orchestrator agent 决定调度、验收和返工。
+轻量 Bash 命令通过 `pc` 执行 Git worktree、tmux 和 GitHub 操作；
+小型 JavaScript 辅助程序验证并持久化 JSON 状态。Run 入口记录
+议题、透明的 runner 命令及对话中的补充要求。Fleet 是
+运行时资源边界，不是调度代理。
+
+Worker 接收不可变的任务说明文件，并发布持久化的 `RECEIPT.md` 结果。
+同步等待检测已确认的提前退出；状态查看在重新连接时显示尚未处理的结果。
+Runner 命令独立于平台；需要时可通过包装脚本适配提示输入。
+Claude Code 不是必需的。自主执行的
+`workflow orchestrator issue` 驱动已弃用。
+
+Worktree 和目录锁隔离并发 worker。未知占用状态绝不意味着空闲。
+落地时验证已测试的 PR HEAD 和检查结果，保全证据，
+仅在合并得到确认后释放 worktree。
 
 ## VIII. 宿主适配器依赖 Core
 

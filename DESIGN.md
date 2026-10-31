@@ -57,25 +57,21 @@ when behavior changes, skill docs MUST update in the same PR.
 
 ## VII. Runtime-Independent Workflows
 
-Workflow logic uses TypeScript, Git and files behind the `pc` CLI.
-JSON output and exit codes are the shared contract for any agent that can read
-files and execute commands, regardless of model or harness.
-Fleet terminal orchestration may depend on tmux as shared infrastructure.
-The agent runner is selected independently: tmux manages terminal sessions,
-while the runner supplies its own invocation, prompt input and reset behavior.
-Claude Code is not a required runner.
-Native messaging and runner-specific session APIs are optional capabilities.
-Git/file commands remain usable without starting a terminal session.
-Each Run has one Orchestrator authority, materialized by exactly one active managed
-attempt. Every managed attempt belongs to a Run. Fleet is a configuration and
-resource boundary, with no scheduling agent. The Run Registry arbitrates resources
-deterministically; provider is fixed at intake and read from the Run thereafter.
-Managed start, inspect and recovery require a Run; batch recovery uses that same
-per-Run path. There are no compatibility entry points or legacy runtime reads
-(see [ADR 0002](docs/adr/0002-run-scoped-orchestrator.md)).
-An unavailable occupancy check means unknown, never free.
-Automatic reclaim remains blocked until occupancy and all preservation and
-completion checks are verified; the portable CLI provides read-only evidence.
+The interactive Orchestrator agent makes scheduling, acceptance and rework decisions.
+Lightweight Bash commands execute Git worktree, tmux and GitHub operations behind
+`pc`; small JavaScript helpers validate and persist JSON state. Run intake records
+the issue, transparent runner command and conversational requirements. Fleet is a
+runtime resource boundary, not a scheduling agent.
+
+Workers receive immutable brief files and publish durable `RECEIPT.md` results.
+Synchronous wait detects verified premature exits; status exposes unhandled results
+on reconnect. Runner commands are platform independent; wrappers adapt prompt input
+when needed. Claude Code is not required. The autonomous
+`workflow orchestrator issue` driver is deprecated.
+
+Worktrees and directory locks isolate concurrent workers. Unknown occupancy never
+means free. Landing verifies the tested PR HEAD and checks, preserves evidence,
+then releases the worktree only after a verified merge.
 
 ## VIII. Host Adapters Depend on Core
 
