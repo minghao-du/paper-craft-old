@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+if [ "${1-}" = status ]; then shift; exec bash "$SCRIPT_DIR/pc-worker-status.sh" "$@"; fi
 usage() {
   cat <<'HELP'
 Usage: pc worker wait <dispatch-id> [--root <dir>] [--fleet <id>]
