@@ -14,6 +14,18 @@ Legacy execution follows its recorded scheduling and approval policy.
 Use this skill at cold start and every reconciliation to inventory clones, tmux and
 hosts. Topic decomposition, readiness and confirmation belong to `/pc-epic`.
 
+## Lightweight Run intake
+
+Create file-based intake without launching an agent:
+`pc run create --issue <number> --runner '<command>' [--instructions '<text>']`.
+Repeat `--instructions` to preserve each conversational requirement. The runner is an
+opaque shell command; intake never invokes it or selects a platform adapter.
+Inspect with `pc run inspect <run-id>`. Both commands accept `--root <directory>`
+(default current directory) and `--fleet <id>` (default `default`). State lives in
+`<root>/.runtime/<fleet>/runs/<run-id>/run.json`; keep the returned Run identity
+for downstream dispatches. The record contains `run_id`, `issue_id`, `runner_cmd`,
+`custom_instructions` and `created_at`.
+
 ## Managed startup
 
 Start a Run with `pc workflow orchestrator start <issue> --provider <codex|agy|claude> --config <authoritative-config>`.
