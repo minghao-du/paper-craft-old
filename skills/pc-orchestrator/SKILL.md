@@ -499,3 +499,16 @@ terminates without a receipt, it publishes an immutable `outcome: crashed`
 receipt and exits nonzero. An unavailable liveness check reports an error and
 retains the dispatch; it does not prove a crash. Waiting again returns the
 existing receipt without replacing it. Review the outcome before accepting work.
+
+### Verified worker landing
+
+Use `pc pr ready-and-merge <pr-id> --dispatch <dispatch-id> --tested-head <full-sha>`
+with optional `--root <directory>`. Independently validate that revision first;
+the succeeded worker receipt must identify it. Landing requires a clean worker
+worktree at that HEAD, verified termination, matching issue/role lock ownership,
+an open ready PR on the worker branch, and passing required checks. A second
+landing cannot run concurrently. The command creates and verifies a Git bundle,
+archives the dispatch/receipt/worklog, then squash merges with GitHub's matching
+HEAD gate and removes the worktree and its owned lock. Failures retain evidence
+and resources for inspection; never force cleanup after an ambiguous merge.
+
