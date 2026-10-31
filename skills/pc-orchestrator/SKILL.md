@@ -492,3 +492,10 @@ never remove an occupied lock to force another launch. Read `dispatch.json` for
 worktree, pane, and receipt paths. Workers publish `RECEIPT.md` atomically with
 outcome, summary, tested revision, and validation evidence. Launch failures retain
 state and locks for inspection rather than claiming the slot is free.
+
+Wait with `pc worker wait <dispatch-id> [--root <directory>] [--fleet <id>]`.
+It prints the published receipt to stdout. If the runner exits or its tmux pane
+terminates without a receipt, it publishes an immutable `outcome: crashed`
+receipt and exits nonzero. An unavailable liveness check reports an error and
+retains the dispatch; it does not prove a crash. Waiting again returns the
+existing receipt without replacing it. Review the outcome before accepting work.
