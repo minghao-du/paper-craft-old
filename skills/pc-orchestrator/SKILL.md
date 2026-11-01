@@ -35,6 +35,8 @@ pc workflow orchestrator status --config /absolute/path/.epic-config.json
 ```
 
 Retain the Run identity and assignment-bound requirements in its durable context; reconnect to existing ownership rather than allocating a second driver.
+For agy, this caller becomes the initial Orchestrator through the current-conversation registration and activation in [agy procedure](agy-interactive.md). Codex and Claude retain controlled startup.
+
 The startup, provider and ownership gates in the execution contract determine whether dispatch is available.
 
 **Done:** Type, repository/number, authorized scope, provider, config and owning Run are resolved, and persisted assignment context includes every additional requirement.

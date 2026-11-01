@@ -114,9 +114,66 @@ export class AgyInteractive {
     }
   }
 
+  /** Organize the verified current window without starting another execution. */
+  adopt(a: ManagedAttempt): void {
+    const pane = a.address?.slice(5);
+    if (!a.run || !pane) throw new Error('Missing current Run/pane identity');
+    const tmux = (args: string[]) => execFileSync('tmux', args, { encoding: 'utf8' }).trim();
+    const [actual, count, source, window] = tmux([
+      'display-message',
+      '-p',
+      '-t',
+      pane,
+      '#{pane_id} #{window_panes} #{session_name} #{window_id}',
+    ]).split(' ');
+    if (actual !== pane || count !== '1') throw new Error('Expected current single-pane window');
+    const target = `pc-run-${a.run}`;
+    const sessions = tmux(['list-sessions', '-F', '#{session_name} #{@pc_run_id}']).split('\n');
+    const sourceEntry = sessions.find((line) => line.split(' ')[0] === source);
+    if (source !== target && sourceEntry?.split(' ')[1])
+      throw new Error('Current pane has unresolved Run ownership');
+    const existing = sessions.find((line) => line.split(' ')[0] === target);
+    if (existing !== undefined && existing !== `${target} ${a.run}`)
+      throw new Error('Run session ownership missing or conflicting');
+    writeFileSync(
+      join(a.directory, 'takeover.json'),
+      JSON.stringify({ pane, source, window, target, run: a.run }),
+    );
+    if (source !== target) {
+      const windows = tmux(['list-windows', '-t', source, '-F', '#{window_id}']).split('\n');
+      if (!existing && windows.length === 1) {
+        tmux(['rename-session', '-t', source, target]);
+        tmux(['set-option', '-t', target, '@pc_run_id', a.run]);
+      } else {
+        if (!existing) {
+          tmux(['new-session', '-d', '-s', target]);
+          tmux(['set-option', '-t', target, '@pc_run_id', a.run]);
+        }
+        tmux([
+          'move-window',
+          ...(!existing ? ['-k'] : []),
+          '-s',
+          window,
+          '-t',
+          target + (!existing ? ':0' : ':'),
+        ]);
+      }
+    }
+    tmux(['rename-window', '-t', window, `orchestrator-${a.id.slice(0, 8)}`]);
+    a.terminalSession = target;
+    a.windowId = window;
+    a.paneId = pane;
+    writeFileSync(
+      join(a.directory, 'terminal.json'),
+      JSON.stringify({ address: a.address, conversation: a.conversation }),
+    );
+  }
+
   private native(a: ManagedAttempt): Record<string, string> | undefined {
     try {
-      const n = JSON.parse(readFileSync(join(a.directory, 'agy-native.json'), 'utf8'));
+      const n = JSON.parse(
+        readFileSync(join(a.preparation ?? a.directory, 'agy-native.json'), 'utf8'),
+      );
       return !a.conversation || n.conversation_id === a.conversation ? n : undefined;
     } catch {
       return undefined;

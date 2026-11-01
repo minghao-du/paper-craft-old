@@ -18,6 +18,9 @@ import type { FleetConfig } from '../fleet/fleet-config.js';
 /** One execution attempt; unknown retains occupancy until independently verified. */
 export interface ManagedAttempt {
   id: string;
+  /** User execution retained after Run completion. */
+  currentExecution?: boolean;
+  preparation?: string;
   fleet: string;
   /** Run ownership recorded at intake. */
   run?: string;
@@ -51,6 +54,15 @@ export interface ManagedAttempt {
 /** Adapter owns capability checks and evidence; a terminal alone is insufficient. */
 export interface RunnerAdapter {
   name: string;
+  /** Verify current agy execution before reserving any workflow state. */
+  current?(): {
+    conversation: string;
+    address: string;
+    directory: string;
+    transcript: string;
+    ownedRun?: string;
+  };
+  adopt?(attempt: ManagedAttempt): void;
   /** True only after the complete persistent interactive lifecycle is verified. */
   interactive?: boolean;
   /** Correlated input into the existing process; uncertainty forbids automatic replay. */
@@ -102,6 +114,7 @@ export async function startOrchestrator(
   runner: RunnerAdapter,
   brief: string,
   run: string,
+  current?: { conversation: string; address: string; directory: string; transcript: string },
   initialization?: Omit<RoleInitialization, 'role' | 'attempt' | 'briefHash'>,
 ): Promise<ManagedAttempt> {
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
@@ -136,7 +149,7 @@ export async function startOrchestrator(
   };
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   const path = join(home(config), `orchestrator-${run}.json`);
-  if (runner.result) {
+  if (runner.result || current) {
     if (!initialization)
       throw new Error('Persistent Orchestrator requires Run-derived initialization context');
     attempt.initialization = {
@@ -147,7 +160,30 @@ export async function startOrchestrator(
     };
     attempt.brief += initializationInstructions(attempt.initialization, directory);
   }
+  if (current)
+    Object.assign(attempt, {
+      currentExecution: true,
+      preparation: current.directory,
+      conversation: current.conversation,
+      address: current.address,
+    });
   save(path, attempt);
+  if (current) {
+    writeFileSync(
+      join(directory, 'agy-native.json'),
+      JSON.stringify({
+        conversation_id: current.conversation,
+        transcript_path: current.transcript,
+      }),
+    );
+    attempt.brief += `\nCurrent conversation initialization: include conversation=${current.conversation} in initialization.json, then run pc workflow orchestrator initialize ${run}.\n`;
+    writeFileSync(join(directory, 'brief.md'), attempt.brief);
+    runner.adopt!(attempt);
+    save(path, attempt);
+    save(join(directory, 'attempt.json'), attempt);
+    writeFileSync(join(directory, 'brief.md'), attempt.brief);
+    return attempt;
+  }
   writeFileSync(join(directory, 'brief.md'), attempt.brief, { mode: 0o600 });
   try {
     const receipt = await runner.start(attempt);
@@ -468,6 +504,20 @@ export class AgyRunner implements RunnerAdapter {
   readonly cancellation = true;
   readonly interactive = true;
   private readonly tui = new AgyInteractive();
+  current() {
+    if (!process.env.PC_AGY_PREPARATION)
+      throw new Error('Reopen with pc workflow agy prepare inside tmux');
+    const current = this.tui.prepared(process.env.PC_AGY_PREPARATION);
+    const ownedRun = execFileSync(
+      'tmux',
+      ['display-message', '-p', '-t', current.address.slice(5), '#{@pc_run_id}'],
+      { encoding: 'utf8' },
+    ).trim();
+    return { ...current, ownedRun };
+  }
+  adopt(a: ManagedAttempt) {
+    this.tui.adopt(a);
+  }
   preflight() {
     return this.tui.preflight();
   }

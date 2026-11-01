@@ -1,5 +1,6 @@
 import {
   startRun,
+  initializeCurrentRun,
   inspectRuns,
   recoverRun,
   orchestratorForSubject,
@@ -81,6 +82,18 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   const orchestrator = workflow
     .command('orchestrator')
     .description('Create or inspect a subject-scoped managed Run');
+  configured(
+    orchestrator
+      .command('initialize <run>')
+      .description('Activate the prepared current agy Orchestrator after role initialization'),
+  ).action((id: string, options: Options) =>
+    run(() =>
+      output(
+        initializeCurrentRun(loadFleetConfig(options.config), managedRunner('agy'), id),
+        opts.human(),
+      ),
+    ),
+  );
   configured(
     orchestrator.command('status').description('Read Fleet Run and Orchestrator ownership'),
   ).action((options: Options) =>
