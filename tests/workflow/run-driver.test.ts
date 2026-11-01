@@ -584,6 +584,7 @@ test('Claude native correlation rejects missing prompt identity and duplicate su
       last_assistant_message: 'accepted candidate',
     });
     expect(await runner.result(attempt, 'dispatch')).toBe('accepted candidate');
+    expect(await runner.collect(attempt)).toBe('accepted candidate');
     expect(await runner.result(attempt, 'another-dispatch')).toBeUndefined();
     emit('4', { hook_event_name: 'UserPromptSubmit', prompt: 'task', prompt_id: 'duplicate' });
     expect(await runner.result(attempt, 'dispatch')).toBeUndefined();

@@ -161,7 +161,7 @@ export class ClaudeInteractive {
     };
   }
   async result(a: ManagedAttempt, id: string): Promise<string | undefined> {
-    if (id !== a.dispatchId) return undefined;
+    if (id !== (a.dispatchId ?? a.id)) return undefined;
     const events = this.events(a);
     const submissions = events.filter(
       (e) => e.hook_event_name === 'UserPromptSubmit' && e.prompt === a.brief,

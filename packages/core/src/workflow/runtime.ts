@@ -417,6 +417,18 @@ export class ClaudeRunner extends StreamRunner {
   observe(a: ManagedAttempt) {
     return this.tui.observe(a);
   }
+  /** Persistent completion uses correlated native turn output, never process exit. */
+  async collect(a: ManagedAttempt): Promise<string> {
+    for (;;) {
+      const output = await this.tui.result(a, a.dispatchId ?? a.id);
+      if (output !== undefined) return output;
+      if (await this.stopped(a)) throw new Error('Claude exited without a correlated task result');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  collectable(a: ManagedAttempt): boolean {
+    return existsSync(join(a.directory, 'claude-hooks'));
+  }
 }
 /** Explicit agy stream protocol adapter; unsupported CLI capabilities fail closed. */
 export class AgyRunner extends StreamRunner {
