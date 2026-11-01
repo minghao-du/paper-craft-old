@@ -474,6 +474,23 @@ test('prepared current conversation requires live exact pane and matching callba
   const adapter = new AgyInteractive();
   try {
     expect(adapter.prepared(directory, '%42').conversation).toBe('native-id');
+    const previousPreparation = process.env.PC_AGY_PREPARATION;
+    const previousPane = process.env.TMUX_PANE;
+    process.env.PC_AGY_PREPARATION = directory;
+    process.env.TMUX_PANE = '%42';
+    vi.mocked(child.execFileSync).mockImplementation((_cmd, args) =>
+      args?.at(-1) === '#{session_name} #{@pc_run_id}' ? 'pc-run-prior \n' : '%42 1\n',
+    );
+    try {
+      expect(() => new AgyRunner().current()).toThrow(/ownership/);
+    } finally {
+      if (previousPreparation === undefined) delete process.env.PC_AGY_PREPARATION;
+      else process.env.PC_AGY_PREPARATION = previousPreparation;
+      if (previousPane === undefined) delete process.env.TMUX_PANE;
+      else process.env.TMUX_PANE = previousPane;
+      vi.mocked(child.execFileSync).mockReturnValue('%42 1\n');
+    }
+
     const attempt = {
       id: 'user',
       fleet: 'fleet',
@@ -564,6 +581,20 @@ test('current conversation adoption renames a lone window and rejects unmarked t
       return '';
     });
     expect(() => new AgyInteractive().adopt(attempt)).toThrow(/ownership/);
+    calls.length = 0;
+    vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
+      calls.push(args as string[]);
+      if (args?.[0] === 'display-message') return '%7 1 pc-run-prior @3\n';
+      if (args?.[0] === 'list-sessions') return 'pc-run-prior \n';
+      if (args?.[0] === 'list-windows') return '@3\n';
+      return '';
+    });
+    expect(() => new AgyInteractive().adopt(attempt)).toThrow(/ownership/);
+    expect(
+      calls.some((args) =>
+        ['rename-session', 'new-session', 'move-window', 'set-option'].includes(args[0]),
+      ),
+    ).toBe(false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

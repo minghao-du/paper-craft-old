@@ -148,6 +148,8 @@ export class AgyInteractive {
     const target = `pc-run-${a.run}`;
     const sessions = tmux(['list-sessions', '-F', '#{session_name} #{@pc_run_id}']).split('\n');
     const sourceEntry = sessions.find((line) => line.split(' ')[0] === source);
+    if (source.startsWith('pc-run-') && sourceEntry !== `${source} ${source.slice(7)}`)
+      throw new Error('Source Run session ownership missing or conflicting');
     if (
       source !== target &&
       sourceEntry?.split(' ')[1] &&
