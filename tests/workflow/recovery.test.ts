@@ -153,7 +153,7 @@ test('collection failure resumes the original acceptance attempt and preserves e
 import { recoverAllRuns } from '../../packages/core/src/workflow/recovery.js';
 import { writeFileSync } from 'node:fs';
 import { inspectRuns, recoverRun } from '../../packages/core/src/workflow/run-driver.js';
-test('batch recovery isolates failed providers, preserves unknown ownership and blocks legacy work', async () => {
+test('batch recovery isolates failed providers, preserves unknown ownership without reading legacy work', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-batch-')));
   mkdirSync(join(project, 'pool'));
   const config = {
@@ -190,13 +190,6 @@ test('batch recovery isolates failed providers, preserves unknown ownership and 
       { repository: 'o/r', number: 2, title: 'two', body: 'two', kind: 'issue' },
       'claude',
     );
-    const legacy = stateDirectory(config, '.runtime', 'legacy');
-    mkdirSync(legacy, { recursive: true });
-    writeFileSync(
-      join(legacy, 'task.json'),
-      JSON.stringify({ repository: 'o/r', issue: 3, turns: [] }),
-    );
-    writeFileSync(join(legacy, ['con', 'ductor.json'].join('')), 'invalid ignored global record');
     const result = await recoverAllRuns(config, (provider) => {
       if (provider === 'claude') throw Error('provider unavailable');
       return runner;
@@ -206,13 +199,6 @@ test('batch recovery isolates failed providers, preserves unknown ownership and 
       'Orchestrator startup pending; unknown occupancy remains reserved',
     );
     expect(result.outcomes[1].error).toContain('provider unavailable');
-    expect(result.legacy).toEqual([
-      {
-        file: join(legacy, 'task.json'),
-        status: 'blocked',
-        error: 'Work has no Run ownership; complete or archive it explicitly',
-      },
-    ]);
     expect(result.status).toBe('unknown');
     expect(receipts).toBe(1);
     expect(inspectRuns(config).runs.map((r) => r.orchestratorId)).toEqual([

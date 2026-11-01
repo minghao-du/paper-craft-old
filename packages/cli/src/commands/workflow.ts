@@ -11,12 +11,7 @@ import { registerSubagentCommands } from './workflow-subagents.js';
 /** Portable workflow CLI shared by agents with filesystem and command execution access. */
 import { Command, Option } from 'commander';
 import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
-import {
-  consumeIntent,
-  findIntent,
-  preserveState,
-  writeIntent,
-} from '@paper-craft/core/workflow/handoff';
+import { preserveState } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { managedRunner } from '@paper-craft/core/workflow/runtime';
 import { inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
@@ -210,16 +205,6 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   );
   configured(
     orchestrator
-      .command('issue <number>')
-      .description('Deprecated: use workflow orchestrator start'),
-  ).action(() => {
-    console.error(
-      'workflow orchestrator issue is deprecated. Use pc workflow orchestrator start <number> --type <issue|epic> --provider <provider> --config <config>.',
-    );
-    process.exitCode = 2;
-  });
-  configured(
-    orchestrator
       .command('land <issue>')
       .description('Merge, record, preserve and clean delivered PR stages automatically'),
   )
@@ -263,45 +248,6 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         });
       }
     });
-  const intent = workflow.command('intent').description('Queue, find and consume task briefs');
-  configured(intent.command('find <issue>').description('Find queued intent; exit 1 when absent'))
-    .option('--path', 'Print only the path for shell assignment')
-    .action((issue: string, options: Options & { path?: boolean }) =>
-      run(() => {
-        const path = findIntent(loadFleetConfig(options.config), issue);
-        if (!path) process.exitCode = 1;
-        if (options.path) {
-          if (path) console.log(path);
-        } else output({ status: path ? 'found' : 'absent', path }, opts.human());
-      }),
-    );
-  configured(
-    intent
-      .command('write <issue>')
-      .description('Queue a brief without overwriting existing intent'),
-  )
-    .requiredOption('--prompt-file <file>', 'UTF-8 task brief')
-    .action((issue: string, options: Options & { promptFile: string }) =>
-      run(() => {
-        output(
-          {
-            status: 'queued',
-            path: writeIntent(loadFleetConfig(options.config), issue, options.promptFile),
-          },
-          opts.human(),
-        );
-      }),
-    );
-  configured(
-    intent.command('consume <issue>').description('Archive intent after confirmed worker startup'),
-  ).action((issue: string, options: Options) =>
-    run(() => {
-      output(
-        { status: 'consumed', path: consumeIntent(loadFleetConfig(options.config), issue) },
-        opts.human(),
-      );
-    }),
-  );
   configured(
     workflow.command('preserve').description('Copy and verify slot state; retain all originals'),
   )

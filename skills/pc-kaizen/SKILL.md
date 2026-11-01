@@ -82,7 +82,7 @@ Then state one of these explicitly in your proposal:
 Then list **every other file that restates the rule**, and update all of them or say why not. A fix that lands in one of two copies is worse than no fix: the un-updated copy is now authoritative-looking and stale.
 
 A failure this exists to prevent, measured 2026-09-01:
-- A generalized gitignore rule in `pc-orchestrator` never reached the concrete checklist in `pc-orchestrator-spawn`, so the checklist kept omitting a file that "has bitten a real fleet twice".
+- A generalized gitignore rule in `pc-orchestrator` never reached the concrete checklist in `pc-orchestrator`, so the checklist kept omitting a file that "has bitten a real fleet twice".
 
 **Budget discipline.** If you are adding a rule and deleting nothing, the question is not how many lines — it is **what does this supersede?** Answer it in the proposal, or say explicitly that nothing does and why the fact is new. That question, not any ratio, is what catches a rule being re-litigated in a second file.
 

@@ -7,19 +7,12 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { pathExists, within, workflowSource, type FleetConfig } from './fleet-config.js';
-
-function issueNumber(issue: string): string {
-  if (!/^[1-9]\d*$/.test(issue))
-    throw new Error(`Expected positive issue number; received ${issue}`);
-  return issue;
-}
 
 /** Create a workflow subdirectory and reject symlinks that leave its configured root. */
 export function stateDirectory(config: FleetConfig, ...parts: string[]): string {
@@ -37,58 +30,6 @@ export function stateDirectory(config: FleetConfig, ...parts: string[]): string 
 
 function regularFile(path: string): void {
   if (!lstatSync(path).isFile()) throw new Error(`Expected regular file, not symlink: ${path}`);
-}
-
-/** Find either supported intent filename, preferring the current Markdown convention. */
-export function findIntent(config: FleetConfig, issue: string): string | null {
-  issueNumber(issue);
-  const dir = join(config.root, '.spawn-prompts');
-  if (!pathExists(dir)) return null;
-  if (lstatSync(dir).isSymbolicLink()) throw new Error(`Intent directory is a symlink: ${dir}`);
-  for (const name of [`${issue}.md`, `spawn-${issue}.txt`]) {
-    const path = join(dir, name);
-    if (pathExists(path)) {
-      regularFile(path);
-      return path;
-    }
-  }
-  return null;
-}
-
-/** Queue a UTF-8 brief without overwriting existing intent or silently creating duplicates. */
-export function writeIntent(config: FleetConfig, issue: string, prompt: string): string {
-  issueNumber(issue);
-  if (findIntent(config, issue)) throw new Error(`Intent for issue ${issue} already exists`);
-  const bytes = readFileSync(prompt);
-  if (!bytes.toString('utf8').trim()) throw new Error(`Empty prompt file: ${prompt}`);
-  const dir = stateDirectory(config, '.spawn-prompts');
-  const path = join(dir, `${issue}.md`);
-  writeFileSync(path, bytes, { flag: 'wx' });
-  return path;
-}
-
-/** Consume intent only after the caller has confirmed the worker started successfully. */
-export function consumeIntent(config: FleetConfig, issue: string): string {
-  const source = findIntent(config, issue);
-  if (!source) throw new Error(`No queued intent for issue ${issue}`);
-  if (
-    pathExists(join(config.root, '.spawn-prompts', `${issue}.md`)) &&
-    pathExists(join(config.root, '.spawn-prompts', `spawn-${issue}.txt`))
-  ) {
-    throw new Error(
-      `Two queued briefs for issue ${issue}; reconcile both before consuming to prevent duplicate launch`,
-    );
-  }
-  const dir = stateDirectory(config, '.spawn-prompts', 'consumed');
-  const archive = mkdtempSync(join(dir, `${issue}-`));
-  const destination = join(archive, basename(source));
-  try {
-    renameSync(source, destination);
-  } catch (error) {
-    rmSync(archive, { recursive: true });
-    throw error;
-  }
-  return destination;
 }
 
 /** A verified archive records hashes; optional missing worklogs are explicit. */

@@ -78,7 +78,7 @@ HELPERS="/absolute/path/to/configured/project/_ignore/helpers"
      git -C <repo> worktree add --detach "$DIR" origin/main
      ```
      It branches there itself (for example via `/pc-issue-work`), as the checkout's only session.
-   - Gates or builds that need a built environment (a `.pixi` env, a vendored binary), where a fresh worktree would pay a full install first: a orchestrator or epic session that manages a clone pool can lend it an `available` pooled clone (as `/pc-orchestrator` Step 5 classifies it), held so spawn selection and every launch path must skip it, `KIND=held-clone`:
+   - Gates or builds that need a built environment (a `.pixi` env, a vendored binary), where a fresh worktree would pay a full install first: the owning managed Orchestrator can reserve an available pooled clone through its lifecycle contract, `KIND=held-clone`:
      ```bash
      CONFIG=/absolute/path/to/orchestrator/.epic-config.json
      CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2

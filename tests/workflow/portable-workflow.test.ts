@@ -14,12 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
-import {
-  consumeIntent,
-  findIntent,
-  preserveState,
-  writeIntent,
-} from '@paper-craft/core/workflow/handoff';
+import { preserveState } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 
 const repo = process.cwd();
@@ -74,37 +69,6 @@ describe('portable workflow file contract', () => {
       'registered slot',
     );
     expect(readFileSync(join(outside, '.epic-status.json'), 'utf8')).toBe('{}');
-  });
-
-  it('finds both names, refuses overwrite and consumes into unique retained archives', () => {
-    const config = loadFleetConfig(configFile);
-    const prompt = join(project, 'brief.md');
-    writeFileSync(prompt, 'Scope and gates');
-    const path = writeIntent(config, '123', prompt);
-    writeFileSync(join(pool, '.spawn-prompts', 'spawn-123.txt'), 'legacy');
-    expect(findIntent(config, '123')).toBe(path);
-    expect(() => writeIntent(config, '123', prompt)).toThrow('already exists');
-    expect(() => consumeIntent(config, '123')).toThrow('Two queued briefs');
-    rmSync(join(pool, '.spawn-prompts', 'spawn-123.txt'));
-    const consumed = consumeIntent(config, '123');
-    expect(readFileSync(consumed, 'utf8')).toBe('Scope and gates');
-    expect(findIntent(config, '123')).toBeNull();
-    writeFileSync(join(pool, '.spawn-prompts', 'spawn-123.txt'), 'legacy');
-    const legacy = consumeIntent(config, '123');
-    expect(legacy).not.toBe(consumed);
-    expect(readFileSync(legacy, 'utf8')).toBe('legacy');
-    expect(findIntent(config, '123')).toBeNull();
-    expect(() => findIntent(config, '../123')).toThrow('positive issue');
-  });
-
-  it('rejects intent directory symlinks without writing outside the configured pool', () => {
-    const outside = join(temp, 'outside');
-    mkdirSync(outside);
-    symlinkSync(outside, join(pool, '.spawn-prompts'));
-    const prompt = join(project, 'brief.md');
-    writeFileSync(prompt, 'brief');
-    expect(() => writeIntent(loadFleetConfig(configFile), '123', prompt)).toThrow('symlink');
-    expect(readdirSync(outside)).toEqual([]);
   });
 
   it('preserves exact state bytes without deleting sources and reports optional worklog absence', () => {
@@ -197,7 +161,7 @@ describe('portable workflow file contract', () => {
     expect(unknownRun.status).toBe(2);
     const batch = cli('workflow', 'orchestrator', 'recover-all', '--config', configFile);
     expect(batch.status, batch.stderr).toBe(0);
-    expect(JSON.parse(batch.stdout)).toEqual({ status: 'reconciled', outcomes: [], legacy: [] });
+    expect(JSON.parse(batch.stdout)).toEqual({ status: 'reconciled', outcomes: [] });
   }, 15000);
 
   it('reports configured roots and command failure exit codes', () => {
@@ -359,7 +323,7 @@ describe('installed shared resources', () => {
     install();
     install();
     expect(readdirSync(dest)).not.toContain(retired);
-    for (const suffix of ['', '-handoff', '-prepare-reboot', '-recover', '-spawn', '-tuckin']) {
+    for (const suffix of ['', '-handoff', '-prepare-reboot', '-recover', '-tuckin']) {
       const name = 'pc-orchestrator' + suffix;
       expect(realpathSync(join(dest, name))).toBe(join(repo, 'skills', name));
       expect(readFileSync(join(dest, name, 'SKILL.md'), 'utf8')).toContain('name: ' + name);
@@ -367,9 +331,7 @@ describe('installed shared resources', () => {
     expect(realpathSync(join(dest, 'lib', 'workflow.md'))).toBe(
       join(repo, 'skills/lib/workflow.md'),
     );
-    expect(readFileSync(join(dest, 'pc-orchestrator-spawn', 'SKILL.md'), 'utf8')).toContain(
-      '../lib/workflow.md',
-    );
+    expect(readFileSync(join(dest, 'pc-epic', 'SKILL.md'), 'utf8')).toContain('../lib/workflow.md');
     const linkedReference = resolve(join(dest, 'pc-orchestrator'), '../lib/workflow.md');
     expect(existsSync(linkedReference)).toBe(true);
   });

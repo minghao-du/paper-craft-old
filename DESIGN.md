@@ -57,7 +57,7 @@ when behavior changes, skill docs MUST update in the same PR.
 
 ## VII. Runtime-Independent Workflows
 
-The interactive Orchestrator agent makes scheduling, acceptance and rework decisions.
+The Run's active managed Orchestrator attempt makes scheduling, acceptance and rework decisions.
 Lightweight Bash commands execute Git worktree, tmux and GitHub operations behind
 `pc`; small JavaScript helpers validate and persist JSON state. Run intake records
 the issue, transparent runner command and conversational requirements. Fleet is a

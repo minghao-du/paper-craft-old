@@ -1,6 +1,6 @@
 ---
 name: pc-tuckin
-description: Universal tuckin dispatcher — persist session state before a context reset by delegating to the right /pc-*-tuckin (ms, spawn, epic, orchestrator), or a generic fallback when the session is none of those. Run before /clear; pairs with /pc-continue. `/pc-cycle` also clears and resumes the session itself.
+description: Universal tuckin dispatcher — persist session state before a context reset by delegating to the right /pc-*-tuckin (ms, worker, epic, orchestrator), or a generic fallback when the session is none of those. Run before /clear; pairs with /pc-continue. `/pc-cycle` also clears and resumes the session itself.
 allowed-tools: Skill, Bash, Read, Write, Edit
 ---
 
@@ -11,19 +11,19 @@ It determines the session's role, runs the matching tuckin, and that skill write
 
 ## Choosing the tuckin
 
-If `$ARGUMENTS` names a role — `ms`, `spawn`, `epic`, `orchestrator`, `landing`, or `generic` — use it.
+If `$ARGUMENTS` names a role — `ms`, `worker`, `epic`, `orchestrator`, `landing`, or `generic` — use it.
 
-Otherwise determine the role per [the continuation contract](../lib/continuation.md): explicit assignment or task markers (`.ms-config.json` → `ms`, `.epic-status.json` → `spawn`), then ask if ambiguous.
-When native role registration is available, cross-check the exact current identity against the EPIC-keyed `.epic-sessions/<N>.json` / `.orchestrator-session`; do not require a Claude session listing.
+Otherwise determine the role per [the continuation contract](../lib/continuation.md): explicit assignment or task markers (`.ms-config.json` → `ms`, `.epic-status.json` → `worker`), then ask if ambiguous.
+Cross-check the assigned role and task against the owning Run's durable Dispatch and Attempt identity.
 Never infer the role from what the session has been discussing.
 
 Map the role to its skill and invoke it with the harness's skill tool or read and follow its text — do not reimplement it:
-`ms` → `/pc-ms-tuckin`, `spawn` → `/pc-spawn-tuckin`, `epic` → `/pc-epic-tuckin`, `orchestrator` → `/pc-orchestrator-tuckin`.
+`ms` → `/pc-ms-tuckin`, `worker` → preserve the assigned task's brief, result and worklog under its managed Run, `epic` → `/pc-epic-tuckin`, `orchestrator` → `/pc-orchestrator-tuckin`.
 
 ## Landing continuation
 
 For an explicitly assigned landing agent, persist the current phase and evidence through
-[Lifecycle recovery](../lib/workflow.md#lifecycle-recovery), then write the landing
+[Lifecycle recovery](../pc-orchestrator/managed-lifecycle.md), then write the landing
 continuation per the continuation contract. After checkout release, send these pointers
 to the orchestrator to write there and report persistence pending until it acknowledges.
 Resume through the orchestrator’s verified assignment and ownership transfer; this branch

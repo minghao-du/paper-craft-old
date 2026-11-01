@@ -49,16 +49,9 @@ Commands:
                                     only after confirmed closure
   close-epic [options] <number>     Record explicit human confirmation, close
                                     and archive an accepted EPIC
-  issue [options] <number>          Deprecated: use pc-orchestrator and pc run
-                                    create
   land [options] <issue>            Merge, record, preserve and clean delivered
                                     PR stages automatically
   help [command]                    display help for command
-"
-`;
-
-exports[`publishes orchestrator issue help 1`] = `
-"Deprecated: workflow orchestrator issue. Use pc-orchestrator with pc run create --issue <number> --runner <command>.
 "
 `;
 

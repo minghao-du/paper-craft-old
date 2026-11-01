@@ -9,7 +9,7 @@ with any pending integration handover; keep full scientific analysis in that sta
 
 ## Role and location
 
-Use the explicitly assigned role: `ms`, `spawn`, `epic`, `orchestrator`, `landing` or `generic`.
+Use the explicitly assigned role: `ms`, `worker`, `epic`, `orchestrator`, `landing` or `generic`.
 Otherwise inspect task markers: `.ms-config.json` identifies a manuscript and `.epic-status.json` identifies a worker.
 When roles overlap or several continuation files fit, ask which assignment to resume.
 Native session addresses are optional routing information and cannot establish role or ownership.
@@ -27,7 +27,7 @@ Keep this path stable so a fresh agent can locate it without the old session's m
 - Issue/PR references, branch and exact commit for any recorded approval.
 - Decisions and user instructions that still apply, with their durable sources.
 - Each unfinished item, its next action and a runnable `FIRST CHECK` that verifies whether it is still relevant.
-- Evidence, brief, archive and worklog paths. For coordinated roles, include the keyed EPIC registration and pending lifecycle/ownership pointers required by [Lifecycle recovery](workflow.md#lifecycle-recovery).
+- Evidence, brief, archive and worklog paths. For coordinated roles, include the Run identity and pending lifecycle/ownership pointers required by [Lifecycle recovery](../pc-orchestrator/managed-lifecycle.md).
 - Outstanding user decisions, uncertain occupancy and preservation or delivery failures.
 
 Record enough instruction to resume; reference existing evidence rather than duplicating it.

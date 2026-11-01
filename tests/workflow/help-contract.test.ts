@@ -10,7 +10,6 @@ for (const command of [
   'status',
   'recover',
   'recover-all',
-  'issue',
   'land',
   'finalize-epic',
   'close-epic',

@@ -67,7 +67,7 @@ Completion criterion: every prerequisite input has passed the verification above
 
 ### Step 3: Create a feature branch
 
-If another live session works in this checkout (see [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases)), don't move its `HEAD`: branch in a worktree outside it and do all remaining steps there. If you were started in this checkout to own it and the other process is exiting (a session whose window was just killed), wait until it is gone, then take the checkout path.
+If another live session works in this checkout (see [Checkout ownership and landing phases](../pc-orchestrator/managed-lifecycle.md)), don't move its `HEAD`: branch in a worktree outside it and do all remaining steps there. If you were started in this checkout to own it and the other process is exiting (a session whose window was just killed), wait until it is gone, then take the checkout path.
 
 ```bash
 git fetch origin
@@ -130,12 +130,12 @@ Apply this protocol to local and remote computation, training, experiments and l
 5. Persist each check's result, estimate, next check time and rationale in
    `.epic-worklog.md` (or the standalone task's durable worklog). In fleet mode set
    `phase: awaiting-results` and populate `awaiting` using the
-   [status fields](../pc-orchestrator/SKILL.md#epic-statusjson-specification). Keep `started_at` as
+   [status fields](../pc-orchestrator/managed-lifecycle.md). Keep `started_at` as
    the wait's original timestamp; `timeout_hours` measures that total wait, including
    queue time; keep this overall waiting bound separate from runtime estimates.
    Diagnose expiry; ordinary queueing does not consume the expected execution duration.
 6. Keep waiting responsive through completion events or a supported scheduled wake-up;
-   follow [Runtime wake-up](../lib/workflow.md#runtime-wake-up) when scheduling a worker
+   follow [managed recovery](../pc-orchestrator/managed-lifecycle.md) when scheduling a worker
    continuation. Reuse one verified timer for the saved next check. Without that support,
    preserve the schedule and report `manual continuation required` with the resume command.
    Repeated empty continuation turns are not a waiting mechanism.
@@ -214,7 +214,7 @@ When transient local outputs or benchmarks were produced, record in the PR body 
 
 ### Step 8: Report to the orchestrator
 
-Before execution, verify an explicit owning EPIC and its brief under the shared workflow contract.
+Before execution, verify the owning Run and immutable task brief; retain parent constraints when the Issue belongs to an EPIC.
 After creating the PR, report the full head SHA and current completion/check evidence to the Orchestrator for exact-head EPIC confirmation and automatic guarded PR-Land merge. Retain status and worklog; workers release ownership only through the landing handoff. Independent follow-up work uses `/pc-orchestrator-handoff`.
 Provide a concise summary that highlights things the user needs to **judge**:
 
@@ -228,7 +228,7 @@ Either way, do not list follow-ups in this summary — the PR body is the source
 
 ### Step 9: Landing handoff and final records
 
-Follow [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases)
+Follow [Checkout ownership and landing phases](../pc-orchestrator/managed-lifecycle.md)
 when the orchestrator requests release. Stop edits, record explicit release and wait for
 ownership to return before remediation or final records. After verified merge, invoke
 `/pc-issue-lead` independently at the retained checkout for its full terminal protocol.

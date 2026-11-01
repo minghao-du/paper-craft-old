@@ -223,7 +223,7 @@ If the work is done and the PR is open, the phase is `quality-gate`. Completion 
 
 **Who calls you.** Workers invoke the evaluator for task-local stopping points and
 again for final evaluation/records after the orchestrator verifies merge success. Worker
-self-landing is replaced by the shared workflow's Scheduling and approval contract.
+returns landing requests to the owning Orchestrator's [Shared Issue Delivery](../pc-orchestrator/SKILL.md#shared-issue-delivery).
 Read state from the supplied absolute slot path, run git with `git -C <path>` and
 pass `-R <owner/repo>` to `gh`. After merge, use the PR's commits/files rather than
 assuming `main..HEAD` still contains the change. Retain records until verified cleanup.

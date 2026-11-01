@@ -32,7 +32,7 @@ Skills 以 TypeScript 模块编写——可测试、可调试且类型安全。s
 
 ## VII. 独立于运行时的工作流
 
-交互式 Orchestrator agent 决定调度、验收和返工。
+Run 的活跃托管 Orchestrator attempt 决定调度、验收和返工。
 轻量 Bash 命令通过 `pc` 执行 Git worktree、tmux 和 GitHub 操作；
 小型 JavaScript 辅助程序验证并持久化 JSON 状态。Run 入口记录
 议题、透明的 runner 命令及对话中的补充要求。Fleet 是

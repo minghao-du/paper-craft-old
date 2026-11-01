@@ -5,23 +5,11 @@ description: Execute a orchestrator-dispatched PR merge or post-records preserva
 
 # /pc-pr-land
 
-Read [the shared workflow contract](../lib/workflow.md), including **Checkout ownership and landing phases**, before mutation.
-The orchestrator dispatch names one phase: `merge` or `cleanup`, the repository/PR,
-full evaluated head, checkout, authoritative config and durable evidence paths.
+Read [the managed lifecycle](../pc-orchestrator/managed-lifecycle.md) before mutation.
+The owning Run's Orchestrator dispatches one phase, `merge` or `cleanup`, with repository/PR, evaluated head, checkout and durable evidence pointers.
+Execute only that assignment and return its correlated result.
 Workers remain available for remediation and final records while releasing checkout ownership.
-
-Managed delivery enters through [Orchestrator intake](../pc-orchestrator/SKILL.md#intake) with explicit type `Issue` or `EPIC`, its number, provider and authoritative config.
-After the intake checks, the owning Orchestrator creates or reconnects the Run:
-
-```sh
-pc workflow orchestrator start <number> --type <issue|epic> --provider <provider> --config <file>
-```
-
-The Orchestrator schedules the shared delivery workflow's PR check/repair/merge stages; this Landing role executes only its assigned phase.
-To resume Landing directly, use `pc workflow orchestrator land <issue> --config <file>`.
-For EPIC tasks, supply `--confirmation-file <file>` with professional `{epic, head, evidence}` JSON.
-This confirms scope at the live head; user confirmation is reserved for closing the EPIC.
-The driver retains PR results and original execution receipts under configured runtime state.
+For missing assignment or resume, return to [Orchestrator intake](../pc-orchestrator/SKILL.md#intake) and managed recovery.
 
 ## Merge phase
 

@@ -6,7 +6,7 @@ description: Save a tmux workspace and verified agent conversation identities be
 # Save before shutdown
 
 Before parking runtime sessions, persist each project's state under the shared
-[Lifecycle recovery](../lib/workflow.md#lifecycle-recovery) contract. The orchestrator holds
+[Lifecycle recovery](../pc-orchestrator/managed-lifecycle.md) contract. The orchestrator holds
 new dispatch, requests role tuckins, and accounts for every EPIC, worker and landing
 agent, including local Git operations and explicit checkout ownership. Preserve approval
 sources and separate merge, final-record and cleanup outcomes. Silent roles stay unknown;

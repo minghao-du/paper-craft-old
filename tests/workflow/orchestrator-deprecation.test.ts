@@ -2,12 +2,13 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { expect, it } from 'vitest';
 
-it('rejects autonomous issue delivery before consulting configuration or launching workers', () => {
-  const result = spawnSync(resolve('pc'), ['workflow', 'orchestrator', 'issue', '79'], {
-    encoding: 'utf8',
-  });
-  expect(result.status).not.toBe(0);
-  expect(result.stderr).toContain('deprecated');
-  expect(result.stderr).toContain('pc run create');
-  expect(result.stderr).toContain('pc-orchestrator');
+it('rejects retired dispatch entry points before launching work', () => {
+  for (const args of [
+    ['orchestrator', 'issue', '79'],
+    ['intent', 'write', '79'],
+  ]) {
+    const result = spawnSync(resolve('pc'), ['workflow', ...args], { encoding: 'utf8' });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('unknown command');
+  }
 }, 10000);

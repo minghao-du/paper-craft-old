@@ -131,7 +131,7 @@ Once you've picked a host, three rules keep remote runs from silently breaking o
   - A bare inline `cd …` in the ssh argument string is *only* acceptable inside a here-doc'd script body or a `make remote-tmux` window — never as a prefix you hand-compose.
 - **Scope the remote checkout to the clone corresponding to *your* repo.**
   Pass `REMOTE_DIR` explicitly on every `make remote-sync`/`remote-run`/`remote-tmux` call (or ssh to an explicit path).
-  The config-derived default (`~/.config/dasm2/config.yaml`) is the *same directory for every clone/worktree on the box*, so concurrent runs overwrite each other's checkout — the rule `pc-orchestrator-spawn` states for EPIC slots applies to any remote run.
+  The config-derived default (`~/.config/dasm2/config.yaml`) is the *same directory for every clone/worktree on the box*, so concurrent runs overwrite each other's checkout — the rule `pc-orchestrator` states for EPIC slots applies to any remote run.
   Don't trust that default to be non-empty either: the Makefile resolves it with a bare `python3` that may lack the project's deps and silently return `""` (`cd ` → "not a git repository").
   **Before syncing, check the target clone isn't dirty with unrelated in-progress work** (`git -C <dir> status`); if it is, verify the changes are already in history (`git -C <dir> diff <pushed-HEAD>` empty) *before* any `reset --hard`, and never discard uncommitted work you didn't create.
 - **Invoke through a login shell.**

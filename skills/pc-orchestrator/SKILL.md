@@ -5,7 +5,7 @@ description: Coordinate Issue delivery or an EPIC's child deliveries through man
 
 # /pc-orchestrator
 
-The current conversational agent schedules the Run; durable files retain decisions and execution evidence.
+The Run's active managed Orchestrator attempt schedules persistent work; durable files retain decisions and execution evidence.
 Issue delivery is the shared workflow below; EPIC coordination adds planning and integrated acceptance around it.
 
 ## Intake

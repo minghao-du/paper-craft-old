@@ -5,7 +5,7 @@ description: Recover tmux workspaces and recorded agent conversations after shut
 
 # Recover a workspace
 
-Read [Lifecycle recovery](../lib/workflow.md#lifecycle-recovery) before resuming any
+Read [Lifecycle recovery](../pc-orchestrator/managed-lifecycle.md) before resuming any
 role. Restore conversations through the selected runner's supported exact-session
 mechanism; runtime layout is separate from EPIC identity, checkout ownership and approval.
 If it is unavailable, retain durable state and report manual continuation required.
@@ -28,8 +28,7 @@ pc workflow orchestrator recover-all --config /absolute/path/.epic-config.json
 ```
 
 Unknown occupancy retains resources and exits with code 2. Batch recovery reports each
-Run, including provider failures; unowned legacy work is blocked for explicit completion
-or archival and is never resumed. Recovery reconciles evidence; continue stages through
+Run, including provider failures. Recovery reconciles evidence; continue stages through
 the owning Run after inspecting its blockers. Persisted explicit human EPIC-close
 confirmation survives recovery; silence remains unconfirmed.
 
