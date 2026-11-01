@@ -1,4 +1,5 @@
 /** Managed role startup and durable runner evidence, independent of the model host. */
+import { InteractiveCodexRunner } from './codex-interactive.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -150,7 +151,7 @@ export class CodexRunner implements RunnerAdapter {
   protected normalize(event: Record<string, unknown>): Record<string, unknown> {
     return event;
   }
-  readonly cancellation = false;
+  readonly cancellation: boolean = false;
   /** Verified process exit releases execution capacity, never checkout ownership. */
   async termination(attempt: ManagedAttempt): Promise<boolean> {
     const file = join(attempt.directory, 'exit-code');
@@ -393,10 +394,10 @@ export class AgyRunner extends StreamRunner {
   protected resumeFlag = '--conversation';
 }
 /** Resolve a supported provider without fallback. */
-export function managedRunner(provider: string): CodexRunner {
+export function managedRunner(provider: string): CodexRunner | InteractiveCodexRunner {
   switch (provider) {
     case 'codex':
-      return new CodexRunner();
+      return new InteractiveCodexRunner();
     case 'agy':
       return new AgyRunner();
     case 'claude':
