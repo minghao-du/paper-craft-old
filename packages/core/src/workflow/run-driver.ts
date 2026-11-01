@@ -1,3 +1,4 @@
+import { initializationInstructions, verifyRoleInitialization } from './role-initialization.js';
 /** Run intake and authoritative Fleet relationships; managed execution belongs to one Run. */
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -16,6 +17,9 @@ import { stateDirectory } from './handoff.js';
 import { workflowSource, type FleetConfig } from './fleet-config.js';
 import {
   inspectOrchestrator,
+  requireInteractive,
+  cancelAttempt,
+  managedRunner,
   startOrchestrator,
   type ManagedAttempt,
   type RunnerAdapter,
@@ -124,6 +128,7 @@ export async function startRun(
     throw new Error(
       'Managed provider must be codex, agy, or claude and match the selected adapter',
     );
+  requireInteractive(runner);
   await runner.preflight();
   const reconnect = inspectRuns(config).runs.find(
     (r) =>
@@ -194,7 +199,13 @@ export async function startRun(
     try {
       run.launchStarted = true;
       save(config, registry);
-      run.orchestrator = await startOrchestrator(config, runner, brief, id);
+      run.orchestrator = await startOrchestrator(config, runner, brief, id, {
+        registry: join(home(config), 'registry.json'),
+        authority: id,
+        run: id,
+        subject: `${subject.repository}#${subject.number}`,
+        context: run.brief,
+      });
       run.lifecycle = run.orchestrator.status === 'running' ? 'running' : 'blocked';
     } catch (error) {
       run.lifecycle = 'blocked';
@@ -231,6 +242,13 @@ export interface StageDispatch extends StageRequest {
   attempts: ManagedAttempt[];
   lifecycle: 'reserved' | 'running' | 'reported' | 'accepted' | 'rejected' | 'superseded';
   acceptedReceipt?: string;
+  messages?: {
+    id: string;
+    brief: string;
+    attemptId: string;
+    status: 'pending' | 'delivered' | 'uncertain' | 'completed';
+    evidence?: string;
+  }[];
   remediation?: { consecutive: number; limit: number; feedback: string; exhausted: boolean };
 }
 /** A claim is immutable; acceptance is a separate durable acknowledgement. */
@@ -247,6 +265,8 @@ export interface StageReceipt {
   outcome: 'completed' | 'changes_needed' | 'blocked';
   evidence: { path: string; hash: string }[];
   corrects?: string;
+  /** Additional assigned messages covered by this durable completion claim. */
+  messageIds?: string[];
 }
 /** Mechanical verification supplied by the workflow's current-fact adapter. */
 export interface StageFacts {
@@ -289,6 +309,7 @@ export async function dispatchStage(
   runner: RunnerAdapter,
   request: StageRequest,
 ): Promise<StageDispatch> {
+  requireInteractive(runner);
   await runner.preflight();
   const snapshot = inspectRuns(config);
   const checkout = workflowSource(config, request.checkout ?? config.project);
@@ -356,7 +377,10 @@ export async function dispatchStage(
       )
     )
       throw new Error('Missing mandatory accepted Worker implementation');
-    if (request.role === 'pipeline-audit' && !run.epicClosure)
+    if (
+      (request.role === 'pipeline-audit' || request.role === 'pipeline-refactor') &&
+      !run.epicClosure
+    )
       throw new Error('Pipeline requires verified EPIC closure');
     if (
       request.role === 'research-state' &&
@@ -401,7 +425,22 @@ export async function dispatchStage(
       run: run.id,
       role: request.role,
       runner: run.provider,
+      dispatchId: id,
+      persistent: !!runner.result,
       brief: request.brief,
+      initialization: runner.result
+        ? {
+            registry: join(home(config), 'registry.json'),
+            authority: run.orchestratorId,
+            run: run.id,
+            subject: request.subject,
+            role: request.role,
+            attempt: '',
+            revision: request.inputRevision,
+            briefHash: createHash('sha256').update(request.brief).digest('hex'),
+            context: { path, hash: createHash('sha256').update(request.brief).digest('hex') },
+          }
+        : undefined,
       status: 'starting',
       created: new Date().toISOString(),
       directory,
@@ -409,6 +448,10 @@ export async function dispatchStage(
       terminalSession: request.terminalSession,
       writableDirectories: request.writableDirectories,
     };
+    if (attempt.initialization) {
+      attempt.initialization.attempt = attempt.id;
+      attempt.brief += initializationInstructions(attempt.initialization, attempt.directory);
+    }
     const next: StageDispatch = {
       ...request,
       id,
@@ -428,6 +471,8 @@ export async function dispatchStage(
     const ack = await runner.start(attempt);
     if (!ack.conversation || !ack.address || !ack.evidence)
       throw new Error('Missing startup acknowledgement');
+    Object.assign(attempt, ack);
+    if (attempt.initialization) verifyRoleInitialization(attempt);
     Object.assign(attempt, ack, { status: 'running' });
   } catch (error) {
     attempt.status = 'unknown';
@@ -477,13 +522,30 @@ export async function acceptStageReceipt(
   authority: string,
   receiptId: string,
   verify: (dispatch: StageDispatch, receipt: StageReceipt) => Promise<StageFacts>,
+  runner?: RunnerAdapter,
 ): Promise<void> {
   const snapshot = inspectRuns(config);
   const receipt = snapshot.receipts?.find((r) => r.id === receiptId);
   if (!receipt) throw new Error('Unknown Receipt');
   const dispatch = findDispatch(snapshot, receipt.dispatchId);
   authorize(snapshot, dispatch.runId, authority);
-  if (dispatch.acceptedReceipt === receiptId) return;
+  const release = async () => {
+    const current = findDispatch(inspectRuns(config), dispatch.id);
+    if (
+      current.attempts.at(-1)?.persistent &&
+      !current.messages?.some((m) => m.status !== 'completed')
+    )
+      await stopAcceptedExecution(
+        config,
+        runner ?? managedRunner(current.provider),
+        current.id,
+        authority,
+      );
+  };
+  if (dispatch.acceptedReceipt === receiptId) {
+    await release();
+    return;
+  }
   const facts = await verify(dispatch, receipt);
   let rejection: string | undefined;
   updateRunRegistry(config, (registry) => {
@@ -523,7 +585,15 @@ export async function acceptStageReceipt(
       !facts.evidence ||
       receipt.outcome !== 'completed' ||
       current.lifecycle === 'superseded' ||
-      !!current.acceptedReceipt ||
+      (!!current.acceptedReceipt &&
+        !(
+          receipt.corrects === current.acceptedReceipt &&
+          receipt.messageIds?.some((id) =>
+            current.messages?.some(
+              (m) => m.id === id && m.attemptId === receipt.attemptId && m.status !== 'completed',
+            ),
+          )
+        )) ||
       receipt.inputRevision !== current.inputRevision ||
       facts.currentRevision !== current.inputRevision
     )
@@ -550,6 +620,10 @@ export async function acceptStageReceipt(
       reason: rejection,
     });
     if (!rejection) {
+      for (const message of current.messages ?? []) {
+        if (message.attemptId === receipt.attemptId && receipt.messageIds?.includes(message.id))
+          message.status = 'completed';
+      }
       current.acceptedReceipt = receiptId;
       current.lifecycle = 'accepted';
       if (current.remediation) {
@@ -560,6 +634,7 @@ export async function acceptStageReceipt(
       current.lifecycle = 'rejected';
   });
   if (rejection) throw new Error(rejection);
+  await release();
 }
 
 /** Retry unchanged inputs only after independently verified termination; retain every Attempt. */
@@ -569,11 +644,13 @@ export async function retryStage(
   dispatchId: string,
   authority: string,
   stopped: (attempt: ManagedAttempt) => Promise<boolean>,
+  options: { replaceConversation?: boolean } = {},
 ): Promise<StageDispatch> {
   const snapshot = inspectRuns(config);
   const dispatch = findDispatch(snapshot, dispatchId);
   const run = authorize(snapshot, dispatch.runId, authority);
   if (runner.name !== run.provider) throw new Error('Run provider mismatch');
+  requireInteractive(runner);
   await runner.preflight();
   if (dispatch.remediation?.exhausted)
     throw new Error('Remediation exhausted: ' + dispatch.remediation.feedback);
@@ -593,15 +670,21 @@ export async function retryStage(
     mkdirSync(directory);
     const next: ManagedAttempt = {
       ...prior,
+      predecessor: prior.id,
       id,
       directory,
       status: 'starting',
       created: new Date().toISOString(),
-      conversation: undefined,
+      brief: `Reconcile durable Dispatch ${current.id} evidence before continuing. Scope reference: ${current.briefReference.path}. Do not replay the original brief or repeat accepted work.`,
+      conversation: options.replaceConversation ? undefined : prior.conversation,
       address: undefined,
       evidence: undefined,
       error: undefined,
     };
+    if (next.initialization) {
+      next.initialization = { ...next.initialization, attempt: next.id };
+      next.brief += initializationInstructions(next.initialization, next.directory);
+    }
     current.attempts.push(next);
     current.lifecycle = 'reserved';
     return next;
@@ -610,6 +693,8 @@ export async function retryStage(
     const ack = await runner.start(attempt);
     if (!ack.conversation || !ack.address || !ack.evidence)
       throw new Error('Missing startup acknowledgement');
+    Object.assign(attempt, ack);
+    if (attempt.initialization) verifyRoleInitialization(attempt);
     Object.assign(attempt, ack, { status: 'running' });
   } catch (error) {
     attempt.status = 'unknown';
@@ -657,8 +742,11 @@ export async function recoverRun(
   options: {
     stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
     replaceOrchestrator?: boolean;
+    /** Explicit reassignment when the old conversation cannot be recovered. */
+    newConversation?: boolean;
   } = {},
 ): Promise<{ blockers: string[]; pendingDispatches: string[] }> {
+  requireInteractive(runner);
   if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
   const snapshot = inspectRuns(config);
   const run = snapshot.runs.find((r) => r.id === runId);
@@ -674,6 +762,13 @@ export async function recoverRun(
       runner,
       readFileSync(run.brief.path, 'utf8'),
       runId,
+      {
+        registry: join(home(config), 'registry.json'),
+        authority: run.orchestratorId,
+        run: run.id,
+        subject: `${run.subject.repository}#${run.subject.number}`,
+        context: run.brief,
+      },
     );
     updateRunRegistry(config, (registry) => {
       const current = registry.runs.find((r) => r.id === runId)!;
@@ -693,9 +788,17 @@ export async function recoverRun(
     snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts.slice(-1)) ??
     [];
   for (const attempt of [...(orchestrator?.run === runId ? [orchestrator] : []), ...attempts]) {
+    if (runner.observe) attempt.observation = await runner.observe(attempt);
     if (attempt.status !== 'running' && runner.recoverReceipt) {
       const ack = await runner.recoverReceipt(attempt);
-      if (ack?.conversation && ack.address && ack.evidence) recovered.set(attempt.id, ack);
+      if (ack?.conversation && ack.address && ack.evidence) {
+        try {
+          if (attempt.initialization) verifyRoleInitialization(attempt);
+          recovered.set(attempt.id, ack);
+        } catch {
+          /* Missing role evidence remains pending without relaunch. */
+        }
+      }
     }
   }
   let replacement: ManagedAttempt | undefined;
@@ -713,11 +816,13 @@ export async function recoverRun(
       mkdirSync(directory);
       replacement = {
         ...orchestrator,
+        predecessor: orchestrator.id,
         id,
         directory,
         status: 'starting',
         created: new Date().toISOString(),
-        conversation: undefined,
+        conversation: options.newConversation ? undefined : orchestrator.conversation,
+        brief: `Reconcile durable Run ${runId} evidence before continuing. Scope reference: ${run.brief.path}. Do not replay the original brief or repeat accepted work.`,
         address: undefined,
         evidence: undefined,
       };
@@ -729,7 +834,16 @@ export async function recoverRun(
     if (orchestrator?.run === runId) {
       current.orchestrator = orchestrator;
       const ack = recovered.get(orchestrator.id);
-      if (ack) Object.assign(current.orchestrator, ack, { status: 'running' });
+      if (ack) {
+        if (current.orchestrator.error) {
+          (current.orchestrator.startupFailures ??= []).push({
+            error: current.orchestrator.error,
+            resolvedAt: new Date().toISOString(),
+          });
+          delete current.orchestrator.error;
+        }
+        Object.assign(current.orchestrator, ack, { status: 'running' });
+      }
     }
     if (replacement) {
       (current.priorOrchestrators ??= []).push(orchestrator!);
@@ -771,8 +885,21 @@ export async function recoverRun(
         dispatch.lifecycle = 'accepted';
       }
       const attempt = dispatch.attempts.at(-1)!;
+      const observation = attempts.find((a) => a.id === attempt.id)?.observation;
+      if (observation) attempt.observation = observation;
       const ack = recovered.get(attempt.id);
-      if (ack) Object.assign(attempt, ack, { status: 'running' });
+      if (ack) {
+        if (attempt.error) {
+          (attempt.startupFailures ??= []).push({
+            error: attempt.error,
+            resolvedAt: new Date().toISOString(),
+          });
+          delete attempt.error;
+        }
+        Object.assign(attempt, ack);
+        if (attempt.initialization) verifyRoleInitialization(attempt);
+        Object.assign(attempt, ack, { status: 'running' });
+      }
       if (dispatch.lifecycle === 'accepted') pendingDispatches.push(dispatch.id);
       else if (dispatch.remediation?.exhausted)
         blockers.push(`${dispatch.id}: remediation exhausted: ${dispatch.remediation.feedback}`);
@@ -782,9 +909,23 @@ export async function recoverRun(
     current.reconciliation = { at: new Date().toISOString(), blockers, pendingDispatches };
   });
   if (replacement) {
+    requireInteractive(runner);
     await runner.preflight();
     try {
+      if (replacement.initialization) {
+        replacement.initialization = {
+          ...replacement.initialization,
+          attempt: replacement.id,
+          authority: replacement.id,
+        };
+        replacement.brief += initializationInstructions(
+          replacement.initialization,
+          replacement.directory,
+        );
+      }
       const ack = await runner.start(replacement);
+      Object.assign(replacement, ack);
+      if (replacement.initialization) verifyRoleInitialization(replacement);
       if (!ack.conversation || !ack.address || !ack.evidence)
         throw new Error('Missing startup acknowledgement');
       Object.assign(replacement, ack, { status: 'running' });
@@ -975,11 +1116,33 @@ export async function startBusinessTurn(
 /** Publish collected evidence; accept only after explicit domain validation. */
 export async function collectBusinessTurn(
   config: FleetConfig,
-  runner: RunnerAdapter & { collect(a: ManagedAttempt): Promise<string> },
+  runner: RunnerAdapter & {
+    collect(a: ManagedAttempt): Promise<string>;
+    stopped?(a: ManagedAttempt): Promise<boolean>;
+  },
   attempt: ManagedAttempt,
   validate?: (result: string) => void,
+  options?: { timeoutMs?: number },
 ): Promise<string> {
-  const result = await runner.collect(attempt);
+  let result: string | undefined;
+  if (runner.interactive && runner.result && attempt.dispatchId) {
+    const deadline =
+      options?.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;
+    for (;;) {
+      result = await runner.result(attempt, attempt.dispatchId);
+      if (result !== undefined) break;
+      if (runner.stopped && (await runner.stopped(attempt))) {
+        throw new Error('Runner stopped without a correlated task result');
+      }
+      if (deadline !== undefined && Date.now() >= deadline) {
+        throw new Error('Timed out waiting for correlated task result');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  } else {
+    result = await runner.collect(attempt);
+  }
+  if (result === undefined) throw new Error('No correlated task result; execution remains pending');
   const dispatch = inspectRuns(config).dispatches?.find((d) =>
     d.attempts.some((a) => a.id === attempt.id),
   );
@@ -1000,11 +1163,17 @@ export async function collectBusinessTurn(
     });
     if (!validate) return result;
     validate(result);
-    await acceptStageReceipt(config, dispatch.authority, receipt.id, async () => ({
-      currentRevision: dispatch.inputRevision,
-      ownership: true,
-      evidence: 'Collected immutable business result under reserved Run authority',
-    }));
+    await acceptStageReceipt(
+      config,
+      dispatch.authority,
+      receipt.id,
+      async () => ({
+        currentRevision: dispatch.inputRevision,
+        ownership: true,
+        evidence: 'Collected immutable business result under reserved Run authority',
+      }),
+      runner,
+    );
   }
   return result;
 }
@@ -1033,18 +1202,130 @@ export async function acceptValidatedBusinessTurns(
   config: FleetConfig,
   attempts: ManagedAttempt[],
   domainEvidence: string,
+  runner?: RunnerAdapter,
 ): Promise<void> {
   if (!domainEvidence.trim()) throw new Error('Domain acceptance evidence required');
   for (const attempt of attempts) {
     const registry = inspectRuns(config);
     const dispatch = registry.dispatches?.find((d) => d.attempts.some((a) => a.id === attempt.id));
-    if (!dispatch || dispatch.lifecycle === 'accepted') continue;
-    const receipt = registry.receipts?.filter((r) => r.dispatchId === dispatch.id).at(-1);
+    if (!dispatch || (dispatch.lifecycle === 'accepted' && !dispatch.attempts.at(-1)?.persistent))
+      continue;
+    const receipt = dispatch.acceptedReceipt
+      ? registry.receipts?.find((r) => r.id === dispatch.acceptedReceipt)
+      : registry.receipts?.filter((r) => r.dispatchId === dispatch.id).at(-1);
     if (!receipt) throw new Error('Business completion receipt missing');
-    await acceptStageReceipt(config, dispatch.authority, receipt.id, async () => ({
-      currentRevision: dispatch.inputRevision,
-      ownership: true,
-      evidence: domainEvidence,
-    }));
+    await acceptStageReceipt(
+      config,
+      dispatch.authority,
+      receipt.id,
+      async () => ({
+        currentRevision: dispatch.inputRevision,
+        ownership: true,
+        evidence: domainEvidence,
+      }),
+      runner,
+    );
   }
+}
+
+/** Persist intent before sending; repeated IDs reconcile rather than replay uncertain input. */
+export async function sendStageMessage(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  dispatchId: string,
+  authority: string,
+  message: { id: string; brief: string },
+): Promise<void> {
+  if (!message.id.trim() || !message.brief.trim())
+    throw new Error('Expected message identity and complete brief');
+  if (!runner.interactive || !runner.send)
+    throw new Error('Runner lacks persistent interactive input');
+  let send = false;
+  const attempt = updateRunRegistry(config, (registry) => {
+    const dispatch = findDispatch(registry, dispatchId);
+    authorize(registry, dispatch.runId, authority);
+    if (dispatch.provider !== runner.name) throw new Error('Run provider mismatch');
+    if (dispatch.lifecycle === 'accepted')
+      throw new Error('Accepted task requires a new Dispatch for follow-up assignment');
+    const existing = dispatch.messages?.find((m) => m.id === message.id);
+    if (existing) {
+      if (existing.brief !== message.brief)
+        throw new Error('Message identity already bound to different input');
+    } else {
+      (dispatch.messages ??= []).push({
+        ...message,
+        attemptId: dispatch.attempts.at(-1)!.id,
+        status: 'pending',
+      });
+      send = true;
+    }
+    return dispatch.attempts.at(-1)!;
+  });
+  if (!send) return;
+  let status: 'delivered' | 'uncertain' = 'uncertain';
+  let evidence: string;
+  try {
+    const delivery = await runner.send(attempt, message);
+    if (!delivery.evidence) throw new Error('Missing delivery evidence');
+    status = delivery.status;
+    evidence = delivery.evidence;
+  } catch (error) {
+    evidence = String(error);
+  }
+  updateRunRegistry(config, (registry) => {
+    const dispatch = findDispatch(registry, dispatchId);
+    const persisted = dispatch.messages!.find((m) => m.id === message.id)!;
+    Object.assign(persisted, { status, evidence });
+  });
+}
+
+/** Verify accepted execution shutdown while retaining checkout ownership for preservation. */
+export async function stopAcceptedExecution(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  dispatchId: string,
+  authority: string,
+): Promise<void> {
+  const registry = inspectRuns(config);
+  const dispatch = findDispatch(registry, dispatchId);
+  authorize(registry, dispatch.runId, authority);
+  if (runner.name !== dispatch.provider) throw new Error('Run provider mismatch');
+  if (dispatch.lifecycle !== 'accepted' || dispatch.messages?.some((m) => m.status !== 'completed'))
+    throw new Error('Acceptance and reconciled input required before release');
+  const attempt = dispatch.attempts.at(-1)!;
+  if (!runner.stopped) throw new Error('Verified termination capability required');
+  if (!(await runner.stopped(attempt))) {
+    const cancellation = await cancelAttempt(attempt, runner);
+    if (cancellation.cancellation?.outcome !== 'confirmed' || !(await runner.stopped(attempt)))
+      throw new Error('Unknown termination; checkout remains occupied');
+  }
+  // Execution capacity and checkout ownership are independent lifecycle gates.
+}
+
+/** Release only through explicit verified workflow cleanup after execution shutdown. */
+export async function releaseAcceptedExecution(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  dispatchId: string,
+  authority: string,
+  cleanup?: () => void,
+): Promise<void> {
+  await stopAcceptedExecution(config, runner, dispatchId, authority);
+  if (!cleanup)
+    throw new Error('Checkout release requires the workflow preservation and cleanup gate');
+  const dispatch = findDispatch(inspectRuns(config), dispatchId);
+  const attempt = dispatch.attempts.at(-1)!;
+  if (
+    !inspectRuns(config).resources?.some(
+      (r) => r.runId === dispatch.runId && r.path === attempt.checkout,
+    )
+  )
+    return;
+  await releaseRunCheckout(
+    config,
+    dispatch.runId,
+    attempt.checkout,
+    runner.stopped!.bind(runner),
+    cleanup,
+  );
 }

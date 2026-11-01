@@ -25,6 +25,7 @@ test('startup requires runner evidence and isolates fleets, retaining a failed b
   const a = config('a');
   const b = config('b');
   const runner: RunnerAdapter = {
+    interactive: true,
     name: 'controlled',
     async preflight() {},
     async start(attempt) {
@@ -70,6 +71,7 @@ test('missing capabilities refuse launch; an empty receipt cannot report success
     base: 'main',
   };
   const runner: RunnerAdapter = {
+    interactive: true,
     name: 'controlled',
     async preflight() {
       throw new Error('missing input capability');

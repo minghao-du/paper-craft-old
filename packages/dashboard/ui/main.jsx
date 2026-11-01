@@ -250,6 +250,71 @@ function App() {
                                   <summary>{t('main.runtimeObservations')}</summary>
                                   <pre>{JSON.stringify(task.runtimeEvidence, null, 2)}</pre>
                                 </details>
+                                {task.executionEvidence && (
+                                  <details>
+                                    <summary>{t('main.executionEvidence')}</summary>
+                                    <div className="execution-evidence">
+                                      <p>
+                                        <strong>
+                                          {t('main.executionAcceptance', {
+                                            acceptance:
+                                              task.executionEvidence.acceptance ||
+                                              t('main.unknown'),
+                                          })}
+                                        </strong>
+                                      </p>
+                                      {task.executionEvidence.attempts?.map((attempt) => (
+                                        <section
+                                          key={attempt.id}
+                                          className="execution-attempt-card"
+                                        >
+                                          <strong>
+                                            {t('main.executionAttempt', { id: attempt.id })}
+                                            {attempt.stale && ` ${t('main.stale')}`}
+                                          </strong>
+                                          <div className="execution-field-grid">
+                                            <p>{t('main.executionRole', { role: attempt.role })}</p>
+                                            <p>
+                                              {t('main.executionRunner', {
+                                                runner: attempt.runner,
+                                              })}
+                                            </p>
+                                            <p>
+                                              {t('main.executionAddress', {
+                                                address: attempt.address || t('main.noneRecorded'),
+                                              })}
+                                            </p>
+                                            <p>
+                                              {t('main.executionStatus', {
+                                                status:
+                                                  attempt.execution ||
+                                                  attempt.recordedStatus ||
+                                                  t('main.unknown'),
+                                              })}
+                                            </p>
+                                            <p>
+                                              {t('main.executionObserved', {
+                                                time: attempt.observation?.at
+                                                  ? formatDate(attempt.observation.at)
+                                                  : t('main.unknown'),
+                                              })}
+                                            </p>
+                                          </div>
+                                          {attempt.observation?.evidence && (
+                                            <p>
+                                              <small>{attempt.observation.evidence}</small>
+                                            </p>
+                                          )}
+                                          {attempt.error && <p role="alert">{attempt.error}</p>}
+                                        </section>
+                                      ))}
+                                      <details>
+                                        <summary>{t('main.executionRaw')}</summary>
+                                        <pre>{JSON.stringify(task.executionEvidence, null, 2)}</pre>
+                                      </details>
+                                    </div>
+                                  </details>
+                                )}
                                 <TaskLogs task={task} read={read} />
                                 <p>
                                   {t('main.blockers', {

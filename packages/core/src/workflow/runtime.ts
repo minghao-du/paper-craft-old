@@ -1,9 +1,17 @@
+import { ClaudeInteractive } from './claude-interactive.js';
+import { AgyInteractive } from './agy-interactive.js';
 /** Managed role startup and durable runner evidence, independent of the model host. */
+import { InteractiveCodexRunner } from './codex-interactive.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { stateDirectory } from './handoff.js';
+import {
+  verifyRoleInitialization,
+  initializationInstructions,
+  type RoleInitialization,
+} from './role-initialization.js';
 import type { FleetConfig } from './fleet-config.js';
 
 /** One execution attempt; unknown retains occupancy until independently verified. */
@@ -12,8 +20,22 @@ export interface ManagedAttempt {
   fleet: string;
   /** Run ownership recorded at intake. */
   run?: string;
-  role: 'orchestrator' | 'worker' | 'epic' | 'landing' | 'pipeline-audit' | 'research-state';
+  role:
+    | 'orchestrator'
+    | 'worker'
+    | 'epic'
+    | 'landing'
+    | 'pipeline-audit'
+    | 'pipeline-refactor'
+    | 'research-state';
   runner: string;
+  /** Previous process identity when this attempt replaces a terminated execution. */
+  dispatchId?: string;
+  /** The adapter supports correlated results from a process that remains alive. */
+  persistent?: boolean;
+  initialization?: RoleInitialization;
+  predecessor?: string;
+  observation?: ExecutionObservation;
   brief: string;
   status: 'starting' | 'running' | 'unknown';
   created: string;
@@ -29,10 +51,27 @@ export interface ManagedAttempt {
   paneId?: string;
   evidence?: string;
   error?: string;
+  /** Resolved startup failures remain visible after exact-identity recovery. */
+  startupFailures?: { error: string; resolvedAt: string }[];
 }
 /** Adapter owns capability checks and evidence; a terminal alone is insufficient. */
 export interface RunnerAdapter {
   name: string;
+  /** True only after the complete persistent interactive lifecycle is verified. */
+  interactive?: boolean;
+  /** Correlated input into the existing process; uncertainty forbids automatic replay. */
+  send?(
+    attempt: ManagedAttempt,
+    message: { id: string; brief: string },
+  ): Promise<{
+    status: 'delivered' | 'uncertain';
+    evidence: string;
+  }>;
+  /** Durable task output; implementations must not wait for process exit. */
+  result?(attempt: ManagedAttempt, dispatchId: string): Promise<string | undefined>;
+  /** Observe execution independently of receipt acceptance. */
+  observe?(attempt: ManagedAttempt): Promise<ExecutionObservation>;
+  stopped?(attempt: ManagedAttempt): Promise<boolean>;
   /** Recover normalized startup evidence from this Runner only. */
   recoverReceipt?(
     attempt: ManagedAttempt,
@@ -64,9 +103,11 @@ export async function startOrchestrator(
   runner: RunnerAdapter,
   brief: string,
   run: string,
+  initialization?: Omit<RoleInitialization, 'role' | 'attempt' | 'briefHash'>,
 ): Promise<ManagedAttempt> {
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   if (!brief.trim()) throw new Error('Expected a non-empty Orchestrator brief');
+  requireInteractive(runner);
   await runner.preflight();
   mkdirSync(home(config), { recursive: true });
   try {
@@ -87,6 +128,7 @@ export async function startOrchestrator(
     fleet: createHash('sha256').update(config.file).digest('hex'),
     role: 'orchestrator',
     runner: runner.name,
+    persistent: !!runner.result,
     brief,
     status: 'starting',
     created: new Date().toISOString(),
@@ -95,12 +137,25 @@ export async function startOrchestrator(
   };
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   const path = join(home(config), `orchestrator-${run}.json`);
+  if (runner.result) {
+    if (!initialization)
+      throw new Error('Persistent Orchestrator requires Run-derived initialization context');
+    attempt.initialization = {
+      ...initialization,
+      role: attempt.role,
+      attempt: attempt.id,
+      briefHash: createHash('sha256').update(brief).digest('hex'),
+    };
+    attempt.brief += initializationInstructions(attempt.initialization, directory);
+  }
   save(path, attempt);
-  writeFileSync(join(directory, 'brief.md'), brief, { mode: 0o600 });
+  writeFileSync(join(directory, 'brief.md'), attempt.brief, { mode: 0o600 });
   try {
     const receipt = await runner.start(attempt);
     if (!receipt.conversation || !receipt.address || !receipt.evidence)
       throw new Error('Expected Runner conversation, runtime address and startup evidence');
+    Object.assign(attempt, receipt);
+    if (attempt.initialization) verifyRoleInitialization(attempt);
     Object.assign(attempt, receipt, { status: 'running' });
   } catch (error) {
     attempt.status = 'unknown';
@@ -110,21 +165,24 @@ export async function startOrchestrator(
   save(join(directory, 'attempt.json'), attempt);
   return attempt;
 }
-function shell(value: string): string {
+/** Escape a shell argument by wrapping it in single quotes. */
+export function quote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
+const shell = quote;
 /** Codex JSONL is the receipt/result channel; resume supplies subsequent input.
  * The workflow driver polls the durable log to wake and dispatch the next turn.
  */
 export class CodexRunner implements RunnerAdapter {
   readonly name: string = 'codex';
+  readonly interactive: boolean = false;
   protected command(attempt: ManagedAttempt): string {
     return `codex exec ${[attempt.directory, ...(attempt.writableDirectories ?? [])].map((path) => `--add-dir ${shell(path)}`).join(' ')} ${attempt.conversation ? `resume ${shell(attempt.conversation)} ` : ''} -c sandbox_mode='"workspace-write"' -c approval_policy='"never"' --json --output-last-message ${shell(join(attempt.directory, 'result.md'))} -`;
   }
   protected normalize(event: Record<string, unknown>): Record<string, unknown> {
     return event;
   }
-  readonly cancellation = false;
+  readonly cancellation: boolean = false;
   /** Verified process exit releases execution capacity, never checkout ownership. */
   async termination(attempt: ManagedAttempt): Promise<boolean> {
     const file = join(attempt.directory, 'exit-code');
@@ -220,7 +278,11 @@ export class CodexRunner implements RunnerAdapter {
   async start(
     attempt: ManagedAttempt,
   ): Promise<{ conversation: string; address: string; evidence: string }> {
-    const specialist = ['pipeline-audit', 'research-state'].includes(attempt.role);
+    const specialist = [
+      'pipeline-audit',
+      'pipeline-refactor',
+      'research-state',
+    ].includes(attempt.role);
     if (specialist && !attempt.terminalSession)
       throw new Error('Specialist requires a verified existing tmux session');
     const session = `pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`;
@@ -359,18 +421,105 @@ abstract class StreamRunner extends CodexRunner {
 /** Explicit Claude Code stream protocol adapter. */
 export class ClaudeRunner extends StreamRunner {
   readonly name = 'claude';
+  readonly cancellation = true;
+  readonly interactive: boolean = true;
   protected resumeFlag = '--resume';
+  private readonly tui = new ClaudeInteractive();
+  preflight() {
+    return this.tui.preflight();
+  }
+  start(a: ManagedAttempt) {
+    return this.tui.start(a);
+  }
+  recoverReceipt(a: ManagedAttempt) {
+    return this.tui.recoverReceipt(a);
+  }
+  stopped(a: ManagedAttempt) {
+    return this.tui.terminated(a);
+  }
+  termination(a: ManagedAttempt) {
+    return this.tui.terminated(a);
+  }
+  cancel(a: ManagedAttempt) {
+    return this.tui.cancel(a);
+  }
+  send(a: ManagedAttempt, m: { id: string; brief: string }) {
+    return this.tui.send(a, m);
+  }
+  result(a: ManagedAttempt, id: string) {
+    return this.tui.result(a, id);
+  }
+  observe(a: ManagedAttempt) {
+    return this.tui.observe(a);
+  }
+  /** Persistent completion uses correlated native turn output, never process exit. */
+  async collect(a: ManagedAttempt): Promise<string> {
+    for (;;) {
+      const output = await this.tui.result(a, a.dispatchId ?? a.id);
+      if (output !== undefined) return output;
+      if (await this.stopped(a)) throw new Error('Claude exited without a correlated task result');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  collectable(a: ManagedAttempt): boolean {
+    return existsSync(join(a.directory, 'claude-hooks'));
+  }
 }
-/** Explicit agy stream protocol adapter; unsupported CLI capabilities fail closed. */
-export class AgyRunner extends StreamRunner {
+/** Managed agy persistent TUI adapter backed by native hook transcripts. */
+export class AgyRunner implements RunnerAdapter {
   readonly name = 'agy';
-  protected resumeFlag = '--conversation';
+  readonly cancellation = true;
+  readonly interactive = true;
+  private readonly tui = new AgyInteractive();
+  preflight() {
+    return this.tui.preflight();
+  }
+  start(a: ManagedAttempt) {
+    return this.tui.start(a);
+  }
+  recoverReceipt(a: ManagedAttempt) {
+    return this.tui.recoverReceipt(a);
+  }
+  stopped(a: ManagedAttempt) {
+    return this.tui.stopped(a);
+  }
+  termination(a: ManagedAttempt) {
+    return this.tui.terminated(a);
+  }
+  cancel(a: ManagedAttempt) {
+    return this.tui.cancel(a);
+  }
+  send(a: ManagedAttempt, m: { id: string; brief: string }) {
+    return this.tui.send(a, m);
+  }
+  result(a: ManagedAttempt, id: string) {
+    return this.tui.result(a, id);
+  }
+  observe(a: ManagedAttempt) {
+    return this.tui.observe(a);
+  }
+  /** Persistent completion uses correlated native turn output, never process exit. */
+  async collect(a: ManagedAttempt): Promise<string> {
+    for (;;) {
+      const output = await this.tui.result(a, a.dispatchId ?? a.id);
+      if (output !== undefined) return output;
+      if (await this.stopped(a)) throw new Error('agy exited without a correlated task result');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  collectable(a: ManagedAttempt): boolean {
+    return existsSync(join(a.directory, 'agy-native.json'));
+  }
 }
 /** Resolve a supported provider without fallback. */
-export function managedRunner(provider: string): CodexRunner {
+export function managedRunner(provider: string): RunnerAdapter & {
+  stopped(attempt: ManagedAttempt): Promise<boolean>;
+  collect(attempt: ManagedAttempt): Promise<string>;
+  collectable(attempt: ManagedAttempt): boolean;
+} {
   switch (provider) {
     case 'codex':
-      return new CodexRunner();
+      return new InteractiveCodexRunner();
     case 'agy':
       return new AgyRunner();
     case 'claude':
@@ -459,4 +608,16 @@ export async function reconcileAttempt(
     : { status: 'unknown' };
   writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(control));
   return control;
+}
+
+/** A timestamped execution observation never grants task acceptance or ownership. */
+export interface ExecutionObservation {
+  status: 'running' | 'idle' | 'waiting' | 'error' | 'exited' | 'unknown';
+  at: string;
+  evidence: string;
+}
+/** Named roles require persistent interactive execution; adapters must explicitly opt in. */
+export function requireInteractive(runner: RunnerAdapter): void {
+  if (runner.interactive !== true)
+    throw new Error(`${runner.name} lacks verified persistent interactive lifecycle support`);
 }

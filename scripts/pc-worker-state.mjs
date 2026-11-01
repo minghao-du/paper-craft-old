@@ -11,6 +11,9 @@ try {
     const issue = Number(issueText);
     if (!Number.isSafeInteger(issue) || issue < 1 || !safe(role) || !safe(fleet))
       throw new Error('Expected positive issue and safe role/fleet identifiers');
+    if (['orchestrator', 'epic', 'worker', 'landing', 'pr-land', 'pipeline-audit',
+      'pipeline-refactor', 'research-state'].includes(role.toLowerCase().replace(/^pc-/, '')))
+      throw new Error('Persistent roles require a verified interactive Runner Adapter; use the managed Run lifecycle instead of a transparent command');
     const root = realpathSync(rootText);
     const runtime = join(runtimeRoot(root), fleet);
     const runs = join(runtime, 'runs');

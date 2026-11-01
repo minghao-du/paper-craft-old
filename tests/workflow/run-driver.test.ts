@@ -1,12 +1,18 @@
+import { initializeRole } from './initialize-role.js';
 import { createHash } from 'node:crypto';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 import { readDashboardFleet } from '../../packages/core/src/workflow/dashboard.js';
+import { managedRunner } from '../../packages/core/src/workflow/runtime.js';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import {
   startRun,
+  sendStageMessage,
+  releaseAcceptedExecution,
+  collectBusinessTurn,
+  acceptValidatedBusinessTurns,
   orchestratorForSubject,
   referenceRunSubject,
   inspectRuns,
@@ -33,6 +39,7 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
   let launches = 0;
   let verifiedStopped = true;
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return verifiedStopped;
@@ -65,6 +72,19 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     expect(() => orchestratorForSubject(config, subject.repository, 7)).toThrow(
       'workflow orchestrator start 7',
     );
+    // A print/exec adapter must fail before reserving ownership or launching a role.
+    await expect(
+      startRun(config, { ...runner, interactive: false }, subject, 'codex'),
+    ).rejects.toThrow(/interactive/);
+    expect(managedRunner('agy').interactive).toBe(true);
+    await expect(
+      startRun(config, { ...managedRunner('agy'), interactive: false }, subject, 'agy'),
+    ).rejects.toThrow(/interactive/);
+    expect(managedRunner('claude').interactive).toBe(true);
+    await expect(
+      startRun(config, { ...managedRunner('claude'), interactive: false }, subject, 'claude'),
+    ).rejects.toThrow(/interactive/);
+    expect(launches).toBe(0);
     const first = await startRun(config, runner, subject, 'codex');
     expect(orchestratorForSubject(config, subject.repository, 7).runner).toBe('codex');
     updateRunRegistry(config, (registry) => {
@@ -96,6 +116,34 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     expect(snapshot.tasks.find((task) => task.runId === first.id)?.orchestratorId).toBe(
       first.orchestratorId,
     );
+    expect(snapshot.tasks.find((task) => task.runId === first.id)?.executionEvidence).toMatchObject(
+      {
+        attempts: [{ id: first.orchestratorId, conversation: 'session', execution: 'unknown' }],
+        acceptance: 'unknown',
+      },
+    );
+    const beforeRead = JSON.stringify(inspectRuns(config));
+    await readDashboardFleet({ id: 'fleet', config: config.file });
+    expect(JSON.stringify(inspectRuns(config))).toBe(beforeRead);
+    updateRunRegistry(config, (registry) => {
+      registry.runs[0].orchestrator!.observation = {
+        status: 'waiting',
+        at: '2000-01-01T00:00:00Z',
+        evidence: 'authorization pending',
+      };
+      registry.runs[0].orchestrator!.startupFailures = [
+        { error: 'startup uncertain', resolvedAt: '2000-01-01T00:01:00Z' },
+      ];
+    });
+    const waitingSnapshot = await readDashboardFleet({ id: 'fleet', config: config.file });
+    expect(
+      waitingSnapshot.tasks.find((t) => t.runId === first.id)?.executionEvidence,
+    ).toMatchObject({
+      acceptance: 'unknown',
+      attempts: [
+        { execution: 'waiting', stale: true, startupFailures: [{ error: 'startup uncertain' }] },
+      ],
+    });
     expect(inspectRuns(config).runs).toHaveLength(2);
     const request = {
       runId: first.id,
@@ -107,7 +155,27 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       brief: 'Implement task',
       prerequisites: [],
     };
+    for (const role of ['worker', 'epic', 'landing', 'pipeline-audit', 'research-state'] as const) {
+      await expect(
+        dispatchStage(config, { ...runner, interactive: false }, { ...request, role }),
+      ).rejects.toThrow(/interactive/);
+    }
     const stage = await dispatchStage(config, runner, request);
+    let sends = 0;
+    const interactiveRunner = {
+      ...runner,
+      interactive: true,
+      async send() {
+        sends++;
+        return { status: 'uncertain' as const, evidence: 'connection lost after paste' };
+      },
+    };
+    const message = { id: 'operator-followup', brief: 'Check ownership\nThen report' };
+    await sendStageMessage(config, interactiveRunner, stage.id, first.orchestratorId, message);
+    await sendStageMessage(config, interactiveRunner, stage.id, first.orchestratorId, message);
+    expect(sends).toBe(1);
+    expect(inspectRuns(config).dispatches![0].messages![0].status).toBe('uncertain');
+    expect(inspectRuns(config).dispatches![0].lifecycle).toBe('running');
     expect((await dispatchStage(config, runner, request)).id).toBe(stage.id);
     await expect(
       dispatchStage(config, runner, {
@@ -137,6 +205,11 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       async () => true,
     );
     expect(retried.attempts).toHaveLength(2);
+    expect(retried.attempts[1].brief).not.toContain(request.brief);
+    expect(retried.attempts[1].brief).toContain(stage.briefReference.path);
+    expect(retried.attempts[1].brief).toContain('Do not replay');
+    expect(retried.attempts[1].conversation).toBe(stage.attempts[0].conversation);
+    expect(retried.attempts[1].predecessor).toBe(stage.attempts[0].id);
     const dependent = {
       ...request,
       stage: 'merge',
@@ -169,6 +242,31 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       ownership: true,
       evidence: 'checked current facts',
     }));
+    const acceptedView = await readDashboardFleet({ id: 'fleet', config: config.file });
+    expect(
+      acceptedView.tasks.find((t) => t.id === `fleet:managed:${stage.id}`)?.executionEvidence,
+    ).toMatchObject({
+      acceptance: 'accepted',
+      receipts: expect.arrayContaining([
+        {
+          id: corrected.id,
+          attemptId: corrected.attemptId,
+          outcome: corrected.outcome,
+          accepted: true,
+        },
+      ]),
+    });
+    updateRunRegistry(config, (state) => {
+      state.dispatches!.find((d) => d.id === stage.id)!.acceptedReceipt = 'missing-receipt';
+    });
+    const conflictingView = await readDashboardFleet({ id: 'fleet', config: config.file });
+    expect(
+      conflictingView.tasks.find((t) => t.id === `fleet:managed:${stage.id}`)?.executionEvidence
+        ?.acceptance,
+    ).toBe('conflicting');
+    updateRunRegistry(config, (state) => {
+      state.dispatches!.find((d) => d.id === stage.id)!.acceptedReceipt = corrected.id;
+    });
     verifiedStopped = false;
     await expect(
       dispatchStage(config, runner, { ...request, prerequisites: [stage.id] }),
@@ -236,6 +334,7 @@ test.each(['agy', 'claude'])(
     };
     const runner = {
       name: provider,
+      interactive: true,
       async stopped() {
         return true;
       },
@@ -279,52 +378,70 @@ test.each(['agy', 'claude'])(
   },
 );
 
-test.each(['agy', 'claude'])(
-  'managed %s adapter requires durable provider startup and success evidence',
-  async (provider) => {
-    const { managedRunner } = await import('../../packages/core/src/workflow/runtime.js');
-    const directory = mkdtempSync(join(tmpdir(), 'pc-stream-'));
-    const runner = managedRunner(provider);
-    const attempt = {
-      id: 'a',
-      fleet: 'fleet',
-      runner: provider,
-      role: 'worker' as const,
-      brief: 'task',
-      status: 'starting' as const,
-      created: 'now',
-      directory,
-      checkout: directory,
-      address: 'tmux:actual',
-    };
-    try {
-      writeFileSync(
-        join(directory, 'events.jsonl'),
-        JSON.stringify({ type: 'system', subtype: 'init', session_id: 'session-id' }) + '\n',
-      );
-      expect(await runner.recoverReceipt(attempt)).toBeUndefined();
-      writeFileSync(
-        join(directory, 'events.jsonl'),
-        JSON.stringify({ type: 'system', subtype: 'init', session_id: 'session-id' }) +
-          '\n' +
-          JSON.stringify({ type: 'assistant', message: { content: [] } }) +
-          '\n' +
-          JSON.stringify({ type: 'result', subtype: 'success', result: 'delivered' }) +
-          '\n',
-      );
-      expect((await runner.recoverReceipt(attempt))?.conversation).toBe('session-id');
-      writeFileSync(join(directory, 'exit-code'), '0');
-      expect(await runner.collect(attempt)).toBe('delivered');
-      writeFileSync(
-        join(directory, 'events.jsonl'),
-        JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'failed' }),
-      );
-      await expect(runner.collect(attempt)).rejects.toThrow(/completed result/);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  },
-);
+test('managed agy requires native input attribution and refuses stream or interleaved evidence', async () => {
+  const runner = managedRunner('agy');
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-'));
+  const a = {
+    id: 'attempt',
+    fleet: 'fleet',
+    role: 'worker' as const,
+    runner: 'agy',
+    brief: 'task',
+    directory,
+    checkout: directory,
+    created: new Date().toISOString(),
+    status: 'running' as const,
+    conversation: 'native-id',
+  };
+  const transcript = join(directory, 'transcript.jsonl');
+  writeFileSync(
+    join(directory, 'events.jsonl'),
+    JSON.stringify({ type: 'result', subtype: 'success', result: 'unattributed' }),
+  );
+  writeFileSync(join(directory, 'exit-code'), '0');
+  expect(await runner.recoverReceipt(a)).toBeUndefined();
+  expect(await runner.result(a, 'attempt')).toBeUndefined();
+  writeFileSync(
+    join(directory, 'agy-native.json'),
+    JSON.stringify({
+      conversation_id: 'native-id',
+      transcript_path: transcript,
+      agent_state: 'idle',
+    }),
+  );
+  const input = {
+    step_index: 2,
+    type: 'USER_INPUT',
+    source: 'USER_EXPLICIT',
+    status: 'DONE',
+    content: '<USER_REQUEST>\ntask\n</USER_REQUEST>',
+  };
+  const result = {
+    step_index: 3,
+    type: 'PLANNER_RESPONSE',
+    source: 'MODEL',
+    status: 'DONE',
+    content: 'accepted output',
+  };
+  try {
+    writeFileSync(transcript, [input, result].map((x) => JSON.stringify(x)).join('\n'));
+    expect(await runner.result(a, 'attempt')).toBe('accepted output');
+    expect(await runner.result(a, 'predecessor')).toBeUndefined();
+    writeFileSync(
+      transcript,
+      [
+        input,
+        { ...input, step_index: 3, content: '<USER_REQUEST>\nmanual\n</USER_REQUEST>' },
+        { ...result, step_index: 4 },
+      ]
+        .map((x) => JSON.stringify(x))
+        .join('\n'),
+    );
+    expect(await runner.result(a, 'attempt')).toBeUndefined();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('overlapping child intake reconnects ownership and consuming EPIC references preserve provider', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-overlap-')));
@@ -339,6 +456,7 @@ test('overlapping child intake reconnects ownership and consuming EPIC reference
   };
   let launches = 0;
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;
@@ -372,6 +490,253 @@ test('overlapping child intake reconnects ownership and consuming EPIC reference
       consumingRunIds: [epic.id],
     });
     expect(launches).toBe(2);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test.each(['direct', 'validated', 'collect', 'followup', 'followup-complete'])(
+  'persistent acceptance (%s) stops only after outstanding assignments complete',
+  async (path) => {
+    const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-interactive-')));
+    mkdirSync(join(project, 'pool'));
+    const config = {
+      file: join(project, '.epic-config.json'),
+      project,
+      root: join(project, 'pool'),
+      slots: [],
+      worktrees: true,
+      base: 'main',
+    };
+    let live = true;
+    let stops = 0;
+    let allowStop = false;
+    const runner = {
+      name: 'codex',
+      interactive: true,
+      cancellation: true,
+      async preflight() {},
+      async start(attempt) {
+        initializeRole(attempt);
+        return {
+          conversation: 'exact-conversation',
+          address: 'tmux:known',
+          evidence: 'brief acknowledged',
+        };
+      },
+      async send() {
+        return { status: 'delivered' as const, evidence: 'queued followup' };
+      },
+      async result() {
+        return 'durable correlated result';
+      },
+      async collect() {
+        throw new Error('must not wait for exit');
+      },
+      async stopped() {
+        return !live;
+      },
+      async cancel() {
+        stops++;
+        if (allowStop) live = false;
+        return { evidence: 'verified exit' };
+      },
+      async observe() {
+        return {
+          status: 'waiting' as const,
+          at: '2026-11-01T00:00:00Z',
+          evidence: 'question pending',
+        };
+      },
+    };
+    try {
+      writeFileSync(config.file, JSON.stringify({ clone_root: 'pool', local_worktrees: true }));
+      const run = await startRun(
+        config,
+        runner,
+        {
+          repository: 'owner/repo',
+          number: 99,
+          kind: 'issue',
+          title: 'controlled lifecycle',
+          body: 'complete',
+        },
+        'codex',
+      );
+      const dispatch = await dispatchStage(config, runner, {
+        runId: run.id,
+        authority: run.orchestratorId,
+        subject: 'owner/repo#99',
+        role: 'worker',
+        stage: 'implementation',
+        inputRevision: 'head',
+        brief: 'Complete one task',
+        prerequisites: [],
+      });
+      await recoverRun(config, runner, run.id);
+      expect(inspectRuns(config).dispatches![0].lifecycle).toBe('running');
+      expect(inspectRuns(config).dispatches![0].attempts[0].observation?.status).toBe('waiting');
+      await expect(
+        releaseAcceptedExecution(config, runner, dispatch.id, run.orchestratorId),
+      ).rejects.toThrow(/Acceptance/);
+      expect(stops).toBe(0);
+      if (path === 'followup') {
+        await sendStageMessage(config, runner, dispatch.id, run.orchestratorId, {
+          id: 'next-assignment',
+          brief: 'Do additional work',
+        });
+      }
+      const verify = async () => ({
+        currentRevision: 'head',
+        ownership: true,
+        evidence: 'verified durable work',
+      });
+      if (path === 'collect') {
+        await expect(
+          collectBusinessTurn(config, runner, dispatch.attempts[0], () => {}),
+        ).rejects.toThrow(/Unknown termination/);
+      } else {
+        expect(await collectBusinessTurn(config, runner, dispatch.attempts[0])).toBe(
+          'durable correlated result',
+        );
+      }
+      let receipt = inspectRuns(config).receipts!.at(-1)!;
+      if (path === 'followup-complete')
+        receipt = publishStageReceipt(config, {
+          ...receipt,
+          corrects: receipt.id,
+          messageIds: ['next-assignment'],
+        });
+      if (path === 'followup') {
+        await acceptStageReceipt(config, run.orchestratorId, receipt.id, verify, runner);
+        expect(live).toBe(true);
+        expect(stops).toBe(0);
+        expect(inspectRuns(config).resources).toHaveLength(1);
+        receipt = publishStageReceipt(config, {
+          ...receipt,
+          corrects: receipt.id,
+          messageIds: ['next-assignment'],
+        });
+      }
+      if (path === 'direct' || path.startsWith('followup'))
+        await expect(
+          acceptStageReceipt(config, run.orchestratorId, receipt.id, verify, runner),
+        ).rejects.toThrow(/Unknown termination/);
+      if (path === 'validated')
+        await expect(
+          acceptValidatedBusinessTurns(config, [dispatch.attempts[0]], 'checked', runner),
+        ).rejects.toThrow(/Unknown termination/);
+      expect(live).toBe(true);
+      expect(inspectRuns(config).resources).toHaveLength(1);
+      allowStop = true;
+      await acceptStageReceipt(config, run.orchestratorId, receipt.id, verify, runner);
+      expect(stops).toBe(2);
+
+      expect(inspectRuns(config).resources).toHaveLength(1);
+      expect(inspectRuns(config).dispatches![0].attempts[0].conversation).toBe(
+        'exact-conversation',
+      );
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  },
+);
+
+test('Claude native correlation rejects missing prompt identity and duplicate submissions', async () => {
+  const { ClaudeRunner } = await import('../../packages/core/src/workflow/runtime.js');
+  const directory = mkdtempSync(join(tmpdir(), 'pc-native-'));
+  const hooks = join(directory, 'claude-hooks');
+  mkdirSync(hooks);
+  const attempt = {
+    id: 'a',
+    fleet: 'f',
+    runner: 'claude',
+    role: 'worker' as const,
+    brief: 'task',
+    status: 'running' as const,
+    created: 'now',
+    directory,
+    checkout: directory,
+    conversation: 'session',
+    dispatchId: 'dispatch',
+  };
+  const runner = new ClaudeRunner();
+  const emit = (name: string, event: object) =>
+    writeFileSync(join(hooks, name + '.json'), JSON.stringify({ session_id: 'session', ...event }));
+  try {
+    emit('1', { hook_event_name: 'UserPromptSubmit', prompt: 'task' });
+    emit('2', { hook_event_name: 'Stop', last_assistant_message: 'unattributed' });
+    expect(await runner.result(attempt, 'dispatch')).toBeUndefined();
+    emit('1', { hook_event_name: 'UserPromptSubmit', prompt: 'task', prompt_id: 'correct' });
+    emit('2', { hook_event_name: 'Stop', prompt_id: 'manual', last_assistant_message: 'wrong' });
+    expect(await runner.result(attempt, 'dispatch')).toBeUndefined();
+    emit('3', {
+      hook_event_name: 'Stop',
+      prompt_id: 'correct',
+      last_assistant_message: 'accepted candidate',
+    });
+    expect(await runner.result(attempt, 'dispatch')).toBe('accepted candidate');
+    expect(await runner.collect(attempt)).toBe('accepted candidate');
+    expect(await runner.result(attempt, 'another-dispatch')).toBeUndefined();
+    emit('4', { hook_event_name: 'UserPromptSubmit', prompt: 'task', prompt_id: 'duplicate' });
+    expect(await runner.result(attempt, 'dispatch')).toBeUndefined();
+    expect(await runner.send(attempt, { id: 'msg', brief: 'followup' })).toEqual({
+      status: 'uncertain',
+      evidence: 'Claude lacks persisted tmux identity',
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('collectBusinessTurn polls result until available or stopped', async () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-poll-')));
+  const config = {
+    file: join(project, '.epic-config.json'),
+    project,
+    root: project,
+    slots: [],
+    worktrees: true,
+    base: 'main',
+  };
+  const attempt = {
+    id: 'att-poll',
+    dispatchId: 'disp-poll',
+    directory: project,
+    fleet: 'fleet',
+    role: 'worker' as const,
+    runner: 'codex',
+    brief: 'poll test',
+    status: 'running' as const,
+    created: '',
+    checkout: project,
+  };
+  let calls = 0;
+  let isStopped = false;
+  const runner = {
+    name: 'codex',
+    interactive: true,
+    result: vi.fn(async () => {
+      calls++;
+      return calls >= 3 ? 'delayed result' : undefined;
+    }),
+    collect: vi.fn(async () => 'from collect'),
+    stopped: vi.fn(async () => isStopped),
+    preflight: vi.fn(async () => {}),
+    start: vi.fn(),
+  };
+  try {
+    const result = await collectBusinessTurn(config, runner as any, attempt);
+    expect(result).toBe('delayed result');
+    expect(calls).toBe(3);
+
+    // If runner stops while result is not yet available, throws
+    calls = 0;
+    isStopped = true;
+    runner.result.mockImplementation(async () => undefined);
+    await expect(collectBusinessTurn(config, runner as any, attempt)).rejects.toThrow(
+      /Runner stopped without a correlated task result/,
+    );
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

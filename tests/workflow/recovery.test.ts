@@ -21,6 +21,7 @@ test('collection failure resumes the original acceptance attempt and preserves e
     fail = true,
     closes = 0;
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;
@@ -165,6 +166,7 @@ test('batch recovery isolates failed providers, preserves unknown ownership and 
   };
   let receipts = 0;
   const runner = {
+    interactive: true,
     name: 'codex',
     async preflight() {},
     async start() {
@@ -235,6 +237,7 @@ test('Run recovery restores attributed startup evidence without relaunch or touc
   };
   let launches = 0;
   const runner = {
+    interactive: true,
     name: 'codex',
     async preflight() {},
     async start() {
@@ -272,6 +275,10 @@ test('Run recovery restores attributed startup evidence without relaunch or touc
     expect(launches).toBe(2);
     const runs = inspectRuns(config).runs;
     expect(runs.find((r) => r.id === first.id)?.orchestrator?.conversation).toBe('original');
+    expect(runs.find((r) => r.id === first.id)?.orchestrator?.error).toBeUndefined();
+    expect(runs.find((r) => r.id === first.id)?.orchestrator?.startupFailures).toEqual([
+      { error: 'notification lost', resolvedAt: expect.any(String) },
+    ]);
     expect(runs.find((r) => r.id === other.id)?.orchestrator?.status).toBe('unknown');
   } finally {
     rmSync(project, { recursive: true, force: true });

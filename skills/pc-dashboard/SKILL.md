@@ -91,3 +91,13 @@ Entries identify Fleet, subject, source and observation time; private evidence v
 Restarts mark a monitoring gap from the last saved observation.
 These records cannot recover unseen events or distinguish otherwise unknown execution attempts.
 Retention only prunes Dashboard observation records.
+
+## Persistent execution evidence
+
+Expand execution evidence on Run and managed dispatch rows to inspect recorded role, provider, conversation, attempt, predecessor and tmux address together.
+Timestamped running, idle, waiting, error, exited and unknown observations remain separate from receipt acceptance.
+Missing observations and observations older than five minutes are marked stale; neither implies completion or availability.
+Receipt claims retain attempt attribution; missing or mismatched accepted receipts are conflicting evidence.
+Resolved startup failures remain visible alongside current errors.
+Refresh reads existing durable evidence only and never launches, messages, recovers or terminates an execution.
+Monitoring gaps and unknown attempts remain unknown; the view is not a complete execution audit.

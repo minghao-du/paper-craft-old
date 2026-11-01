@@ -435,6 +435,28 @@ pre {
     monospace;
   tab-size: 2;
 }
+.execution-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 10px 0;
+}
+.execution-attempt-card {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 14px;
+  background: #fff;
+}
+.execution-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 4px 12px;
+  margin: 6px 0;
+}
+.execution-field-grid p {
+  margin: 2px 0;
+  font-size: 12px;
+}
 ul {
   padding-left: 20px;
 }

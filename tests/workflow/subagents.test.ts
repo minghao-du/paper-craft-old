@@ -19,6 +19,7 @@ test('all core parents delegate owned read/write tasks with durable results, que
   let active = 0,
     peak = 0;
   const runner: ShortRunner = {
+    interactive: true,
     name: 'controlled',
     async run(task) {
       active++;
@@ -132,6 +133,7 @@ test('wait timeout and failed cancellation retain execution and capacity until a
     const first = manager.create(input);
     let finish!: (value: { status: 'succeeded'; result: string; evidence: string }) => void;
     const dispatch = manager.dispatch({
+      interactive: true,
       name: 'controlled',
       run: () =>
         new Promise((resolve) => {

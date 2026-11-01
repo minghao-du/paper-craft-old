@@ -645,9 +645,14 @@ The check compares code between the two commits (`src build.zig build.zig.zon`, 
 
 ### Step 5: Launch tmux window
 
-Before any launch, resolve the authoritative config and exact slot directory; recheck all directory owners, holds and pane paths including subdirectories. Unknown occupancy blocks reuse.
-Write the composed prompt to a file and use the selected runner's documented input method, treating prompt content as data. Record the returned pane/session identity and verify the intended directory, brief delivery and actual runner startup.
-Accept startup only when the complete brief has arrived as one message and the worker has created both a parseable `.epic-status.json` in the slot (`issue` matches the assignment, `phase` follows the protocol above, `summary` is nonempty, and `updated_at` is a valid timestamp at or after this launch) and a startup entry in `.epic-worklog.md`. The worker writes its actual state; the launcher reads and verifies it. Keep startup pending until this evidence exists; a process, branch or tool call cannot substitute for acceptance. Record the specific initialization or delivery failure rather than automatically redispatching the task.
+Before any launch, resolve the authoritative config and exact slot directory; recheck all directory owners, holds and pane paths including subdirectories.
+Unknown occupancy blocks reuse.
+Write the composed prompt to a file and use the selected runner's documented input method, treating prompt content as data.
+Record the returned pane/session identity and verify the intended directory, brief delivery and actual runner startup.
+Accept startup only when the complete brief has arrived as one message and the worker has created both a parseable `.epic-status.json` in the slot (`issue` matches the assignment, `phase` follows the protocol above, `summary` is nonempty, and `updated_at` is a valid timestamp at or after this launch) and a timestamped startup entry in `.epic-worklog.md` attributed to the current Attempt when the managed Run supplies one.
+The worker writes its actual state; the launcher reads and verifies it.
+Keep startup pending until this evidence exists; a process, branch or tool call cannot substitute for acceptance.
+Record the specific initialization or delivery failure rather than automatically redispatching the task.
 The current CLI does not implement `pc spawn`; if launch is unavailable or verification fails, report `prepared` or `launch-failed` and keep intent queued.
 
 For tmux workers, read and follow [the terminal placement procedure](tmux/launch.md).
