@@ -1,5 +1,7 @@
 # Managed Run lifecycle
 
+For Codex, use the [persistent TUI adapter procedure](codex-interactive.md).
+
 Use the core Run-driver operations as transition authority. Only the owning Orchestrator requests top-level stages with `dispatchStage`; the runtime verifies Run authority, fixed provider, immutable input revision and accepted prerequisites before reserving and launching through the managed adapter. Domain acceptance remains the EPIC or specialist's judgment, represented by the workflow's current-fact verifier. A role's recommendation is not a dispatch.
 
 A Dispatch records Run, subject, role, stage, provider, input revision, immutable Brief reference and generation. Repeating identical inputs returns the same Dispatch. Changed inputs create a new generation only after prior occupancy is resolved. Retry with `retryStage` only after independently verified termination; each retry retains prior Attempts and creates a fresh Attempt identity. Unknown occupancy remains reserved.
