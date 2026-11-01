@@ -1,3 +1,4 @@
+import { initializeRole } from './initialize-role.js';
 import { createHash } from 'node:crypto';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 import { readDashboardFleet } from '../../packages/core/src/workflow/dashboard.js';
@@ -480,7 +481,8 @@ test.each(['direct', 'validated', 'collect', 'followup', 'followup-complete'])(
       interactive: true,
       cancellation: true,
       async preflight() {},
-      async start() {
+      async start(attempt) {
+        initializeRole(attempt);
         return {
           conversation: 'exact-conversation',
           address: 'tmux:known',

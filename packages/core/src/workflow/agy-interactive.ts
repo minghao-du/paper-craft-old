@@ -1,3 +1,4 @@
+import { roleInitializationReady } from './role-initialization.js';
 import { homedir } from 'node:os';
 /** Agy native hooks correlate persistent TUI turns with durable dispatches. */
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -159,7 +160,7 @@ export class AgyInteractive {
     execFileSync('tmux', ['set-option', '-p', '-t', this.address(a), 'remain-on-exit', 'on']);
     for (let n = 0; n < 600; n++) {
       const receipt = await this.recoverReceipt(a);
-      if (receipt) return receipt;
+      if (receipt && roleInitializationReady(a)) return receipt;
       await delay();
     }
     const pane = execFileSync('tmux', ['capture-pane', '-p', '-t', this.address(a)], {
