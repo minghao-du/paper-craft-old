@@ -783,7 +783,16 @@ export async function recoverRun(
     if (orchestrator?.run === runId) {
       current.orchestrator = orchestrator;
       const ack = recovered.get(orchestrator.id);
-      if (ack) Object.assign(current.orchestrator, ack, { status: 'running' });
+      if (ack) {
+        if (current.orchestrator.error) {
+          (current.orchestrator.startupFailures ??= []).push({
+            error: current.orchestrator.error,
+            resolvedAt: new Date().toISOString(),
+          });
+          delete current.orchestrator.error;
+        }
+        Object.assign(current.orchestrator, ack, { status: 'running' });
+      }
     }
     if (replacement) {
       (current.priorOrchestrators ??= []).push(orchestrator!);
@@ -828,7 +837,16 @@ export async function recoverRun(
       const observation = attempts.find((a) => a.id === attempt.id)?.observation;
       if (observation) attempt.observation = observation;
       const ack = recovered.get(attempt.id);
-      if (ack) Object.assign(attempt, ack, { status: 'running' });
+      if (ack) {
+        if (attempt.error) {
+          (attempt.startupFailures ??= []).push({
+            error: attempt.error,
+            resolvedAt: new Date().toISOString(),
+          });
+          delete attempt.error;
+        }
+        Object.assign(attempt, ack, { status: 'running' });
+      }
       if (dispatch.lifecycle === 'accepted') pendingDispatches.push(dispatch.id);
       else if (dispatch.remediation?.exhausted)
         blockers.push(`${dispatch.id}: remediation exhausted: ${dispatch.remediation.feedback}`);

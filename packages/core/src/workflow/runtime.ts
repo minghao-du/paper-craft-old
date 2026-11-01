@@ -35,6 +35,8 @@ export interface ManagedAttempt {
   paneId?: string;
   evidence?: string;
   error?: string;
+  /** Resolved startup failures remain visible after exact-identity recovery. */
+  startupFailures?: { error: string; resolvedAt: string }[];
 }
 /** Adapter owns capability checks and evidence; a terminal alone is insufficient. */
 export interface RunnerAdapter {
