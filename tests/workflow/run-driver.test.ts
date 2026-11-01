@@ -593,7 +593,7 @@ test.each(['direct', 'validated', 'collect', 'followup', 'followup-complete'])(
       await acceptStageReceipt(config, run.orchestratorId, receipt.id, verify, runner);
       expect(stops).toBe(2);
 
-      expect(inspectRuns(config).resources).toEqual([]);
+      expect(inspectRuns(config).resources).toHaveLength(1);
       expect(inspectRuns(config).dispatches![0].attempts[0].conversation).toBe(
         'exact-conversation',
       );

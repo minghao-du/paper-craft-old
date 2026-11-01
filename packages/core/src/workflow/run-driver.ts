@@ -506,7 +506,7 @@ export async function acceptStageReceipt(
       current.attempts.at(-1)?.persistent &&
       !current.messages?.some((m) => m.status !== 'completed')
     )
-      await releaseAcceptedExecution(
+      await stopAcceptedExecution(
         config,
         runner ?? managedRunner(current.provider),
         current.id,
@@ -1195,13 +1195,12 @@ export async function sendStageMessage(
   });
 }
 
-/** Stop accepted, unassigned execution before invoking the existing checkout release gate. */
-export async function releaseAcceptedExecution(
+/** Verify accepted execution shutdown while retaining checkout ownership for preservation. */
+export async function stopAcceptedExecution(
   config: FleetConfig,
   runner: RunnerAdapter,
   dispatchId: string,
   authority: string,
-  cleanup?: () => void,
 ): Promise<void> {
   const registry = inspectRuns(config);
   const dispatch = findDispatch(registry, dispatchId);
@@ -1216,6 +1215,22 @@ export async function releaseAcceptedExecution(
     if (cancellation.cancellation?.outcome !== 'confirmed' || !(await runner.stopped(attempt)))
       throw new Error('Unknown termination; checkout remains occupied');
   }
+  // Execution capacity and checkout ownership are independent lifecycle gates.
+}
+
+/** Release only through explicit verified workflow cleanup after execution shutdown. */
+export async function releaseAcceptedExecution(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  dispatchId: string,
+  authority: string,
+  cleanup?: () => void,
+): Promise<void> {
+  await stopAcceptedExecution(config, runner, dispatchId, authority);
+  if (!cleanup)
+    throw new Error('Checkout release requires the workflow preservation and cleanup gate');
+  const dispatch = findDispatch(inspectRuns(config), dispatchId);
+  const attempt = dispatch.attempts.at(-1)!;
   if (
     !inspectRuns(config).resources?.some(
       (r) => r.runId === dispatch.runId && r.path === attempt.checkout,
@@ -1226,7 +1241,7 @@ export async function releaseAcceptedExecution(
     config,
     dispatch.runId,
     attempt.checkout,
-    runner.stopped.bind(runner),
+    runner.stopped!.bind(runner),
     cleanup,
   );
 }

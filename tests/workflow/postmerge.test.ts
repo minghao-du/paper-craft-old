@@ -43,6 +43,10 @@ test('merged delivery records and archives before releasing a real worktree; unk
     async preflight() {},
     async start(a: IssueTurn) {
       roles.push(a.role);
+      if (a.role === 'landing') {
+        expect(existsSync(join(checkout, '.pc-execution-owner'))).toBe(true);
+        expect(inspectRuns(config).resources?.some((r) => r.path === checkout)).toBe(true);
+      }
       return { conversation: a.id, address: 'tmux:test', evidence: 'started' };
     },
     async collect(a: IssueTurn) {
@@ -59,6 +63,9 @@ test('merged delivery records and archives before releasing a real worktree; unk
             releaseEvidence: 'Controlled runner termination independently verified by driver',
           })
         : 'Orchestrator received completion';
+    },
+    async result(a: IssueTurn) {
+      return this.collect(a);
     },
     async stopped() {
       return stopped;
@@ -109,11 +116,18 @@ test('merged delivery records and archives before releasing a real worktree; unk
         outcome: 'completed',
         evidence: [{ path: evidence, hash: createHash('sha256').update('verified').digest('hex') }],
       });
-      await acceptStageReceipt(config, managed.orchestratorId, receipt.id, async () => ({
-        currentRevision: d.inputRevision,
-        ownership: true,
-        evidence: 'verified merge boundary',
-      }));
+      await acceptStageReceipt(
+        config,
+        managed.orchestratorId,
+        receipt.id,
+        async () => ({
+          currentRevision: d.inputRevision,
+          ownership: true,
+          evidence: 'verified merge boundary',
+        }),
+        runner,
+      );
+      expect(existsSync(join(checkout, '.pc-execution-owner'))).toBe(true);
       predecessor = [d.id];
     }
     stopped = false;
