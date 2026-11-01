@@ -514,11 +514,15 @@ export class AgyRunner implements RunnerAdapter {
     if (!process.env.PC_AGY_PREPARATION)
       throw new Error('Reopen with pc workflow agy prepare inside tmux');
     const current = this.tui.prepared(process.env.PC_AGY_PREPARATION);
-    const ownedRun = execFileSync(
+    const [session, ownedRun] = execFileSync(
       'tmux',
-      ['display-message', '-p', '-t', current.address.slice(5), '#{@pc_run_id}'],
+      ['display-message', '-p', '-t', current.address.slice(5), '#{session_name} #{@pc_run_id}'],
       { encoding: 'utf8' },
-    ).trim();
+    )
+      .trim()
+      .split(' ');
+    if (session.startsWith('pc-run-') && ownedRun !== session.slice(7))
+      throw new Error('Source Run session ownership missing or conflicting');
     return { ...current, ownedRun };
   }
   adopt(a: ManagedAttempt) {
