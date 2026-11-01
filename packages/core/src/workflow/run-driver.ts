@@ -18,6 +18,7 @@ import {
   inspectOrchestrator,
   requireInteractive,
   cancelAttempt,
+  managedRunner,
   startOrchestrator,
   type ManagedAttempt,
   type RunnerAdapter,
@@ -237,7 +238,8 @@ export interface StageDispatch extends StageRequest {
   messages?: {
     id: string;
     brief: string;
-    status: 'pending' | 'delivered' | 'uncertain';
+    attemptId: string;
+    status: 'pending' | 'delivered' | 'uncertain' | 'completed';
     evidence?: string;
   }[];
   remediation?: { consecutive: number; limit: number; feedback: string; exhausted: boolean };
@@ -256,6 +258,8 @@ export interface StageReceipt {
   outcome: 'completed' | 'changes_needed' | 'blocked';
   evidence: { path: string; hash: string }[];
   corrects?: string;
+  /** Additional assigned messages covered by this durable completion claim. */
+  messageIds?: string[];
 }
 /** Mechanical verification supplied by the workflow's current-fact adapter. */
 export interface StageFacts {
@@ -411,6 +415,8 @@ export async function dispatchStage(
       run: run.id,
       role: request.role,
       runner: run.provider,
+      dispatchId: id,
+      persistent: !!runner.result,
       brief: request.brief,
       status: 'starting',
       created: new Date().toISOString(),
@@ -434,7 +440,6 @@ export async function dispatchStage(
   });
   if (!launch) return dispatch;
   const attempt = dispatch.attempts[0];
-  attempt.dispatchId = dispatch.id;
   try {
     const ack = await runner.start(attempt);
     if (!ack.conversation || !ack.address || !ack.evidence)
@@ -488,13 +493,30 @@ export async function acceptStageReceipt(
   authority: string,
   receiptId: string,
   verify: (dispatch: StageDispatch, receipt: StageReceipt) => Promise<StageFacts>,
+  runner?: RunnerAdapter,
 ): Promise<void> {
   const snapshot = inspectRuns(config);
   const receipt = snapshot.receipts?.find((r) => r.id === receiptId);
   if (!receipt) throw new Error('Unknown Receipt');
   const dispatch = findDispatch(snapshot, receipt.dispatchId);
   authorize(snapshot, dispatch.runId, authority);
-  if (dispatch.acceptedReceipt === receiptId) return;
+  const release = async () => {
+    const current = findDispatch(inspectRuns(config), dispatch.id);
+    if (
+      current.attempts.at(-1)?.persistent &&
+      !current.messages?.some((m) => m.status !== 'completed')
+    )
+      await releaseAcceptedExecution(
+        config,
+        runner ?? managedRunner(current.provider),
+        current.id,
+        authority,
+      );
+  };
+  if (dispatch.acceptedReceipt === receiptId) {
+    await release();
+    return;
+  }
   const facts = await verify(dispatch, receipt);
   let rejection: string | undefined;
   updateRunRegistry(config, (registry) => {
@@ -561,6 +583,10 @@ export async function acceptStageReceipt(
       reason: rejection,
     });
     if (!rejection) {
+      for (const message of current.messages ?? []) {
+        if (message.attemptId === receipt.attemptId && receipt.messageIds?.includes(message.id))
+          message.status = 'completed';
+      }
       current.acceptedReceipt = receiptId;
       current.lifecycle = 'accepted';
       if (current.remediation) {
@@ -571,6 +597,7 @@ export async function acceptStageReceipt(
       current.lifecycle = 'rejected';
   });
   if (rejection) throw new Error(rejection);
+  await release();
 }
 
 /** Retry unchanged inputs only after independently verified termination; retain every Attempt. */
@@ -1026,13 +1053,17 @@ export async function collectBusinessTurn(
     });
     if (!validate) return result;
     validate(result);
-    await acceptStageReceipt(config, dispatch.authority, receipt.id, async () => ({
-      currentRevision: dispatch.inputRevision,
-      ownership: true,
-      evidence: 'Collected immutable business result under reserved Run authority',
-    }));
-    if (runner.interactive && runner.result)
-      await releaseAcceptedExecution(config, runner, dispatch.id, dispatch.authority);
+    await acceptStageReceipt(
+      config,
+      dispatch.authority,
+      receipt.id,
+      async () => ({
+        currentRevision: dispatch.inputRevision,
+        ownership: true,
+        evidence: 'Collected immutable business result under reserved Run authority',
+      }),
+      runner,
+    );
   }
   return result;
 }
@@ -1061,19 +1092,26 @@ export async function acceptValidatedBusinessTurns(
   config: FleetConfig,
   attempts: ManagedAttempt[],
   domainEvidence: string,
+  runner?: RunnerAdapter,
 ): Promise<void> {
   if (!domainEvidence.trim()) throw new Error('Domain acceptance evidence required');
   for (const attempt of attempts) {
     const registry = inspectRuns(config);
     const dispatch = registry.dispatches?.find((d) => d.attempts.some((a) => a.id === attempt.id));
-    if (!dispatch || dispatch.lifecycle === 'accepted') continue;
+    if (!dispatch) continue;
     const receipt = registry.receipts?.filter((r) => r.dispatchId === dispatch.id).at(-1);
     if (!receipt) throw new Error('Business completion receipt missing');
-    await acceptStageReceipt(config, dispatch.authority, receipt.id, async () => ({
-      currentRevision: dispatch.inputRevision,
-      ownership: true,
-      evidence: domainEvidence,
-    }));
+    await acceptStageReceipt(
+      config,
+      dispatch.authority,
+      receipt.id,
+      async () => ({
+        currentRevision: dispatch.inputRevision,
+        ownership: true,
+        evidence: domainEvidence,
+      }),
+      runner,
+    );
   }
 }
 
@@ -1094,12 +1132,18 @@ export async function sendStageMessage(
     const dispatch = findDispatch(registry, dispatchId);
     authorize(registry, dispatch.runId, authority);
     if (dispatch.provider !== runner.name) throw new Error('Run provider mismatch');
+    if (dispatch.lifecycle === 'accepted')
+      throw new Error('Accepted task requires a new Dispatch for follow-up assignment');
     const existing = dispatch.messages?.find((m) => m.id === message.id);
     if (existing) {
       if (existing.brief !== message.brief)
         throw new Error('Message identity already bound to different input');
     } else {
-      (dispatch.messages ??= []).push({ ...message, status: 'pending' });
+      (dispatch.messages ??= []).push({
+        ...message,
+        attemptId: dispatch.attempts.at(-1)!.id,
+        status: 'pending',
+      });
       send = true;
     }
     return dispatch.attempts.at(-1)!;
@@ -1134,7 +1178,7 @@ export async function releaseAcceptedExecution(
   const dispatch = findDispatch(registry, dispatchId);
   authorize(registry, dispatch.runId, authority);
   if (runner.name !== dispatch.provider) throw new Error('Run provider mismatch');
-  if (dispatch.lifecycle !== 'accepted' || dispatch.messages?.some((m) => m.status !== 'delivered'))
+  if (dispatch.lifecycle !== 'accepted' || dispatch.messages?.some((m) => m.status !== 'completed'))
     throw new Error('Acceptance and reconciled input required before release');
   const attempt = dispatch.attempts.at(-1)!;
   if (!runner.stopped) throw new Error('Verified termination capability required');
@@ -1143,6 +1187,12 @@ export async function releaseAcceptedExecution(
     if (cancellation.cancellation?.outcome !== 'confirmed' || !(await runner.stopped(attempt)))
       throw new Error('Unknown termination; checkout remains occupied');
   }
+  if (
+    !inspectRuns(config).resources?.some(
+      (r) => r.runId === dispatch.runId && r.path === attempt.checkout,
+    )
+  )
+    return;
   await releaseRunCheckout(
     config,
     dispatch.runId,
