@@ -545,7 +545,7 @@ export async function dispatchStage(
       created: new Date().toISOString(),
       directory,
       checkout,
-      terminalSession: request.terminalSession,
+      terminalSession: run.provider === 'agy' ? undefined : request.terminalSession,
       writableDirectories: request.writableDirectories,
     };
     if (attempt.initialization) {
