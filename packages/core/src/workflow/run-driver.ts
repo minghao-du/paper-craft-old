@@ -16,6 +16,8 @@ import { stateDirectory } from './handoff.js';
 import { workflowSource, type FleetConfig } from './fleet-config.js';
 import {
   inspectOrchestrator,
+  requireInteractive,
+  cancelAttempt,
   startOrchestrator,
   type ManagedAttempt,
   type RunnerAdapter,
@@ -124,6 +126,7 @@ export async function startRun(
     throw new Error(
       'Managed provider must be codex, agy, or claude and match the selected adapter',
     );
+  requireInteractive(runner);
   await runner.preflight();
   const reconnect = inspectRuns(config).runs.find(
     (r) =>
@@ -231,6 +234,12 @@ export interface StageDispatch extends StageRequest {
   attempts: ManagedAttempt[];
   lifecycle: 'reserved' | 'running' | 'reported' | 'accepted' | 'rejected' | 'superseded';
   acceptedReceipt?: string;
+  messages?: {
+    id: string;
+    brief: string;
+    status: 'pending' | 'delivered' | 'uncertain';
+    evidence?: string;
+  }[];
   remediation?: { consecutive: number; limit: number; feedback: string; exhausted: boolean };
 }
 /** A claim is immutable; acceptance is a separate durable acknowledgement. */
@@ -289,6 +298,7 @@ export async function dispatchStage(
   runner: RunnerAdapter,
   request: StageRequest,
 ): Promise<StageDispatch> {
+  requireInteractive(runner);
   await runner.preflight();
   const snapshot = inspectRuns(config);
   const checkout = workflowSource(config, request.checkout ?? config.project);
@@ -424,6 +434,7 @@ export async function dispatchStage(
   });
   if (!launch) return dispatch;
   const attempt = dispatch.attempts[0];
+  attempt.dispatchId = dispatch.id;
   try {
     const ack = await runner.start(attempt);
     if (!ack.conversation || !ack.address || !ack.evidence)
@@ -574,6 +585,7 @@ export async function retryStage(
   const dispatch = findDispatch(snapshot, dispatchId);
   const run = authorize(snapshot, dispatch.runId, authority);
   if (runner.name !== run.provider) throw new Error('Run provider mismatch');
+  requireInteractive(runner);
   await runner.preflight();
   if (dispatch.remediation?.exhausted)
     throw new Error('Remediation exhausted: ' + dispatch.remediation.feedback);
@@ -593,6 +605,7 @@ export async function retryStage(
     mkdirSync(directory);
     const next: ManagedAttempt = {
       ...prior,
+      predecessor: prior.id,
       id,
       directory,
       status: 'starting',
@@ -657,8 +670,11 @@ export async function recoverRun(
   options: {
     stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
     replaceOrchestrator?: boolean;
+    /** Explicit reassignment when the old conversation cannot be recovered. */
+    newConversation?: boolean;
   } = {},
 ): Promise<{ blockers: string[]; pendingDispatches: string[] }> {
+  requireInteractive(runner);
   if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
   const snapshot = inspectRuns(config);
   const run = snapshot.runs.find((r) => r.id === runId);
@@ -693,6 +709,7 @@ export async function recoverRun(
     snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts.slice(-1)) ??
     [];
   for (const attempt of [...(orchestrator?.run === runId ? [orchestrator] : []), ...attempts]) {
+    if (runner.observe) attempt.observation = await runner.observe(attempt);
     if (attempt.status !== 'running' && runner.recoverReceipt) {
       const ack = await runner.recoverReceipt(attempt);
       if (ack?.conversation && ack.address && ack.evidence) recovered.set(attempt.id, ack);
@@ -713,11 +730,13 @@ export async function recoverRun(
       mkdirSync(directory);
       replacement = {
         ...orchestrator,
+        predecessor: orchestrator.id,
         id,
         directory,
         status: 'starting',
         created: new Date().toISOString(),
-        conversation: undefined,
+        conversation: options.newConversation ? undefined : orchestrator.conversation,
+        brief: `Reconcile durable Run ${runId} evidence before continuing. Scope reference: ${run.brief.path}. Do not replay the original brief or repeat accepted work.`,
         address: undefined,
         evidence: undefined,
       };
@@ -771,6 +790,8 @@ export async function recoverRun(
         dispatch.lifecycle = 'accepted';
       }
       const attempt = dispatch.attempts.at(-1)!;
+      const observation = attempts.find((a) => a.id === attempt.id)?.observation;
+      if (observation) attempt.observation = observation;
       const ack = recovered.get(attempt.id);
       if (ack) Object.assign(attempt, ack, { status: 'running' });
       if (dispatch.lifecycle === 'accepted') pendingDispatches.push(dispatch.id);
@@ -782,6 +803,7 @@ export async function recoverRun(
     current.reconciliation = { at: new Date().toISOString(), blockers, pendingDispatches };
   });
   if (replacement) {
+    requireInteractive(runner);
     await runner.preflight();
     try {
       const ack = await runner.start(replacement);
@@ -979,7 +1001,11 @@ export async function collectBusinessTurn(
   attempt: ManagedAttempt,
   validate?: (result: string) => void,
 ): Promise<string> {
-  const result = await runner.collect(attempt);
+  const result =
+    runner.interactive && runner.result && attempt.dispatchId
+      ? await runner.result(attempt, attempt.dispatchId)
+      : await runner.collect(attempt);
+  if (result === undefined) throw new Error('No correlated task result; execution remains pending');
   const dispatch = inspectRuns(config).dispatches?.find((d) =>
     d.attempts.some((a) => a.id === attempt.id),
   );
@@ -1005,6 +1031,8 @@ export async function collectBusinessTurn(
       ownership: true,
       evidence: 'Collected immutable business result under reserved Run authority',
     }));
+    if (runner.interactive && runner.result)
+      await releaseAcceptedExecution(config, runner, dispatch.id, dispatch.authority);
   }
   return result;
 }
@@ -1047,4 +1075,79 @@ export async function acceptValidatedBusinessTurns(
       evidence: domainEvidence,
     }));
   }
+}
+
+/** Persist intent before sending; repeated IDs reconcile rather than replay uncertain input. */
+export async function sendStageMessage(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  dispatchId: string,
+  authority: string,
+  message: { id: string; brief: string },
+): Promise<void> {
+  if (!message.id.trim() || !message.brief.trim())
+    throw new Error('Expected message identity and complete brief');
+  if (!runner.interactive || !runner.send)
+    throw new Error('Runner lacks persistent interactive input');
+  let send = false;
+  const attempt = updateRunRegistry(config, (registry) => {
+    const dispatch = findDispatch(registry, dispatchId);
+    authorize(registry, dispatch.runId, authority);
+    if (dispatch.provider !== runner.name) throw new Error('Run provider mismatch');
+    const existing = dispatch.messages?.find((m) => m.id === message.id);
+    if (existing) {
+      if (existing.brief !== message.brief)
+        throw new Error('Message identity already bound to different input');
+    } else {
+      (dispatch.messages ??= []).push({ ...message, status: 'pending' });
+      send = true;
+    }
+    return dispatch.attempts.at(-1)!;
+  });
+  if (!send) return;
+  let status: 'delivered' | 'uncertain' = 'uncertain';
+  let evidence: string;
+  try {
+    const delivery = await runner.send(attempt, message);
+    if (!delivery.evidence) throw new Error('Missing delivery evidence');
+    status = delivery.status;
+    evidence = delivery.evidence;
+  } catch (error) {
+    evidence = String(error);
+  }
+  updateRunRegistry(config, (registry) => {
+    const dispatch = findDispatch(registry, dispatchId);
+    const persisted = dispatch.messages!.find((m) => m.id === message.id)!;
+    Object.assign(persisted, { status, evidence });
+  });
+}
+
+/** Stop accepted, unassigned execution before invoking the existing checkout release gate. */
+export async function releaseAcceptedExecution(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  dispatchId: string,
+  authority: string,
+  cleanup?: () => void,
+): Promise<void> {
+  const registry = inspectRuns(config);
+  const dispatch = findDispatch(registry, dispatchId);
+  authorize(registry, dispatch.runId, authority);
+  if (runner.name !== dispatch.provider) throw new Error('Run provider mismatch');
+  if (dispatch.lifecycle !== 'accepted' || dispatch.messages?.some((m) => m.status !== 'delivered'))
+    throw new Error('Acceptance and reconciled input required before release');
+  const attempt = dispatch.attempts.at(-1)!;
+  if (!runner.stopped) throw new Error('Verified termination capability required');
+  if (!(await runner.stopped(attempt))) {
+    const cancellation = await cancelAttempt(attempt, runner);
+    if (cancellation.cancellation?.outcome !== 'confirmed' || !(await runner.stopped(attempt)))
+      throw new Error('Unknown termination; checkout remains occupied');
+  }
+  await releaseRunCheckout(
+    config,
+    dispatch.runId,
+    attempt.checkout,
+    runner.stopped.bind(runner),
+    cleanup,
+  );
 }

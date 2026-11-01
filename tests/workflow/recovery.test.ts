@@ -21,6 +21,7 @@ test('collection failure resumes the original acceptance attempt and preserves e
     fail = true,
     closes = 0;
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;
@@ -165,6 +166,7 @@ test('batch recovery isolates failed providers, preserves unknown ownership and 
   };
   let receipts = 0;
   const runner = {
+    interactive: true,
     name: 'codex',
     async preflight() {},
     async start() {
@@ -235,6 +237,7 @@ test('Run recovery restores attributed startup evidence without relaunch or touc
   };
   let launches = 0;
   const runner = {
+    interactive: true,
     name: 'codex',
     async preflight() {},
     async start() {
