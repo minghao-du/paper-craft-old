@@ -538,3 +538,85 @@ test('current conversation adoption renames a lone window and rejects unmarked t
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+// Reject a wrong Run before launching a child into an unrelated terminal.
+test('child startup refuses missing or conflicting Run session ownership', async () => {
+  const child = await import('node:child_process');
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-child-'));
+  const attempt = {
+    id: 'child',
+    run: 'r1',
+    directory,
+    checkout: directory,
+    brief: 'work',
+    role: 'worker',
+    runner: 'agy',
+    fleet: 'f',
+    status: 'starting',
+    created: '',
+  } as import('../../packages/core/src/workflow/runtime/runtime.js').ManagedAttempt;
+  const launches: string[][] = [];
+  vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
+    const a = args as string[];
+    if (a[0] === 'list-sessions') return 'pc-run-r1 wrong\n';
+    if (a[0] === 'new-window' || a[0] === 'new-session') launches.push(a);
+    throw new Error('unexpected launch');
+  });
+  try {
+    await expect(new AgyInteractive().start(attempt)).rejects.toThrow(/ownership/);
+    expect(launches).toEqual([]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('children use separate exact panes in their Run session and cancellation leaves peers alive', async () => {
+  const child = await import('node:child_process');
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-windows-'));
+  const { mkdirSync } = await import('node:fs');
+  const panes = new Map<string, string>();
+  const targets: string[] = [];
+  let nextPane = 100;
+  vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
+    const a = args as string[];
+    if (a[0] === 'list-sessions') return 'pc-run-r1 r1\npc-run-r2 r2\n';
+    if (a[0] === 'new-session') throw new Error('Child cannot create sessions');
+    if (a[0] === 'new-window') {
+      targets.push(a[a.indexOf('-t') + 1]);
+      const pane = '%' + nextPane++;
+      panes.set(pane, '1'); // immediate failure must affect only this pane
+      return pane;
+    }
+    if (a[0] === 'list-panes') return [...panes].map(([p, state]) => `${p} ${state}`).join('\n');
+    if (a[0] === 'kill-pane') panes.delete(a[a.indexOf('-t') + 1]);
+    return '';
+  });
+  try {
+    const adapter = new AgyInteractive();
+    const attempts = ['r1', 'r1', 'r2'].map((run, i) => {
+      const dir = join(directory, String(i));
+      mkdirSync(dir);
+      return {
+        id: 'child-' + i,
+        run,
+        directory: dir,
+        checkout: dir,
+        brief: 'work',
+        role: 'worker',
+        runner: 'agy',
+        fleet: 'f',
+        status: 'starting',
+        created: '',
+        terminalSession: 'untrusted',
+      } as import('../../packages/core/src/workflow/runtime/runtime.js').ManagedAttempt;
+    });
+    await Promise.all(attempts.map((a) => expect(adapter.start(a)).rejects.toThrow(/exited/)));
+    expect(targets).toEqual(['pc-run-r1:', 'pc-run-r1:', 'pc-run-r2:']);
+    expect(new Set(attempts.map((a) => a.address)).size).toBe(3);
+    await adapter.cancel(attempts[0]);
+    expect(panes.has(attempts[1].address!.slice(5))).toBe(true);
+    expect(panes.has(attempts[2].address!.slice(5))).toBe(true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

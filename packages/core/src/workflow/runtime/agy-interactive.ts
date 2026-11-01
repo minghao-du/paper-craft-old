@@ -301,6 +301,20 @@ export class AgyInteractive {
   }
 
   async start(a: ManagedAttempt) {
+    if (!a.run) throw new Error('Agy child requires Run ownership');
+    const session = `pc-run-${a.run}`;
+    const sessions = execFileSync(
+      'tmux',
+      ['list-sessions', '-F', '#{session_name} #{@pc_run_id}'],
+      { encoding: 'utf8' },
+    )
+      .trim()
+      .split('\n');
+    if (!sessions.includes(`${session} ${a.run}`))
+      throw new Error(
+        'Run session ownership missing or conflicting; reconcile the Orchestrator session before dispatch',
+      );
+    a.terminalSession = session;
     if (!existsSync(join(a.directory, 'brief.md'))) {
       writeFileSync(join(a.directory, 'brief.md'), a.brief, {
         mode: 0o400,
@@ -350,21 +364,30 @@ export class AgyInteractive {
     const script = join(a.directory, 'agy-launch.sh');
     writeFileSync(
       script,
-      `#!/bin/sh\n${args.map(quote).join(' ')}\nprintf '%s' "$?" > ${quote(join(a.directory, 'exit-code'))}\n`,
+      `#!/bin/sh\nwhile [ ! -f ${quote(join(a.directory, 'agy-launch-ready'))} ]; do sleep 0.1; done\n${args.map(quote).join(' ')}\nprintf '%s' "$?" > ${quote(join(a.directory, 'exit-code'))}\n`,
       { mode: 0o700 },
     );
-    const session = `pc-agy-${a.id}`;
-    const tmuxArgs = a.terminalSession
-      ? ['new-window', '-d', '-P', '-F', '#{pane_id}', '-t', a.terminalSession, '-n', session]
-      : ['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', session];
+    const tmuxArgs = [
+      'new-window',
+      '-d',
+      '-P',
+      '-F',
+      '#{pane_id}',
+      '-t',
+      session + ':',
+      '-n',
+      `${a.role}-${a.id.slice(0, 8)}`,
+    ];
     a.address =
       'tmux:' +
       execFileSync('tmux', [...tmuxArgs, '-c', a.checkout, script], { encoding: 'utf8' }).trim();
+    a.paneId = this.address(a);
     writeFileSync(
       join(a.directory, 'terminal.json'),
-      JSON.stringify({ address: a.address, conversation: a.conversation }),
+      JSON.stringify({ address: a.address, conversation: a.conversation, session, run: a.run }),
     );
     execFileSync('tmux', ['set-option', '-p', '-t', this.address(a), 'remain-on-exit', 'on']);
+    writeFileSync(join(a.directory, 'agy-launch-ready'), 'ready', { flag: 'wx' });
     for (let n = 0; n < 600; n++) {
       const receipt = await this.recoverReceipt(a);
       if (receipt && roleInitializationReady(a)) return receipt;
