@@ -1,84 +1,97 @@
 ---
 name: pc-orchestrator
-description: Coordinate an Issue or EPIC using a transparent CLI runner, isolated workers, durable receipts, and verified PR landing.
+description: Coordinate Issue delivery or an EPIC's child deliveries through managed agents, verified acceptance, and resource release.
 ---
 
 # /pc-orchestrator
 
-The current conversational agent is the Run's scheduler. Make scope, dependency,
-acceptance and rework decisions here; Bash commands execute them and files retain
-state across sessions.
+The current conversational agent schedules the Run; durable files retain decisions and execution evidence.
+Issue delivery is the shared workflow below; EPIC coordination adds planning and integrated acceptance around it.
 
 ## Intake
 
-Accept an issue number, runner command and optional conversational requirements:
+Require an explicit type (`Issue` or `EPIC`) and issue number.
+Resolve the repository from the authoritative Fleet config and collect or reuse `provider` (`codex`, `agy`, or `claude`), config path and additional scope requirements.
 
-```markdown
-/pc-orchestrator
-- **Issue**: #79
-- **Runner**: claude
-- **Requirements**:
-  - Keep changes within the requested scope
+```text
+Type: Issue
+Issue: #79
+Provider: claude
+Config: /absolute/path/.epic-config.json
+Requirements: Keep changes within the requested scope
 ```
 
-Record all additional requirements with repeated `--instructions`:
+Read the GitHub issue, native parent/dependency metadata and native sub-Issues before starting.
+The CLI currently infers EPIC from a nonempty native sub-Issue list; the explicit type is a skill input, not a CLI flag.
+If the requested type conflicts with that classification or metadata cannot establish it, explain the mismatch and resolve it with the user before dispatch.
+An intended EPIC without native children needs its structure resolved before this entry can start it as an EPIC.
+Issue mode authorizes only the specified Issue, retaining parent constraints without starting siblings or closing the parent.
+
+Before any managed launch, read [the shared execution contract](managed-lifecycle.md), including its selected provider procedure.
+For EPIC mode, also read [EPIC coordination](epic-workflow.md) before planning or child dispatch.
 
 ```bash
-pc run create --issue 79 --runner 'claude' --instructions 'Keep changes within the requested scope'
-pc run inspect <run-id>
+pc workflow orchestrator start 79 --provider claude --config /absolute/path/.epic-config.json
+pc workflow orchestrator status --config /absolute/path/.epic-config.json
 ```
 
-Reuse the Run ID when reconnecting. `--root <directory>` and `--fleet <id>` select
-its runtime location (defaults: current directory and `default`). Read `run.json`
-and the GitHub issue before dispatch. For an EPIC, dispatch an EPIC role to clarify
-the task graph first. Start independent, unblocked work concurrently.
+Retain the Run identity and assignment-bound requirements in its durable context; reconnect to existing ownership rather than allocating a second driver.
+The startup, provider and ownership gates in the execution contract determine whether dispatch is available.
 
-## Dispatch and reconcile
+**Done:** Type, repository/number, authorized scope, provider, config and owning Run are resolved, and persisted assignment context includes every additional requirement.
+
+## Shared Issue Delivery
+
+Apply these steps to standalone Issues, EPIC children and finalization maintenance Issues.
+For EPIC children, retain the parent's scope, dependency and professional acceptance context; the parent Run remains the scheduler and these steps do not create a new Run per child.
+
+### 1. Establish readiness
+
+Read the Issue's acceptance criteria and current implementation state, open dependencies and checkout ownership.
+Use [child-only intake and overlapping Runs](managed-lifecycle.md#child-only-intake-and-overlapping-runs) to reconnect or reference existing delivery.
+For EPIC children, the [EPIC scheduling rules](epic-workflow.md#child-scheduling) additionally determine readiness.
+
+**Done:** Every prerequisite is resolved, the delivery has one owner, and the immutable assignment identifies its scope and acceptance evidence.
+
+### 2. Implement and assess
+
+Dispatch the Worker through the managed execution contract when implementation is required.
+Collect the correlated result, independently assess its evidence against every acceptance criterion, and request scoped rework when it falls short.
+Use `/pc-issue-lead` for an independent stopping-point assessment and `/pc-pr-check` plus `/pc-pr-review` for PR readiness and quality.
+Record a reason and evidence for any stage that does not apply; missing implementation or review evidence is not completion.
+
+**Done:** The scoped implementation is accepted with validation tied to its revision, or the evidence establishes that no implementation is required.
+
+### 3. Review and land
+
+For a PR, dispatch managed quality and PR-Land work through [current-head PR merge](managed-lifecycle.md#current-head-pr-merge).
+Resolve defects and obtain current quality evidence plus any required EPIC professional confirmation before requesting merge.
+When the head changes, reassess the changed revision through that protocol.
+
+**Done:** GitHub merge and its evaluated revision are verified, or an evidence-backed no-PR disposition is retained.
+
+### 4. Record, preserve and release
+
+For merged work, follow [post-merge delivery](managed-lifecycle.md#post-merge-delivery) for Worker final records, preservation and PR-Land cleanup.
+For work without a PR, retain the accepted outcome and follow the managed release contract for every reserved execution and checkout.
+
+**Done:** Accepted scope, validation, final records and follow-up attribution are retained; required archive/bundle evidence and actual resource release are verified.
+A merged PR alone does not complete delivery.
+Standalone delivery ends here; an EPIC child returns its evidence to [integrated acceptance](epic-workflow.md#integrated-acceptance-and-closure).
+
+## Failure and resume
+
+Read the persisted Run and inspect status before scheduling after a reconnect.
+Use [managed recovery](managed-lifecycle.md) for receipt reconciliation, bounded rework, termination verification and ownership release.
 
 ```bash
-pc worker spawn <issue-id> <role> --run <run-id>
-pc worker wait <dispatch-id>
-pc worker status <run-id>
-pc worker status <run-id> --ack <dispatch-id>
+pc workflow orchestrator recover <run-id> --config /absolute/path/.epic-config.json
 ```
 
-Named persistent roles require the [verified managed lifecycle](managed-lifecycle.md) and cannot use this transparent command path.
-Temporary roles outside Orchestrator, EPIC, Worker, PR landing, pipeline-refactor, pipeline-audit and research-state may use it.
+**Done:** Every reported result has an acceptance/rework disposition, and unresolved execution or ownership uncertainty remains a recorded blocker to dependent work.
 
-Spawn inherits `runner_cmd`; `--runner <command>` overrides it for that dispatch.
-The runner receives the immutable brief path as its final argument. Use a wrapper
-when the CLI expects prompt contents rather than a path. No platform adapter is
-required. The brief carries the issue, requirements, checkout and receipt contract.
+## Temporary tasks
 
-Dispatch state lives under `.runtime/<fleet>/runs/<run-id>/dispatches/<dispatch-id>/`.
-Workers publish `RECEIPT.md` atomically with outcome, summary, tested revision and
-validation evidence. Wait returns the receipt, synthesizing `outcome: crashed` on
-verified premature termination. Unavailable liveness evidence stays unknown.
-
-On reconnect, `pc status <run-id>` (alias of worker status) lists in-flight attempts
-and complete unhandled receipts. Inspection does not consume results. Read each
-receipt, independently assess its evidence, then accept or schedule rework before
-acknowledging it. Use wait to establish liveness for attempts without receipts.
-Launch failures retain records and locks; inspect them before another dispatch.
-
-## Land accepted work
-
-```bash
-pc pr ready-and-merge <pr-id> --dispatch <dispatch-id> --tested-head <full-sha>
-```
-
-Independently validate that revision before landing; the succeeded receipt must
-identify it. Landing verifies PR HEAD, passing required checks, clean worktree,
-worker termination and lock ownership. It verifies a Git bundle, archives the
-dispatch/receipt/worklog, squash merges with GitHub's HEAD gate, then releases the
-worktree and owned lock. Failure retains resources and evidence for investigation.
-
-Use the intake root/fleet options consistently; landing takes `--root` and locates
-the dispatch across fleets. Consult each command's `--help` for available flags.
-A failed receipt or merge is a scheduling decision here, not authorization to
-remove locks or force cleanup. Completion means accepted issue scope, recorded
-outcomes and verified resource release.
-
+For temporary tasks outside named persistent roles, read [the transparent runner reference](temporary-tasks.md).
+Its lightweight Run, receipt and landing commands are a separate execution path.
 `pc workflow orchestrator issue` is deprecated and exits without dispatching.
-
-For a failed or crashed attempt, run `pc worker release <dispatch-id>` after reviewing its receipt. This verifies termination and lock ownership, preserves its evidence and worktree, and permits a new spawn for the same issue and role. Use the same `--root` and `--fleet` selectors as wait. A queued PR preserves worker resources until GitHub reports it merged.

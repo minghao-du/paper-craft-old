@@ -1,5 +1,8 @@
 # EPIC post-closure finalization
 
+Reached from [EPIC acceptance and closure](epic-workflow.md#integrated-acceptance-and-closure).
+Use [the managed execution contract](managed-lifecycle.md) for specialist dispatch, receipt acceptance and resource ownership.
+
 Use after required children are delivered, PR merges and landing records are verified,
 the EPIC Agent has accepted the original goal, and the human has explicitly confirmed
 closure for that delivery version. Verify actual closure before specialist dispatch. This is part of EPIC completion;
@@ -85,7 +88,7 @@ required completion gates determine Run completion without another EPIC close op
 
 ## Maintenance delivery
 
-For `changes_needed`, identify a bounded Issue with marker `Pipeline maintenance EPIC #<epic> finding <id>` and originating Run attribution. Persist the finding-to-Issue link before dispatch. Worker implements through normal Issue and PR-Land gates, final records, verified preservation and cleanup; Pipeline-Refactor only audits and verifies.
+For `changes_needed`, identify a bounded Issue with marker `Pipeline maintenance EPIC #<epic> finding <id>` and originating Run attribution. Persist the finding-to-Issue link before dispatch. Worker implements through [Shared Issue Delivery](SKILL.md#shared-issue-delivery); Pipeline-Refactor only audits and verifies.
 
 Covered moves/deletions require a finding `migrationLedger` identifying the exact approved ledger version. Obtain explicit human approval first. The host reads `<configured root>/.runtime/migration-approvals/<issue>.json` via the configured workflow state directory, with `source: "human"`, matching `ledger`, and nonempty approval `evidence`; never fabricate this file from model judgment. Missing or changed approval blocks Worker dispatch. Inspect `stateDirectory(config, '.runtime', 'migration-approvals')` for the actual configured state path.
 

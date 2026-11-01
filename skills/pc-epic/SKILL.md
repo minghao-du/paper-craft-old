@@ -21,13 +21,17 @@ It does *consume* a orchestrator-supplied occupancy table when the Step 2 handsh
 
 ## Managed automatic planning
 
-`pc workflow orchestrator issue <number> --config /path/to/project/.epic-config.json`
-reads the Issue parent and starts the matching repository-scoped EPIC Agent in tmux.
-Return the requested JSON plan with original goal, constraints, task scopes, Worker briefs,
-dependencies and readiness. Keep existing tasks and delivery evidence in revised plans.
-Orchestrator allocates fresh configured worktrees and runs up to two independent ready
-Workers concurrently; it returns attributed results for your next professional assessment.
-Blocked dependencies or unknown checkout ownership hold dispatch with durable evidence.
+Enter through [Orchestrator intake](../pc-orchestrator/SKILL.md#intake) with type `EPIC`, its number, provider and authoritative config.
+After the intake checks, the owning Orchestrator creates or reconnects the Managed Run:
+
+```sh
+pc workflow orchestrator start <number> --provider <provider> --config /path/to/project/.epic-config.json
+```
+
+Follow [EPIC coordination](../pc-orchestrator/epic-workflow.md) for planning, child readiness and integrated acceptance.
+Return the requested JSON plan with original goal, constraints, task scopes, Worker briefs, dependencies and readiness.
+Keep existing tasks and delivery evidence in revised plans.
+The owning Orchestrator schedules child delivery and returns attributed results for your next professional assessment.
 A delivered plan is stage delivery, not acceptance or permission to close the EPIC.
 
 ## One EPIC at a time
@@ -409,14 +413,16 @@ EPIC orchestration still reads `.epic-config.json` for now.
 
 ## Managed goal acceptance
 
-Managed `pc workflow orchestrator issue` automatically lands delivered children and
-collects EPIC judgment against the original goal, acceptance evidence and blockers.
-Child Issue closure alone is insufficient. Orchestrator presents one EPIC closure
-request. Keep the EPIC open on silence or refusal. After the human explicitly
+The Managed Run started through `pc workflow orchestrator start` reuses [Shared Issue Delivery](../pc-orchestrator/SKILL.md#shared-issue-delivery) for its children and collects EPIC judgment against the original goal, acceptance evidence and blockers.
+Child Issue closure alone is insufficient.
+Orchestrator presents one EPIC closure request.
+Keep the EPIC open on silence or refusal.
+After the human explicitly
 confirms the target, record their exact words with
 `pc workflow orchestrator close-epic <number> --config <file> --repository <owner/name> --human-confirmation <text>`.
 Only the human-facing Orchestrator may supply that flag from actual human input;
 Worker, EPIC and Landing output never counts as human confirmation. Confirmation
 continues closure and durable archival without further approval.
 
-Before final human EPIC closure, read [post-merge finalization](../pc-orchestrator/finalization.md). Confirm specialist applicability and reassess the original goal after verified receipts; managed closure enforces these gates.
+For integrated acceptance and human closure, follow [EPIC coordination](../pc-orchestrator/epic-workflow.md#integrated-acceptance-and-closure).
+Only verified closure opens [post-closure finalization](../pc-orchestrator/finalization.md); follow its specialist applicability and completion gates then.

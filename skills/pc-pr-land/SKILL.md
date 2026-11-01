@@ -10,10 +10,16 @@ The orchestrator dispatch names one phase: `merge` or `cleanup`, the repository/
 full evaluated head, checkout, authoritative config and durable evidence paths.
 Workers remain available for remediation and final records while releasing checkout ownership.
 
-For delivered managed tasks, `pc workflow orchestrator issue <number> --config <file>`
-automatically enters the PR check/repair/merge loop. To resume Landing directly, use
-`pc workflow orchestrator land <issue> --config <file>`. For EPIC tasks, supply
-`--confirmation-file <file>` with professional `{epic, head, evidence}` JSON.
+Managed delivery enters through [Orchestrator intake](../pc-orchestrator/SKILL.md#intake) with explicit type `Issue` or `EPIC`, its number, provider and authoritative config.
+After the intake checks, the owning Orchestrator creates or reconnects the Run:
+
+```sh
+pc workflow orchestrator start <number> --provider <provider> --config <file>
+```
+
+The Orchestrator schedules the shared delivery workflow's PR check/repair/merge stages; this Landing role executes only its assigned phase.
+To resume Landing directly, use `pc workflow orchestrator land <issue> --config <file>`.
+For EPIC tasks, supply `--confirmation-file <file>` with professional `{epic, head, evidence}` JSON.
 This confirms scope at the live head; user confirmation is reserved for closing the EPIC.
 The driver retains PR results and original execution receipts under configured runtime state.
 
@@ -109,12 +115,10 @@ and a new worker release. A merge result alone does not dispatch cleanup.
    independently from merge success. Release ownership and notify the orchestrator; only
    verified cleanup releases a fleet resource for another task.
 
-The managed `workflow orchestrator issue` and `land` paths continue after merge:
-Worker final assessment and records, verified task-Issue closure, Landing evidence,
-verified state archive and Git bundle, checkout release, then Orchestrator reporting.
+Managed delivery and the `pc workflow orchestrator land` continuation follow [Shared Issue Delivery](../pc-orchestrator/SKILL.md#shared-issue-delivery) through final records, preservation and verified cleanup after merge.
 Unknown execution occupancy or unaccounted checkout files retain the checkout.
-A blocked completion resumes its persisted stages; inspect the original execution
-before retrying a missing receipt. EPIC closure remains a separate user decision.
+A blocked completion resumes its persisted stages; inspect the original execution before retrying a missing receipt.
+EPIC closure remains a separate user decision.
 
 ## Managed completion
 

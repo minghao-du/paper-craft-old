@@ -1,6 +1,10 @@
 # Managed Run lifecycle
 
-For Codex, use the [persistent TUI adapter procedure](codex-interactive.md). For agy, use the [persistent TUI adapter procedure](agy-interactive.md).
+This is the shared execution contract for persistent Orchestrator, EPIC, Worker, PR-Land, Pipeline and Research-State roles in standalone Issue and EPIC Runs.
+Business sequencing lives in [Shared Issue Delivery](SKILL.md#shared-issue-delivery) and [EPIC coordination](epic-workflow.md).
+Read this contract before any managed dispatch, receipt acceptance, recovery or resource release.
+
+For the selected provider, read its interactive procedure before launch: [Codex](codex-interactive.md), [agy](agy-interactive.md), or [Claude](claude-interactive.md).
 
 Use the core Run-driver operations as transition authority. Only the owning Orchestrator requests top-level stages with `dispatchStage`; the runtime verifies Run authority, fixed provider, immutable input revision and accepted prerequisites before reserving and launching through the managed adapter. Domain acceptance remains the EPIC or specialist's judgment, represented by the workflow's current-fact verifier. A role's recommendation is not a dispatch.
 
@@ -22,7 +26,7 @@ Use the Run-qualified Orchestrator identity and driver lock, never the legacy Fl
 
 Inspect `subjects` and `resources` in the authoritative registry/read-only projection. Only `releaseRunCheckout` may release a checkout after independently verified termination of its recorded executions; completed output or an elapsed timeout is not termination. Failed launch reservations stay held for reconciliation. The marker can precede registry publication after an interrupted write; preserve it until ownership is independently reconciled rather than deleting it to retry.
 
-Select `codex`, `agy`, or `claude` with `pc workflow orchestrator start <issue> --provider <provider> --config <config>`. Each Run retains that provider. The adapter must explicitly declare a verified persistent interactive lifecycle before any reservation. The legacy print/exec adapters remain disabled for named roles until their complete provider conformance passes; a successful controlled adapter does not enable them. The transparent `pc worker spawn` command refuses Orchestrator, EPIC, Worker, PR landing, pipeline-refactor and research-state roles; its command interface remains available for temporary tasks outside these roles.
+Select `codex`, `agy`, or `claude` with `pc workflow orchestrator start <issue> --provider <provider> --config <config>`. Each Run retains that provider. The adapter must explicitly declare a verified persistent interactive lifecycle before any reservation. The legacy print/exec adapters remain disabled for named roles until their complete provider conformance passes; a successful controlled adapter does not enable them. The transparent `pc worker spawn` command refuses Orchestrator, EPIC, Worker, PR landing, pipeline-refactor, pipeline-audit and research-state roles; its command interface remains available for temporary tasks outside these roles.
 
 The adapter receives the complete immutable brief and dispatch/attempt identity at startup. Startup requires exact conversation and terminal evidence plus shared role initialization verification. The Run supplies assignment-bound instructions once in the complete brief; write `initialization.json` in the existing Attempt directory only after initializing that exact role and immutable context. Runtime verifies its Run, registered authority, subject, Attempt, role and context reference. Worker initialization additionally requires actual checkout `.epic-status.json` and an Attempt-attributed startup `.epic-worklog.md` entry; Landing requires the actual checkout owner. EPIC scope is checked against Run ownership. Specialist context acknowledgement covers the existing immutable finalization brief, not scientific acceptance. Missing or stale role evidence retains native identity and startup remains pending; recovery rechecks files without resending input. Use `sendStageMessage` for subsequent complete messages, with stable unique message IDs. Intent is persisted before delivery; uncertain delivery or a lost notification preserves identity and is never blindly replayed. Manual input may coexist with dispatch; neither terminal order nor latest output establishes attribution. Inspect the Dispatch's messages and the Attempt's timestamped observation. Waiting, idle, error, exited and unknown observations never accept a task.
 
@@ -30,7 +34,7 @@ Interactive `collectBusinessTurn` reads the adapter's durable result correlated 
 
 ## Child-only intake and overlapping Runs
 
-A child request authorizes only that Issue. Read native open dependencies and retain parent context; unresolved metadata or open blockers stops dispatch, without starting siblings or closing the parent. The compatible `orchestrator issue` entry and `driveEpicIssue` use this scoped delivery path.
+A child request authorizes only that Issue. Read native open dependencies and retain parent context; unresolved metadata or open blockers stops dispatch, without starting siblings or closing the parent. The internal `driveEpicIssue` uses this scoped delivery path; the CLI `pc workflow orchestrator issue` is deprecated and does not dispatch.
 
 Before allocating each EPIC child, reference its repository/Issue subject in the Fleet registry. Existing ownership wins in either intake order. A child request against EPIC-owned work reconnects to that owner; resume the owning Run rather than dispatching another child driver. Provider conflict blocks reconnect and never switches the active provider. An EPIC consuming standalone delivery must obtain its own explicit professional acceptance against its objective and scoped brief before counting that result. Pending or rejected referenced delivery blocks that dependency, without inheriting parent-finalization authorization.
 
@@ -46,6 +50,16 @@ Resume through `finishDelivery`/`landDelivery` after verified merge. Worker fina
 
 PR-Land uses the existing verified archive and Git bundle checks before cleanup. The driver verifies all execution termination, retains checkout ownership through verified bundle validation and worktree removal, then releases the reservation and accepts cleanup. Inspect `deliveries` for records, archive, cleanup, and delivered status; the associated immutable stage Receipts retain evidence after removal. Issue closure and Issue-Run completion follow verified cleanup. An EPIC Run remains active for its own acceptance/finalization. Resume retained completion state after failure; never rerun a verified merge or discard accepted records to retry cleanup.
 
+## Business turn validation
+
+Managed business turns publish immutable result receipts before progression. Runtime requires accepted Worker implementation before PR quality, exact-head quality before merge, merge before records, and records before cleanup. Distinct executions sharing a checkout transfer only after verified termination; business acceptance alone leaves occupancy reserved. An interrupted report retains its candidate and writer lock. Use finalization retry only after verifying the specific recorded writer stopped; a lock belonging to another Run remains occupied.
+
+Collection publishes a reported claim; domain acceptance follows caller validation. Managed Workers return scoped JSON with `status: completed`, matching `repository` and `issue`, and nonempty `evidence`; malformed or changes-needed results cannot authorize PR quality. Recovery reconciles a reserved merge Dispatch against the actual merged head and commit before accepting its receipt.
+
+## EPIC closure and completion
+
+For EPIC business sequencing, use [EPIC coordination](epic-workflow.md); specialist procedure lives in [post-closure finalization](finalization.md).
+
 EPIC closure binds professional acceptance and explicit human confirmation to the delivery fingerprint (accepted integrated head, attributed changes, and completed child records). Recheck that fingerprint immediately before closure. Child-only Runs cannot initiate parent closure. Only verified EPIC closure opens `post_closure_finalization`; it does not complete the Run. Pipeline and Research-State operate after closure, retain accepted delivery versions separately from later observations, and preserve specialist occupancy and retry guards.
 
 Managed EPIC completion requires a verified report after accepted Pipeline disposition.
@@ -53,9 +67,3 @@ The destination reservation spans Fleets and physical aliases. The report writer
 only its candidate writing directory; failed validation retains the prior publication.
 Registry report identity includes path, hash, revision, accepted and observed versions;
 only successful publication completes the Run. Unknown writer ownership blocks reuse.
-
-Managed business turns publish immutable result receipts before progression. Runtime requires accepted Worker implementation before PR quality, exact-head quality before merge, merge before records, and records before cleanup. Distinct executions sharing a checkout transfer only after verified termination; business acceptance alone leaves occupancy reserved. An interrupted report retains its candidate and writer lock. Use finalization retry only after verifying the specific recorded writer stopped; a lock belonging to another Run remains occupied.
-
-Collection publishes a reported claim; domain acceptance follows caller validation. Managed Workers return scoped JSON with `status: completed`, matching `repository` and `issue`, and nonempty `evidence`; malformed or changes-needed results cannot authorize PR quality. Recovery reconciles a reserved merge Dispatch against the actual merged head and commit before accepting its receipt.
-
-For provider `claude`, use [the native interactive adapter procedure](claude-interactive.md).
