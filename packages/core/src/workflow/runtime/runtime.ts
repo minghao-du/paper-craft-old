@@ -21,6 +21,8 @@ export interface ManagedAttempt {
   /** User execution retained after Run completion. */
   currentExecution?: boolean;
   preparation?: string;
+  /** Prior completed Run whose execution termination was verified before adoption. */
+  reconciledRun?: string;
   fleet: string;
   /** Run ownership recorded at intake. */
   run?: string;
@@ -61,6 +63,7 @@ export interface RunnerAdapter {
     directory: string;
     transcript: string;
     ownedRun?: string;
+    reconciledRun?: string;
   };
   adopt?(attempt: ManagedAttempt): void;
   /** Validate replacement terminal ownership; rebuild only with complete termination evidence. */
@@ -116,7 +119,7 @@ export async function startOrchestrator(
   runner: RunnerAdapter,
   brief: string,
   run: string,
-  current?: { conversation: string; address: string; directory: string; transcript: string },
+  current?: NonNullable<ReturnType<NonNullable<RunnerAdapter['current']>>>,
   initialization?: Omit<RoleInitialization, 'role' | 'attempt' | 'briefHash'>,
 ): Promise<ManagedAttempt> {
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
@@ -166,6 +169,7 @@ export async function startOrchestrator(
     Object.assign(attempt, {
       currentExecution: true,
       preparation: current.directory,
+      reconciledRun: current.reconciledRun,
       conversation: current.conversation,
       address: current.address,
     });

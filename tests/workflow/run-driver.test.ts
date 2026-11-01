@@ -475,6 +475,20 @@ test.each(['agy', 'claude'])(
           releaseRunCheckout(config, run.id, project, async (attempt) => !attempt.currentExecution),
         ).rejects.toThrow(/occupancy/);
         await expect(startRun(config, runner, run.subject, provider)).rejects.toThrow(/ownership/);
+        const oldCurrent = runner.current;
+        runner.current = () => ({
+          ...oldCurrent!(),
+          conversation: 'new-conversation',
+          directory: join(project, 'fresh-preparation'),
+          ownedRun: run.id,
+        });
+        runner.stopped = async () => false;
+        await expect(startRun(config, runner, run.subject, provider)).rejects.toThrow(/ownership/);
+        runner.stopped = async () => true;
+        const next = await startRun(config, runner, { ...run.subject, number: 2 }, provider);
+        expect(next.id).not.toBe(run.id);
+        expect(next.orchestrator?.id).not.toBe(run.orchestrator?.id);
+        expect(inspectRuns(config).runs.find((r) => r.id === run.id)?.lifecycle).toBe('completed');
       }
     } finally {
       rmSync(project, { recursive: true, force: true });

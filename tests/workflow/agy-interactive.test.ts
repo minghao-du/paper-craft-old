@@ -474,6 +474,36 @@ test('prepared current conversation requires live exact pane and matching callba
   const adapter = new AgyInteractive();
   try {
     expect(adapter.prepared(directory, '%42').conversation).toBe('native-id');
+    const attempt = {
+      id: 'user',
+      fleet: 'fleet',
+      role: 'orchestrator' as const,
+      runner: 'agy',
+      brief: '',
+      status: 'running' as const,
+      created: '',
+      directory,
+      checkout: directory,
+      currentExecution: true,
+      preparation: directory,
+      conversation: 'native-id',
+      address: 'tmux:%42',
+    };
+    writeFileSync(
+      join(directory, 'process-exit.json'),
+      JSON.stringify({ token: 'wrong', address: 'tmux:%42', conversation: 'native-id', status: 0 }),
+    );
+    vi.mocked(child.execFileSync).mockReturnValue('%42 0\n');
+    expect(await adapter.stopped(attempt)).toBe(false);
+    writeFileSync(
+      join(directory, 'process-exit.json'),
+      JSON.stringify({ token: 'nonce', address: 'tmux:%42', conversation: 'native-id', status: 1 }),
+    );
+    expect(await adapter.stopped(attempt)).toBe(true);
+    vi.mocked(child.execFileSync).mockReturnValue('%42 1\n');
+    expect(() => adapter.prepared(directory, '%42')).toThrow(/exited/);
+    rmSync(join(directory, 'process-exit.json'));
+
     expect(() => adapter.prepared(directory, '%43')).toThrow(/pane/);
     writeFileSync(
       join(directory, 'agy-native.json'),
@@ -656,5 +686,59 @@ test('replacement rebuild requires every old Run execution terminated and reject
     expect(creates).toBe(1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('preparation records native process exit even when agy fails and leaves its shell pane alive', async () => {
+  const child = await import('node:child_process');
+  const previous = { tmux: process.env.TMUX, pane: process.env.TMUX_PANE };
+  process.env.TMUX = 'test';
+  process.env.TMUX_PANE = '%42';
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  let directory = '';
+  vi.mocked(child.execFileSync).mockReturnValue('%42 1\n');
+  vi.mocked(child.spawnSync).mockImplementation((_command, args, options) => {
+    if (args?.includes('--help'))
+      return {
+        status: 0,
+        stdout: '--prompt-interactive --conversation --settings --add-dir',
+        stderr: '',
+      } as ReturnType<typeof child.spawnSync>;
+    directory = (options?.env?.PC_AGY_PREPARATION ?? '') as string;
+    const launch = JSON.parse(readFileSync(join(directory, 'preparation.json'), 'utf8'));
+    writeFileSync(
+      join(directory, 'agy-native.json'),
+      JSON.stringify({ conversation_id: 'exited-user', token: launch.token, pane: '%42' }),
+    );
+    return { status: 2, signal: null } as ReturnType<typeof child.spawnSync>;
+  });
+  try {
+    const adapter = new AgyInteractive();
+    await expect(adapter.prepare()).rejects.toThrow(/unsuccessfully/);
+    vi.mocked(child.execFileSync).mockReturnValue('%42 0\n');
+    expect(
+      await adapter.stopped({
+        id: 'user',
+        fleet: 'fleet',
+        role: 'orchestrator',
+        runner: 'agy',
+        brief: '',
+        status: 'running',
+        created: '',
+        directory,
+        checkout: directory,
+        preparation: directory,
+        currentExecution: true,
+        address: 'tmux:%42',
+        conversation: 'exited-user',
+      }),
+    ).toBe(true);
+  } finally {
+    if (directory) rmSync(directory, { recursive: true, force: true });
+    log.mockRestore();
+    if (previous.tmux === undefined) delete process.env.TMUX;
+    else process.env.TMUX = previous.tmux;
+    if (previous.pane === undefined) delete process.env.TMUX_PANE;
+    else process.env.TMUX_PANE = previous.pane;
   }
 });

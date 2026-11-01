@@ -59,6 +59,22 @@ export class AgyInteractive {
       stdio: 'inherit',
       env: { ...process.env, PC_AGY_PREPARATION: directory },
     });
+    if (!result.error && (result.status !== null || result.signal)) {
+      const native = existsSync(join(directory, 'agy-native.json'))
+        ? JSON.parse(readFileSync(join(directory, 'agy-native.json'), 'utf8'))
+        : {};
+      writeFileSync(
+        join(directory, 'process-exit.json'),
+        JSON.stringify({
+          token,
+          address: 'tmux:' + pane,
+          conversation: native.conversation_id,
+          status: result.status,
+          signal: result.signal,
+        }),
+        { mode: 0o600 },
+      );
+    }
     if (result.error || result.status !== 0)
       throw new Error(
         'Prepared agy exited unsuccessfully: ' + String(result.error ?? result.status),
@@ -86,6 +102,8 @@ export class AgyInteractive {
     if (!pane) throw new Error('Reopen using pc workflow agy prepare inside tmux');
     this.preparationPane(pane);
     try {
+      if (existsSync(join(directory, 'process-exit.json')))
+        throw new Error('Prepared agy has exited');
       const preparation = JSON.parse(readFileSync(join(directory, 'preparation.json'), 'utf8'));
       const native = JSON.parse(readFileSync(join(directory, 'agy-native.json'), 'utf8'));
       if (preparation.address !== 'tmux:' + pane || native.pane !== pane)
@@ -130,7 +148,11 @@ export class AgyInteractive {
     const target = `pc-run-${a.run}`;
     const sessions = tmux(['list-sessions', '-F', '#{session_name} #{@pc_run_id}']).split('\n');
     const sourceEntry = sessions.find((line) => line.split(' ')[0] === source);
-    if (source !== target && sourceEntry?.split(' ')[1])
+    if (
+      source !== target &&
+      sourceEntry?.split(' ')[1] &&
+      !(a.reconciledRun && sourceEntry === `pc-run-${a.reconciledRun} ${a.reconciledRun}`)
+    )
       throw new Error('Current pane has unresolved Run ownership');
     const existing = sessions.find((line) => line.split(' ')[0] === target);
     if (existing !== undefined && existing !== `${target} ${a.run}`)
@@ -323,6 +345,23 @@ export class AgyInteractive {
   }
 
   async stopped(a: ManagedAttempt): Promise<boolean> {
+    if (a.currentExecution && a.preparation) {
+      try {
+        const launch = JSON.parse(readFileSync(join(a.preparation, 'preparation.json'), 'utf8'));
+        const exit = JSON.parse(readFileSync(join(a.preparation, 'process-exit.json'), 'utf8'));
+        if (
+          launch.token &&
+          exit.token === launch.token &&
+          exit.address === launch.address &&
+          exit.address === a.address &&
+          exit.conversation === a.conversation &&
+          (Number.isInteger(exit.status) || typeof exit.signal === 'string')
+        )
+          return true;
+      } catch {
+        /* Missing exit evidence leaves occupancy unknown. */
+      }
+    }
     const panes = this.panes();
     const addr = this.address(a);
     if (panes.has(addr)) this.verifyTerminal(a);
