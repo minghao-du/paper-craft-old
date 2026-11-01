@@ -6,8 +6,10 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ManagedAttempt, ExecutionObservation } from './runtime.js';
+
 const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
 const delay = () => new Promise((resolve) => setTimeout(resolve, 100));
+
 type NativeStep = {
   step_index: number;
   type: string;
@@ -15,6 +17,7 @@ type NativeStep = {
   status: string;
   content?: string;
 };
+
 /** agy native transcript and status callbacks preserve exact conversation attribution. */
 export class AgyInteractive {
   private native(a: ManagedAttempt): Record<string, string> | undefined {
@@ -25,6 +28,7 @@ export class AgyInteractive {
       return undefined;
     }
   }
+
   private steps(a: ManagedAttempt): NativeStep[] {
     const n = this.native(a);
     if (!n) return [];
@@ -34,6 +38,16 @@ export class AgyInteractive {
         homedir(),
         '.gemini',
         'antigravity-cli',
+        'brain',
+        n.conversation_id,
+        '.system_generated',
+        'logs',
+        'transcript.jsonl',
+      ),
+      join(
+        homedir(),
+        '.gemini',
+        'antigravity',
         'brain',
         n.conversation_id,
         '.system_generated',
@@ -53,18 +67,30 @@ export class AgyInteractive {
         }
       });
   }
+
   private input(s: NativeStep, brief: string): boolean {
-    return (
-      s.type === 'USER_INPUT' &&
-      s.source === 'USER_EXPLICIT' &&
-      s.status === 'DONE' &&
-      s.content?.split('</USER_REQUEST>')[0] === '<USER_REQUEST>\n' + brief + '\n'
-    );
+    if (s.type !== 'USER_INPUT' || s.source !== 'USER_EXPLICIT' || s.status !== 'DONE') {
+      return false;
+    }
+    const body = s.content?.split('</USER_REQUEST>')[0]?.replace(/^<USER_REQUEST>\n?/, '');
+    if (body === undefined) return false;
+    return body === brief + '\n' || body.trim() === brief.trim();
   }
+
   private address(a: ManagedAttempt): string {
+    if (!a.address && existsSync(join(a.directory, 'terminal.json'))) {
+      try {
+        a.address = (
+          JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as { address?: string }
+        ).address;
+      } catch {
+        /* ignore read error */
+      }
+    }
     if (!a.address?.startsWith('tmux:')) throw new Error('Agy lacks persisted tmux identity');
     return a.address.slice(5);
   }
+
   async preflight(): Promise<void> {
     execFileSync('tmux', ['-V'], { timeout: 5000 });
     const probe = spawnSync('agy', ['--help'], { encoding: 'utf8', timeout: 5000 });
@@ -74,39 +100,66 @@ export class AgyInteractive {
     for (const flag of ['--prompt-interactive', '--conversation', '--settings', '--add-dir'])
       if (!help.includes(flag)) throw new Error('agy lacks interactive capability ' + flag);
   }
+
   private panes(): Map<string, string> {
     try {
       return new Map(
         execFileSync('tmux', ['list-panes', '-a', '-F', '#{pane_id} #{pane_dead}'], {
           encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
         })
           .trim()
           .split('\n')
+          .filter(Boolean)
           .map((line) => line.split(' ') as [string, string]),
       );
-    } catch {
-      throw new Error('Cannot verify tmux occupancy');
+    } catch (error: unknown) {
+      const msg = String(
+        (error as { stderr?: string; message?: string })?.stderr ??
+          (error as Error)?.message ??
+          '',
+      );
+      if (msg.includes('no server running') || msg.includes('error connecting')) {
+        return new Map();
+      }
+      throw new Error('Cannot verify tmux occupancy', { cause: error });
     }
   }
+
   async stopped(a: ManagedAttempt): Promise<boolean> {
     const panes = this.panes();
+    const addr = this.address(a);
     return (
-      panes.get(this.address(a)) === '1' ||
-      (!panes.has(this.address(a)) &&
+      panes.get(addr) === '1' ||
+      (!panes.has(addr) &&
         (existsSync(join(a.directory, 'agy-terminated')) ||
           existsSync(join(a.directory, 'exit-code'))))
     );
   }
+
   async cancel(a: ManagedAttempt): Promise<{ evidence: string }> {
-    execFileSync('tmux', ['kill-pane', '-t', this.address(a)]);
-    if (this.panes().has(this.address(a))) throw new Error('Agy pane termination unverified');
-    writeFileSync(join(a.directory, 'agy-terminated'), this.address(a));
+    const addr = this.address(a);
+    execFileSync('tmux', ['kill-pane', '-t', addr]);
+    if (this.panes().has(addr)) throw new Error('Agy pane termination unverified');
+    writeFileSync(join(a.directory, 'agy-terminated'), addr);
     return { evidence: 'Owned Agy pane terminated and absence verified' };
   }
+
   async terminated(a: ManagedAttempt): Promise<boolean> {
     return this.stopped(a);
   }
+
   async start(a: ManagedAttempt) {
+    if (!existsSync(join(a.directory, 'brief.md'))) {
+      writeFileSync(join(a.directory, 'brief.md'), a.brief, {
+        mode: 0o400,
+        flag: 'wx',
+      });
+    }
+    const resume = !!a.conversation;
+    if (resume && !a.predecessor) {
+      throw new Error('Agy resume requires a linked replacement attempt and a reconciliation brief');
+    }
     const hook = join(a.directory, 'agy-status.cjs');
     writeFileSync(
       hook,
@@ -162,6 +215,14 @@ export class AgyInteractive {
     for (let n = 0; n < 600; n++) {
       const receipt = await this.recoverReceipt(a);
       if (receipt && roleInitializationReady(a)) return receipt;
+      if (await this.stopped(a)) {
+        const pane = execFileSync('tmux', ['capture-pane', '-p', '-t', this.address(a)], {
+          encoding: 'utf8',
+        });
+        throw new Error(
+          `Agy exited before native acknowledgement; inspect terminal and authentication/configuration at ${a.address}: ${pane.slice(-2000)}`,
+        );
+      }
       await delay();
     }
     const pane = execFileSync('tmux', ['capture-pane', '-p', '-t', this.address(a)], {
@@ -171,11 +232,37 @@ export class AgyInteractive {
       `Agy startup unacknowledged; inspect trust/auth/configuration or waiting prompt at ${a.address}: ${pane.slice(-2000)}`,
     );
   }
+
   async recoverReceipt(a: ManagedAttempt) {
+    if (!a.address && existsSync(join(a.directory, 'terminal.json'))) {
+      try {
+        a.address = (
+          JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as { address?: string }
+        ).address;
+      } catch {
+        /* ignore read error */
+      }
+    }
     const n = this.native(a);
     if (!n?.conversation_id || !a.address || this.panes().get(this.address(a)) !== '0')
       return undefined;
     a.conversation ??= n.conversation_id;
+    if (existsSync(join(a.directory, 'terminal.json'))) {
+      try {
+        const terminal = JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
+          address?: string;
+          conversation?: string;
+        };
+        if (terminal.conversation !== a.conversation) {
+          writeFileSync(
+            join(a.directory, 'terminal.json'),
+            JSON.stringify({ ...terminal, conversation: a.conversation }),
+          );
+        }
+      } catch {
+        /* ignore error */
+      }
+    }
     const steps = this.steps(a);
     const brief = existsSync(join(a.directory, 'agy-input.txt'))
       ? readFileSync(join(a.directory, 'agy-input.txt'), 'utf8')
@@ -199,25 +286,35 @@ export class AgyInteractive {
       evidence: 'Native agy exact conversation and complete submitted brief',
     };
   }
+
   async result(a: ManagedAttempt, id: string): Promise<string | undefined> {
     if (this.native(a)?.agent_state !== 'idle' || id !== (a.dispatchId ?? a.id)) return undefined;
-    const steps = this.steps(a),
-      inputs = steps.filter((s) =>
-        this.input(
-          s,
-          existsSync(join(a.directory, 'agy-input.txt'))
-            ? readFileSync(join(a.directory, 'agy-input.txt'), 'utf8')
-            : a.brief,
-        ),
-      );
+    const steps = this.steps(a);
+    const inputs = steps.filter((s) =>
+      this.input(
+        s,
+        existsSync(join(a.directory, 'agy-input.txt'))
+          ? readFileSync(join(a.directory, 'agy-input.txt'), 'utf8')
+          : a.brief,
+      ),
+    );
     if (inputs.length !== 1) return undefined;
     const later = steps.filter((s) => s.step_index > inputs[0].step_index);
     const boundary = later.findIndex((s) => s.type === 'USER_INPUT');
     const responseSteps = boundary < 0 ? later : later.slice(0, boundary);
-    return responseSteps.findLast(
+    const raw = responseSteps.findLast(
       (s) => s.type === 'PLANNER_RESPONSE' && s.source === 'MODEL' && s.status === 'DONE',
     )?.content;
+    if (raw === undefined) return undefined;
+    const marker = '[pc ready role=' + a.role + ' attempt=' + a.id + ']';
+    const cleaned = raw
+      .split('\n')
+      .filter((line) => line.trim() !== marker)
+      .join('\n')
+      .trim();
+    return cleaned.length > 0 ? cleaned : raw;
   }
+
   async send(a: ManagedAttempt, message: { id: string; brief: string }) {
     const prior = new Set(this.steps(a).map((s) => s.step_index));
     const file = join(a.directory, `message-${randomUUID()}.txt`);
@@ -241,6 +338,7 @@ export class AgyInteractive {
       return { status: 'uncertain' as const, evidence: String(error) };
     }
   }
+
   async observe(a: ManagedAttempt): Promise<ExecutionObservation> {
     let status: ExecutionObservation['status'] = 'unknown';
     try {
