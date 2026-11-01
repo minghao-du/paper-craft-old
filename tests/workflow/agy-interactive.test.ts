@@ -580,6 +580,11 @@ test('children use separate exact panes in their Run session and cancellation le
   vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
     const a = args as string[];
     if (a[0] === 'list-sessions') return 'pc-run-r1 r1\npc-run-r2 r2\n';
+    if (a[0] === 'display-message') {
+      const pane = a[a.indexOf('-t') + 1];
+      const run = pane === '%102' ? 'r2' : 'r1';
+      return `pc-run-${run} ${run} ${pane}`;
+    }
     if (a[0] === 'new-session') throw new Error('Child cannot create sessions');
     if (a[0] === 'new-window') {
       targets.push(a[a.indexOf('-t') + 1]);
@@ -616,6 +621,39 @@ test('children use separate exact panes in their Run session and cancellation le
     await adapter.cancel(attempts[0]);
     expect(panes.has(attempts[1].address!.slice(5))).toBe(true);
     expect(panes.has(attempts[2].address!.slice(5))).toBe(true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('replacement rebuild requires every old Run execution terminated and rejects unknown session ownership', async () => {
+  const child = await import('node:child_process');
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-rebuild-'));
+  const a = {
+    id: 'old',
+    run: 'r1',
+    terminalSession: 'pc-run-r1',
+    address: 'tmux:%7',
+    directory,
+  } as import('../../packages/core/src/workflow/runtime/runtime.js').ManagedAttempt;
+  let sessions = '';
+  let creates = 0;
+  vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
+    if (args?.[0] === 'list-sessions') return sessions;
+    if (args?.[0] === 'list-panes') return '';
+    if (args?.[0] === 'new-session') creates++;
+    return '';
+  });
+  try {
+    const tui = new AgyInteractive();
+    await expect(tui.prepareReplacement(a, [a])).rejects.toThrow(/termination/);
+    expect(creates).toBe(0);
+    writeFileSync(join(directory, 'exit-code'), '0');
+    await tui.prepareReplacement(a, [a]);
+    expect(creates).toBe(1);
+    sessions = 'pc-run-r1 wrong';
+    await expect(tui.prepareReplacement(a, [a])).rejects.toThrow(/ownership/);
+    expect(creates).toBe(1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -63,6 +63,8 @@ export interface RunnerAdapter {
     ownedRun?: string;
   };
   adopt?(attempt: ManagedAttempt): void;
+  /** Validate replacement terminal ownership; rebuild only with complete termination evidence. */
+  prepareReplacement?(prior: ManagedAttempt, attempts: ManagedAttempt[]): Promise<void>;
   /** True only after the complete persistent interactive lifecycle is verified. */
   interactive?: boolean;
   /** Correlated input into the existing process; uncertainty forbids automatic replay. */
@@ -517,6 +519,9 @@ export class AgyRunner implements RunnerAdapter {
   }
   adopt(a: ManagedAttempt) {
     this.tui.adopt(a);
+  }
+  prepareReplacement(prior: ManagedAttempt, attempts: ManagedAttempt[]) {
+    return this.tui.prepareReplacement(prior, attempts);
   }
   preflight() {
     return this.tui.preflight();
