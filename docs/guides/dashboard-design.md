@@ -1,6 +1,6 @@
 # Dashboard design
 
-MVP decisions recorded and synthesized into the companion specification at the user's request. The external architecture proposal is input, not an accepted specification. Implementation remains deferred, including after design agreement and specification publication.
+The MVP design is described below and in the [companion specification](dashboard-spec.md). The repository includes a Hono service and React UI in [`packages/dashboard/`](../../packages/dashboard/), exposed through the [`pc dashboard` commands](../../packages/cli/src/commands/dashboard.ts). The scope and acceptance criteria below describe the design targets.
 
 ## Agreed scope
 
@@ -15,7 +15,7 @@ MVP decisions recorded and synthesized into the companion specification at the u
 - Persist meaningful observed changes, not every full snapshot, in pc's own local data directory with a default retention of 30 days. Record observation gaps; do not claim complete recovery of changes during downtime.
 - Default log content is the worklog. Offer bounded, on-demand terminal output and existing Runner logs with segmented loading, manual refresh and copying. Show source and read time; report read failures. Do not continuously archive all terminal output or accept terminal input.
 - Generate intervention items from explicit records or deterministic rules, with supporting evidence. An open PR alone is not a request for user approval. Staleness can request investigation but cannot prove exit or availability. Show unknown/conflicting evidence explicitly; do not call an LLM to interpret state.
-- Start collection with an explicitly launched `pc dashboard` service. Collection continues after browser closure until the service stops; no default startup at boot.
+- Start collection with an explicitly launched `pc dashboard serve` service. Collection continues after browser closure until the service stops; no default startup at boot.
 - Collection, aggregation, history and refresh must not invoke models, start agents, or send observations into agent conversations. Minimize additional LLM token consumption; routine monitoring requires none.
 - Refresh sources independently, share results across clients, isolate source timeouts, and retain last successful observations with stale/error indicators. Defaults: local state/terminal/process evidence every 15 seconds; Git every 60 seconds; GitHub every 3 minutes; associated remote tasks every 5 minutes. Do not poll remote hosts without associated tasks or overlap collection for the same source. Back off on failure. Manual refresh remains subject to limits and does not invoke agents or `git fetch`.
 - Reuse existing local GitHub authentication and SSH configuration. Do not store passwords/private keys or handle interactive login in the dashboard. Remote collection must be noninteractive and time-bounded, with actionable connection diagnostics.
@@ -33,7 +33,3 @@ MVP decisions recorded and synthesized into the companion specification at the u
 - State refresh, intervention classification and history recording do not invoke models or agents.
 - Bounded logs and a retained change list support investigation; monitoring gaps and unknown execution attempts are explicit.
 - Loopback access, startup token and request validation protect the read-only service without user accounts. Remote observations reuse existing noninteractive credentials.
-
-## Next boundary
-
-The user has requested specification preparation and publication through to-spec and confirmed the proposed test boundary. Neither specification publication nor design confirmation authorizes implementation; do not create code, install dependencies or start services as part of this work.

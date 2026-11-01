@@ -21,8 +21,8 @@ facts no skill carries.
 
 - TypeScript. CLI: `pc`. Storage: JSONL source of truth →
   ephemeral index, rebuilt on `pc rebuild`. No native addons — pure TS/JS only (`DESIGN.md` §II).
-- Layout (early stage — directories created as modules land):
-  `src/` source · `skills/` skill modules · `tests/` tests · `docs/` guides.
+- Layout:
+  `packages/` source · `skills/` skill modules · `tests/` tests · `docs/` guides.
 
 ## Build & style
 
