@@ -170,8 +170,7 @@ export async function startRun(
       r.subject.number === subject.number &&
       r.lifecycle !== 'completed',
   );
-  if (current?.ownedRun && current.ownedRun !== reconnect?.id)
-    throw new Error('Current pane has unresolved prior Run ownership');
+
   if (reconnect) {
     if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
       throw new Error('Existing Run provider or scope conflict');
@@ -233,15 +232,36 @@ export async function startRun(
         throw new Error('Existing Run provider or scope conflict');
       return existing;
     }
-    if (
-      current &&
-      registry.runs.some((r) =>
-        [r.orchestrator, ...(r.priorOrchestrators ?? [])].some(
-          (a) => a?.conversation === current.conversation || a?.address === current.address,
-        ),
-      )
-    )
-      throw new Error('Current execution has unresolved prior Run ownership');
+    if (current) {
+      const previous = registry.runs.filter(
+        (r) =>
+          r.id === current.ownedRun ||
+          [r.orchestrator, ...(r.priorOrchestrators ?? [])].some(
+            (a) => a?.conversation === current.conversation || a?.address === current.address,
+          ),
+      );
+      if (current.ownedRun && !previous.some((r) => r.id === current.ownedRun))
+        throw new Error('Current pane has unknown prior Run ownership');
+      for (const prior of previous) {
+        const attempts = [
+          prior.orchestrator,
+          ...(prior.priorOrchestrators ?? []),
+          ...(registry.dispatches?.filter((d) => d.runId === prior.id).flatMap((d) => d.attempts) ??
+            []),
+        ].filter((a): a is ManagedAttempt => !!a);
+        if (
+          prior.lifecycle !== 'completed' ||
+          !attempts.length ||
+          attempts.some(
+            (a) => a.conversation === current.conversation || a.preparation === current.directory,
+          ) ||
+          !runner.stopped ||
+          !(await Promise.all(attempts.map((a) => runner.stopped!(a)))).every(Boolean)
+        )
+          throw new Error('Current execution has unresolved prior Run ownership');
+      }
+      if (current.ownedRun) current.reconciledRun = current.ownedRun;
+    }
     const id = randomUUID();
     const directory = join(home(config), 'runs', id);
     mkdirSync(directory, { recursive: true });
