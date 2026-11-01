@@ -860,6 +860,8 @@ export async function recoverRun(
     throw new Error(
       'Agy requires current-conversation registration; use orchestrator start from prepared conversation',
     );
+  if (run.lifecycle === 'completed')
+    throw new Error('Completed Run authority has ended; start a new Run after resolving occupancy');
   if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
     updateRunRegistry(config, (registry) => {
       if (registry.revision !== snapshot.revision)
@@ -1118,11 +1120,13 @@ export async function releaseRunCheckout(
 ): Promise<void> {
   const physical = workflowSource(config, checkout);
   const snapshot = inspectRuns(config);
-  const attempts =
-    snapshot.dispatches
-      ?.filter((d) => d.runId === runId)
-      .flatMap((d) => d.attempts)
-      .filter((a) => a.checkout === physical) ?? [];
+  const run = snapshot.runs.find((r) => r.id === runId);
+  const attempts = [
+    ...(snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+    ...[run?.orchestrator, ...(run?.priorOrchestrators ?? [])].filter(
+      (a): a is ManagedAttempt => !!a?.currentExecution,
+    ),
+  ].filter((a) => a.checkout === physical);
   if (!attempts.length || !(await Promise.all(attempts.map(stopped))).every(Boolean))
     throw new Error('Unknown checkout occupancy; termination evidence required');
   updateRunRegistry(config, (registry) => {
@@ -1168,7 +1172,7 @@ export function orchestratorForSubject(
   if (!run) throw new Error(`No Run owns ${repository}#${number}; run ${next}`);
   if (!['codex', 'agy', 'claude'].includes(run.provider))
     throw new Error(`Unsupported Run provider: ${String(run.provider)}`);
-  if (!run.orchestrator || run.orchestrator.status !== 'running')
+  if (run.lifecycle !== 'running' || !run.orchestrator || run.orchestrator.status !== 'running')
     throw new Error(
       `No active Orchestrator for Run ${run.id}; run pc workflow orchestrator recover ${run.id} --config ${config.file}`,
     );

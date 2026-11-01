@@ -69,3 +69,5 @@ The destination reservation spans Fleets and physical aliases. The report writer
 only its candidate writing directory; failed validation retains the prior publication.
 Registry report identity includes path, hash, revision, accepted and observed versions;
 only successful publication completes the Run. Unknown writer ownership blocks reuse.
+
+Run completion ends scheduling authority independently of execution exit. Resource release still requires verified termination of every execution occupying the checkout, including a registered current Orchestrator. For provider-specific conversation retention and later Run entry, follow the selected provider guide.
