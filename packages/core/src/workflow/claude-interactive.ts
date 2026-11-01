@@ -40,11 +40,26 @@ export class ClaudeInteractive {
   async preflight(): Promise<void> {
     execFileSync('tmux', ['-V'], { timeout: 5000 });
     const help = execFileSync('claude', ['--help'], { encoding: 'utf8', timeout: 5000 });
-    for (const flag of ['--session-id', '--resume', '--settings'])
+    for (const flag of [
+      '--session-id',
+      '--resume',
+      '--settings',
+      '--append-system-prompt',
+      '--add-dir',
+      '--strict-mcp-config',
+    ])
       if (!help.includes(flag)) throw new Error(`Claude lacks required capability ${flag}`);
-    const auth = JSON.parse(
-      execFileSync('claude', ['auth', 'status'], { encoding: 'utf8', timeout: 5000 }),
-    );
+    let auth: { loggedIn?: boolean };
+    try {
+      auth = JSON.parse(
+        execFileSync('claude', ['auth', 'status'], { encoding: 'utf8', timeout: 5000 }),
+      );
+    } catch (error) {
+      throw new Error(
+        `Claude authentication check failed: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
     if (!auth.loggedIn) throw new Error('Claude authentication required: run claude auth login');
   }
   private panes(): Map<string, string> {
@@ -62,6 +77,7 @@ export class ClaudeInteractive {
     }
   }
   async stopped(a: ManagedAttempt): Promise<boolean> {
+    if (!a.address?.startsWith('tmux:')) return true;
     const panes = this.panes();
     return (
       panes.get(this.address(a)) === '1' ||
@@ -146,9 +162,24 @@ export class ClaudeInteractive {
       JSON.stringify({ address: a.address, conversation: a.conversation }),
     );
     execFileSync('tmux', ['set-option', '-p', '-t', this.address(a), 'remain-on-exit', 'on']);
+    let incompleteStopAt: number | undefined;
     for (let n = 0; n < 600; n++) {
       const receipt = await this.recoverReceipt(a);
       if (receipt && roleInitializationReady(a)) return receipt;
+      const events = this.events(a);
+      const submitted = events.find(
+        (e) => e.hook_event_name === 'UserPromptSubmit' && e.prompt === a.brief,
+      );
+      if (
+        submitted?.prompt_id &&
+        events.some((e) => e.hook_event_name === 'Stop' && e.prompt_id === submitted.prompt_id)
+      ) {
+        incompleteStopAt ??= Date.now();
+        if (Date.now() - incompleteStopAt > 2000)
+          throw new Error(
+            `Claude startup turn completed without required native acknowledgement and durable ${a.role} initialization; inspect ${a.directory} and ${a.address}`,
+          );
+      }
       await delay();
     }
     const pane = execFileSync('tmux', ['capture-pane', '-p', '-t', this.address(a)], {
@@ -245,6 +276,8 @@ export class ClaudeInteractive {
       : undefined;
   }
   async send(a: ManagedAttempt, message: { id: string; brief: string }) {
+    if (!a.address?.startsWith('tmux:'))
+      return { status: 'uncertain' as const, evidence: 'Claude lacks persisted tmux identity' };
     const prior = new Set(
       this.events(a)
         .map((e) => e.prompt_id)

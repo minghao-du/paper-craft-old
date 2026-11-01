@@ -79,9 +79,9 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     await expect(startRun(config, managedRunner('agy'), subject, 'agy')).rejects.toThrow(
       /interactive/,
     );
-    await expect(startRun(config, managedRunner('claude'), subject, 'claude')).rejects.toThrow(
-      /interactive/,
-    );
+    await expect(
+      startRun(config, { ...managedRunner('claude'), interactive: false }, subject, 'claude'),
+    ).rejects.toThrow(/interactive/);
     expect(launches).toBe(0);
     const first = await startRun(config, runner, subject, 'codex');
     expect(orchestratorForSubject(config, subject.repository, 7).runner).toBe('codex');
@@ -678,6 +678,10 @@ test('Claude native correlation rejects missing prompt identity and duplicate su
     expect(await runner.result(attempt, 'another-dispatch')).toBeUndefined();
     emit('4', { hook_event_name: 'UserPromptSubmit', prompt: 'task', prompt_id: 'duplicate' });
     expect(await runner.result(attempt, 'dispatch')).toBeUndefined();
+    expect(await runner.send(attempt, { id: 'msg', brief: 'followup' })).toEqual({
+      status: 'uncertain',
+      evidence: 'Claude lacks persisted tmux identity',
+    });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
