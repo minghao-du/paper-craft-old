@@ -71,7 +71,7 @@ export class AgyInteractive {
     if (probe.error || probe.status !== 0)
       throw new Error('agy capability probe failed: ' + String(probe.error ?? probe.stderr));
     const help = probe.stdout + probe.stderr;
-    for (const flag of ['--prompt-interactive', '--conversation', '--settings'])
+    for (const flag of ['--prompt-interactive', '--conversation', '--settings', '--add-dir'])
       if (!help.includes(flag)) throw new Error('agy lacks interactive capability ' + flag);
   }
   private panes(): Map<string, string> {
@@ -136,6 +136,7 @@ export class AgyInteractive {
       'agy',
       '--settings',
       settings,
+      ...[a.directory, ...(a.writableDirectories ?? [])].flatMap((p) => ['--add-dir', p]),
       ...(a.conversation ? ['--conversation', a.conversation] : []),
       '--prompt-interactive',
       delivered,
