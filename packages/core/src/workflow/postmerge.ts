@@ -170,15 +170,21 @@ export async function finishDelivery(
       outcome: 'completed',
       evidence: [{ path, hash: createHash('sha256').update(evidence).digest('hex') }],
     });
-    await acceptStageReceipt(config, orchestrator.id, claim.id, async () => ({
-      currentRevision: dispatch.inputRevision,
-      ownership:
-        run.ownershipReleased === true ||
-        inspectRuns(config).resources?.some(
-          (r) => r.runId === run.runId && r.path === delivery.checkout,
-        ) === true,
-      evidence: 'Verified merge, final records and execution termination',
-    }));
+    await acceptStageReceipt(
+      config,
+      orchestrator.id,
+      claim.id,
+      async () => ({
+        currentRevision: dispatch.inputRevision,
+        ownership:
+          run.ownershipReleased === true ||
+          inspectRuns(config).resources?.some(
+            (r) => r.runId === run.runId && r.path === delivery.checkout,
+          ) === true,
+        evidence: 'Verified merge, final records and execution termination',
+      }),
+      runner,
+    );
   };
   try {
     if (run.status === 'done') return run;
