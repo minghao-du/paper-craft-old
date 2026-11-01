@@ -1,3 +1,4 @@
+import { ClaudeInteractive } from './claude-interactive.js';
 /** Managed role startup and durable runner evidence, independent of the model host. */
 import { InteractiveCodexRunner } from './codex-interactive.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -386,7 +387,50 @@ abstract class StreamRunner extends CodexRunner {
 /** Explicit Claude Code stream protocol adapter. */
 export class ClaudeRunner extends StreamRunner {
   readonly name = 'claude';
+  readonly cancellation = true;
+  // Native conformance is necessary; existing role initialization gates remain required.
+  readonly interactive: boolean = false;
   protected resumeFlag = '--resume';
+  private readonly tui = new ClaudeInteractive();
+  preflight() {
+    return this.tui.preflight();
+  }
+  start(a: ManagedAttempt) {
+    return this.tui.start(a);
+  }
+  recoverReceipt(a: ManagedAttempt) {
+    return this.tui.recoverReceipt(a);
+  }
+  stopped(a: ManagedAttempt) {
+    return this.tui.terminated(a);
+  }
+  termination(a: ManagedAttempt) {
+    return this.tui.terminated(a);
+  }
+  cancel(a: ManagedAttempt) {
+    return this.tui.cancel(a);
+  }
+  send(a: ManagedAttempt, m: { id: string; brief: string }) {
+    return this.tui.send(a, m);
+  }
+  result(a: ManagedAttempt, id: string) {
+    return this.tui.result(a, id);
+  }
+  observe(a: ManagedAttempt) {
+    return this.tui.observe(a);
+  }
+  /** Persistent completion uses correlated native turn output, never process exit. */
+  async collect(a: ManagedAttempt): Promise<string> {
+    for (;;) {
+      const output = await this.tui.result(a, a.dispatchId ?? a.id);
+      if (output !== undefined) return output;
+      if (await this.stopped(a)) throw new Error('Claude exited without a correlated task result');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  collectable(a: ManagedAttempt): boolean {
+    return existsSync(join(a.directory, 'claude-hooks'));
+  }
 }
 /** Explicit agy stream protocol adapter; unsupported CLI capabilities fail closed. */
 export class AgyRunner extends StreamRunner {
