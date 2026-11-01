@@ -2,6 +2,7 @@ import { initializeRole } from './initialize-role.js';
 import { createHash } from 'node:crypto';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 import { readDashboardFleet } from '../../packages/core/src/workflow/dashboard.js';
+import { managedRunner } from '../../packages/core/src/workflow/runtime.js';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -75,6 +76,12 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     await expect(
       startRun(config, { ...runner, interactive: false }, subject, 'codex'),
     ).rejects.toThrow(/interactive/);
+    await expect(startRun(config, managedRunner('agy'), subject, 'agy')).rejects.toThrow(
+      /interactive/,
+    );
+    await expect(startRun(config, managedRunner('claude'), subject, 'claude')).rejects.toThrow(
+      /interactive/,
+    );
     expect(launches).toBe(0);
     const first = await startRun(config, runner, subject, 'codex');
     expect(orchestratorForSubject(config, subject.repository, 7).runner).toBe('codex');
@@ -146,6 +153,11 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       brief: 'Implement task',
       prerequisites: [],
     };
+    for (const role of ['worker', 'epic', 'landing', 'pipeline-audit', 'research-state'] as const) {
+      await expect(
+        dispatchStage(config, { ...runner, interactive: false }, { ...request, role }),
+      ).rejects.toThrow(/interactive/);
+    }
     const stage = await dispatchStage(config, runner, request);
     let sends = 0;
     const interactiveRunner = {
@@ -365,7 +377,6 @@ test.each(['agy', 'claude'])(
 );
 
 test('managed agy requires native input attribution and refuses stream or interleaved evidence', async () => {
-  const { managedRunner } = await import('../../packages/core/src/workflow/runtime.js');
   const runner = managedRunner('agy');
   const directory = mkdtempSync(join(tmpdir(), 'pc-agy-'));
   const a = {
