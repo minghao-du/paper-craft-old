@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
@@ -39,3 +39,26 @@ it('persists transparent runner and conversational requirements through CLI inta
     rmSync(root, { recursive: true, force: true });
   }
 }, 10000);
+
+it('rejects runtime symlinks before writing outside the root', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pc-root-'));
+  const outside = mkdtempSync(join(tmpdir(), 'pc-out-'));
+  try {
+    symlinkSync(outside, join(root, '.runtime'));
+    expect(() =>
+      execFileSync(resolve('pc'), [
+        'run',
+        'create',
+        '--root',
+        root,
+        '--issue',
+        '1',
+        '--runner',
+        'true',
+      ]),
+    ).toThrow();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});

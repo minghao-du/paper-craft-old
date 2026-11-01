@@ -49,8 +49,8 @@ Commands:
                                     only after confirmed closure
   close-epic [options] <number>     Record explicit human confirmation, close
                                     and archive an accepted EPIC
-  issue [options] <number>          Deliver only the requested Issue, retaining
-                                    parent constraints
+  issue [options] <number>          Deprecated: use pc-orchestrator and pc run
+                                    create
   land [options] <issue>            Merge, record, preserve and clean delivered
                                     PR stages automatically
   help [command]                    display help for command
@@ -58,14 +58,7 @@ Commands:
 `;
 
 exports[`publishes orchestrator issue help 1`] = `
-"Usage: pc workflow orchestrator issue [options] <number>
-
-Deliver only the requested Issue, retaining parent constraints
-
-Options:
-  --config <file>  Authoritative Fleet configuration (default:
-                   ".epic-config.json")
-  -h, --help       display help for command
+"Deprecated: workflow orchestrator issue. Use pc-orchestrator with pc run create --issue <number> --runner <command>.
 "
 `;
 

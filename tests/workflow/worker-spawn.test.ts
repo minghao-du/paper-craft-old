@@ -75,6 +75,11 @@ it('allocates isolated worktree and launches the runner with its immutable brief
     expect(() =>
       invoke('worker', 'spawn', '81', 'worker', '--root', root, '--run', run.run_id),
     ).toThrow();
+    writeFileSync(dispatch.receipt_path, 'outcome: failed\nsummary: retry\n');
+    execFileSync(pc, ['worker', 'release', dispatch.dispatch_id, '--root', root], { env });
+    const retry = invoke('worker', 'spawn', '81', 'worker', '--root', root, '--run', run.run_id);
+    expect(retry.dispatch_id).not.toBe(dispatch.dispatch_id);
+    expect(readFileSync(dispatch.receipt_path, 'utf8')).toContain('retry');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -1,3 +1,4 @@
+import { runtimeRoot } from './pc-runtime-paths.mjs';
 /** Validate landing evidence and preserve durable completion metadata. */
 import {
   cpSync,
@@ -14,7 +15,7 @@ try {
   const root = realpathSync(rootText);
   const safe = (x) => /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(x);
   if (!safe(id)) throw new Error('Expected safe dispatch identifier');
-  const runtime = join(root, '.runtime');
+  const runtime = runtimeRoot(root);
   const homes = [];
   for (const fleet of readdirSync(runtime)) {
     const runs = join(runtime, fleet, 'runs');

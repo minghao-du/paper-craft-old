@@ -367,7 +367,7 @@ describe('installed shared resources', () => {
     expect(realpathSync(join(dest, 'lib', 'workflow.md'))).toBe(
       join(repo, 'skills/lib/workflow.md'),
     );
-    expect(readFileSync(join(dest, 'pc-orchestrator', 'SKILL.md'), 'utf8')).toContain(
+    expect(readFileSync(join(dest, 'pc-orchestrator-spawn', 'SKILL.md'), 'utf8')).toContain(
       '../lib/workflow.md',
     );
     const linkedReference = resolve(join(dest, 'pc-orchestrator'), '../lib/workflow.md');

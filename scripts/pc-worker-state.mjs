@@ -1,3 +1,4 @@
+import { runtimeRoot } from './pc-runtime-paths.mjs';
 /** JSON preparation for the Bash worker execution primitive. */
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -11,7 +12,7 @@ try {
     if (!Number.isSafeInteger(issue) || issue < 1 || !safe(role) || !safe(fleet))
       throw new Error('Expected positive issue and safe role/fleet identifiers');
     const root = realpathSync(rootText);
-    const runtime = join(root, '.runtime', fleet);
+    const runtime = join(runtimeRoot(root), fleet);
     const runs = join(runtime, 'runs');
     const runId =
       runIdText ||
