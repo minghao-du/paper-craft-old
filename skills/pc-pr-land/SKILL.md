@@ -14,7 +14,7 @@ Managed delivery enters through [Orchestrator intake](../pc-orchestrator/SKILL.m
 After the intake checks, the owning Orchestrator creates or reconnects the Run:
 
 ```sh
-pc workflow orchestrator start <number> --provider <provider> --config <file>
+pc workflow orchestrator start <number> --type <issue|epic> --provider <provider> --config <file>
 ```
 
 The Orchestrator schedules the shared delivery workflow's PR check/repair/merge stages; this Landing role executes only its assigned phase.

@@ -4,13 +4,12 @@ import {
   recoverRun,
   orchestratorForSubject,
 } from '@paper-craft/core/workflow/run-driver';
-import { execFileSync } from 'node:child_process';
 import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
 import { finishEpic } from '../workflow/epic-completion.js';
 import { landDelivery } from '@paper-craft/core/workflow/postmerge';
 import { registerSubagentCommands } from './workflow-subagents.js';
 /** Portable workflow CLI shared by agents with filesystem and command execution access. */
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import {
   consumeIntent,
@@ -81,34 +80,38 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     orchestrator
       .command('start <issue>')
       .description('Create or reconnect a Run from configured repository context')
-      .requiredOption('--provider <provider>', 'Managed provider: codex, agy, or claude'),
-  ).action(async (number: string, options: Options & { provider: string }) => {
-    try {
-      const config = loadFleetConfig(options.config);
-      const subject = readIssue(config.project, Number(number));
-      const children: unknown = JSON.parse(
-        execFileSync(
-          'gh',
-          ['api', `repos/${subject.repository}/issues/${subject.number}/sub_issues`],
-          { cwd: config.project, encoding: 'utf8' },
-        ),
-      );
-      if (!Array.isArray(children)) throw new Error('Cannot resolve Issue/EPIC scope');
-      output(
-        await startRun(
-          config,
-          managedRunner(options.provider),
-          { ...subject, kind: children.length ? 'epic' : 'issue' },
-          options.provider,
-        ),
-        opts.human(),
-      );
-    } catch (error) {
-      run(() => {
-        throw error;
-      });
-    }
-  });
+      .requiredOption('--provider <provider>', 'Managed provider: codex, agy, or claude')
+      .addOption(
+        new Option('--type <type>', 'Subject type; must match the title EPIC marker')
+          .choices(['issue', 'epic'])
+          .makeOptionMandatory(),
+      ),
+  ).action(
+    async (number: string, options: Options & { provider: string; type: 'issue' | 'epic' }) => {
+      try {
+        const config = loadFleetConfig(options.config);
+        const subject = readIssue(config.project, Number(number));
+        const kind = /\bEPIC\b/i.test(subject.title) ? 'epic' : 'issue';
+        if (options.type !== kind)
+          throw new Error(
+            `Type mismatch: --type ${options.type}, but title ${JSON.stringify(subject.title)} identifies ${kind}; correct the title or --type before retrying`,
+          );
+        output(
+          await startRun(
+            config,
+            managedRunner(options.provider),
+            { ...subject, kind },
+            options.provider,
+          ),
+          opts.human(),
+        );
+      } catch (error) {
+        run(() => {
+          throw error;
+        });
+      }
+    },
+  );
   configured(
     orchestrator
       .command('recover <run>')

@@ -22,16 +22,15 @@ Requirements: Keep changes within the requested scope
 ```
 
 Read the GitHub issue, native parent/dependency metadata and native sub-Issues before starting.
-The CLI currently infers EPIC from a nonempty native sub-Issue list; the explicit type is a skill input, not a CLI flag.
-If the requested type conflicts with that classification or metadata cannot establish it, explain the mismatch and resolve it with the user before dispatch.
-An intended EPIC without native children needs its structure resolved before this entry can start it as an EPIC.
+Classify by a standalone `EPIC` marker anywhere in the title, case-insensitively (for example `[EPIC]` or `EPIC:`; `epicenter` does not match). Otherwise classify as Issue. Native sub-Issue count never determines type; an EPIC with no children can start planning.
+Pass the explicit input as required CLI `--type issue|epic`. It must agree with the title classification; on mismatch stop before Run creation or dispatch and explain that the title or input must be corrected. Never override either automatically.
 Issue mode authorizes only the specified Issue, retaining parent constraints without starting siblings or closing the parent.
 
 Before any managed launch, read [the shared execution contract](managed-lifecycle.md), including its selected provider procedure.
 For EPIC mode, also read [EPIC coordination](epic-workflow.md) before planning or child dispatch.
 
 ```bash
-pc workflow orchestrator start 79 --provider claude --config /absolute/path/.epic-config.json
+pc workflow orchestrator start 79 --type issue --provider claude --config /absolute/path/.epic-config.json
 pc workflow orchestrator status --config /absolute/path/.epic-config.json
 ```
 

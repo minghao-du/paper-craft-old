@@ -1039,7 +1039,7 @@ export function orchestratorForSubject(
 ): ManagedAttempt {
   const attempt = findSubjectOrchestrator(config, repository, number);
   const run = inspectRuns(config).runs.find((r) => r.id === attempt?.run);
-  const next = `pc workflow orchestrator start ${number} --provider <provider> --config ${config.file}`;
+  const next = `pc workflow orchestrator start ${number} --type <issue|epic> --provider <provider> --config ${config.file}`;
   if (!run) throw new Error(`No Run owns ${repository}#${number}; run ${next}`);
   if (!['codex', 'agy', 'claude'].includes(run.provider))
     throw new Error(`Unsupported Run provider: ${String(run.provider)}`);
@@ -1091,7 +1091,7 @@ export async function startBusinessTurn(
   const owner = orchestratorForSubject(config, repository, number);
   if (!owner?.run)
     throw new Error(
-      `No Run owns ${repository}#${number}; run pc workflow orchestrator start ${number} --provider <provider> --config ${config.file}`,
+      `No Run owns ${repository}#${number}; run pc workflow orchestrator start ${number} --type <issue|epic> --provider <provider> --config ${config.file}`,
     );
   if (owner.runner !== runner.name) throw new Error('Run provider mismatch');
   const dispatch = await dispatchStage(config, runner, {

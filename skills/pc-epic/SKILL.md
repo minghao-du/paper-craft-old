@@ -25,7 +25,7 @@ Enter through [Orchestrator intake](../pc-orchestrator/SKILL.md#intake) with typ
 After the intake checks, the owning Orchestrator creates or reconnects the Managed Run:
 
 ```sh
-pc workflow orchestrator start <number> --provider <provider> --config /path/to/project/.epic-config.json
+pc workflow orchestrator start <number> --type epic --provider <provider> --config /path/to/project/.epic-config.json
 ```
 
 Follow [EPIC coordination](../pc-orchestrator/epic-workflow.md) for planning, child readiness and integrated acceptance.
