@@ -32,7 +32,7 @@ export function initializationInstructions(
   expected: RoleInitialization,
   directory: string,
 ): string {
-  return `\nRole initialization gate: read the immutable context at ${expected.context.path}. Initialize your assigned role before proceeding. Write ${join(directory, 'initialization.json')} atomically with these exact assignment fields: ${JSON.stringify(expected)}. These fields acknowledge role/scope and the exact context you initialized; they are not a task completion receipt. For worker, also write actual checkout .epic-status.json (matching issue, phase from ${workerPhases.join(', ')}, nonempty summary, UTC updated_at at or after launch) and append a timestamped startup entry containing this Attempt id to .epic-worklog.md. Never claim ready without these files.\n`;
+  return `\nRole initialization gate: read the immutable context at ${expected.context.path}. Initialize your assigned role before proceeding. Write ${join(directory, 'initialization.json')} atomically with these exact assignment fields: ${JSON.stringify(expected)}. These fields acknowledge role/scope and the exact context you initialized; they are not a task completion receipt. For worker, also write actual checkout .epic-status.json (numeric issue=${Number(expected.subject.split('#').at(-1))}, phase from ${workerPhases.join(', ')}, nonempty summary, UTC updated_at at or after launch) and append a timestamped startup entry containing this Attempt id to .epic-worklog.md. Never claim ready without these files.\n`;
 }
 
 /** Verify the assignment-bound evidence and existing role artifacts; missing facts stay pending. */
