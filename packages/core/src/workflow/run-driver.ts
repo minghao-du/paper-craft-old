@@ -1,3 +1,4 @@
+import { initializationInstructions, verifyRoleInitialization } from './role-initialization.js';
 /** Run intake and authoritative Fleet relationships; managed execution belongs to one Run. */
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -198,7 +199,13 @@ export async function startRun(
     try {
       run.launchStarted = true;
       save(config, registry);
-      run.orchestrator = await startOrchestrator(config, runner, brief, id);
+      run.orchestrator = await startOrchestrator(config, runner, brief, id, {
+        registry: join(home(config), 'registry.json'),
+        authority: id,
+        run: id,
+        subject: `${subject.repository}#${subject.number}`,
+        context: run.brief,
+      });
       run.lifecycle = run.orchestrator.status === 'running' ? 'running' : 'blocked';
     } catch (error) {
       run.lifecycle = 'blocked';
@@ -418,6 +425,19 @@ export async function dispatchStage(
       dispatchId: id,
       persistent: !!runner.result,
       brief: request.brief,
+      initialization: runner.result
+        ? {
+            registry: join(home(config), 'registry.json'),
+            authority: run.orchestratorId,
+            run: run.id,
+            subject: request.subject,
+            role: request.role,
+            attempt: '',
+            revision: request.inputRevision,
+            briefHash: createHash('sha256').update(request.brief).digest('hex'),
+            context: { path, hash: createHash('sha256').update(request.brief).digest('hex') },
+          }
+        : undefined,
       status: 'starting',
       created: new Date().toISOString(),
       directory,
@@ -425,6 +445,10 @@ export async function dispatchStage(
       terminalSession: request.terminalSession,
       writableDirectories: request.writableDirectories,
     };
+    if (attempt.initialization) {
+      attempt.initialization.attempt = attempt.id;
+      attempt.brief += initializationInstructions(attempt.initialization, attempt.directory);
+    }
     const next: StageDispatch = {
       ...request,
       id,
@@ -444,6 +468,8 @@ export async function dispatchStage(
     const ack = await runner.start(attempt);
     if (!ack.conversation || !ack.address || !ack.evidence)
       throw new Error('Missing startup acknowledgement');
+    Object.assign(attempt, ack);
+    if (attempt.initialization) verifyRoleInitialization(attempt);
     Object.assign(attempt, ack, { status: 'running' });
   } catch (error) {
     attempt.status = 'unknown';
@@ -651,6 +677,10 @@ export async function retryStage(
       evidence: undefined,
       error: undefined,
     };
+    if (next.initialization) {
+      next.initialization = { ...next.initialization, attempt: next.id };
+      next.brief = current.brief + initializationInstructions(next.initialization, next.directory);
+    }
     current.attempts.push(next);
     current.lifecycle = 'reserved';
     return next;
@@ -659,6 +689,8 @@ export async function retryStage(
     const ack = await runner.start(attempt);
     if (!ack.conversation || !ack.address || !ack.evidence)
       throw new Error('Missing startup acknowledgement');
+    Object.assign(attempt, ack);
+    if (attempt.initialization) verifyRoleInitialization(attempt);
     Object.assign(attempt, ack, { status: 'running' });
   } catch (error) {
     attempt.status = 'unknown';
@@ -726,6 +758,13 @@ export async function recoverRun(
       runner,
       readFileSync(run.brief.path, 'utf8'),
       runId,
+      {
+        registry: join(home(config), 'registry.json'),
+        authority: run.orchestratorId,
+        run: run.id,
+        subject: `${run.subject.repository}#${run.subject.number}`,
+        context: run.brief,
+      },
     );
     updateRunRegistry(config, (registry) => {
       const current = registry.runs.find((r) => r.id === runId)!;
@@ -748,7 +787,14 @@ export async function recoverRun(
     if (runner.observe) attempt.observation = await runner.observe(attempt);
     if (attempt.status !== 'running' && runner.recoverReceipt) {
       const ack = await runner.recoverReceipt(attempt);
-      if (ack?.conversation && ack.address && ack.evidence) recovered.set(attempt.id, ack);
+      if (ack?.conversation && ack.address && ack.evidence) {
+        try {
+          if (attempt.initialization) verifyRoleInitialization(attempt);
+          recovered.set(attempt.id, ack);
+        } catch {
+          /* Missing role evidence remains pending without relaunch. */
+        }
+      }
     }
   }
   let replacement: ManagedAttempt | undefined;
@@ -846,6 +892,8 @@ export async function recoverRun(
           });
           delete attempt.error;
         }
+        Object.assign(attempt, ack);
+        if (attempt.initialization) verifyRoleInitialization(attempt);
         Object.assign(attempt, ack, { status: 'running' });
       }
       if (dispatch.lifecycle === 'accepted') pendingDispatches.push(dispatch.id);
@@ -860,7 +908,20 @@ export async function recoverRun(
     requireInteractive(runner);
     await runner.preflight();
     try {
+      if (replacement.initialization) {
+        replacement.initialization = {
+          ...replacement.initialization,
+          attempt: replacement.id,
+          authority: replacement.id,
+        };
+        replacement.brief += initializationInstructions(
+          replacement.initialization,
+          replacement.directory,
+        );
+      }
       const ack = await runner.start(replacement);
+      Object.assign(replacement, ack);
+      if (replacement.initialization) verifyRoleInitialization(replacement);
       if (!ack.conversation || !ack.address || !ack.evidence)
         throw new Error('Missing startup acknowledgement');
       Object.assign(replacement, ack, { status: 'running' });

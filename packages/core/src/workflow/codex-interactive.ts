@@ -1,3 +1,4 @@
+import { roleInitializationReady, initializationInstructions } from './role-initialization.js';
 /** Persistent Codex TUI adapter backed by native, correlated rollout evidence. */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
@@ -197,8 +198,12 @@ export class InteractiveCodexRunner implements RunnerAdapter {
     const instruction = attempt.conversation
       ? `Recover role ${attempt.role} for Run ${attempt.run ?? attempt.id}, Dispatch ${attempt.dispatchId ?? attempt.id}. This is a new authorized execution attempt. Reconcile durable brief and receipts in ${attempt.directory} and checkout ${attempt.checkout}; accepted work must not repeat. Inspect predecessor evidence and the original immutable brief before continuing only incomplete assigned work. If ownership or results are uncertain, report that uncertainty instead of executing.`
       : attempt.brief;
+    const roleInstructions =
+      attempt.conversation && attempt.initialization
+        ? initializationInstructions(attempt.initialization, attempt.directory)
+        : '';
     args.push(
-      `${marker(attempt)}\nInitialize the ${attempt.role} role using applicable project/role instructions and durable workflow state. After initialization, first emit a commentary acknowledgement exactly [pc ready role=${attempt.role} attempt=${attempt.id}], then execute the assigned work.\n${instruction}`,
+      `${marker(attempt)}\nInitialize the ${attempt.role} role using applicable project/role instructions and durable workflow state. After initialization, first emit a commentary acknowledgement exactly [pc ready role=${attempt.role} attempt=${attempt.id}], then execute the assigned work.\n${instruction}${roleInstructions}`,
     );
     const command = ['codex', ...args].map(quote).join(' ');
     const script = join(attempt.directory, 'codex-tui.sh');
@@ -225,7 +230,7 @@ export class InteractiveCodexRunner implements RunnerAdapter {
     const deadline = Date.now() + 20000;
     while (Date.now() < deadline) {
       const ack = await this.recoverReceipt(attempt);
-      if (ack) return ack;
+      if (ack && roleInitializationReady(attempt)) return ack;
       if (await this.stopped(attempt))
         throw new Error(
           'Codex exited before native acknowledgement; inspect terminal and authentication/configuration',

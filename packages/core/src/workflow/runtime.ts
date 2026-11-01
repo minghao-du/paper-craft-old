@@ -7,6 +7,11 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from '
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { stateDirectory } from './handoff.js';
+import {
+  verifyRoleInitialization,
+  initializationInstructions,
+  type RoleInitialization,
+} from './role-initialization.js';
 import type { FleetConfig } from './fleet-config.js';
 
 /** One execution attempt; unknown retains occupancy until independently verified. */
@@ -21,6 +26,7 @@ export interface ManagedAttempt {
   dispatchId?: string;
   /** The adapter supports correlated results from a process that remains alive. */
   persistent?: boolean;
+  initialization?: RoleInitialization;
   predecessor?: string;
   observation?: ExecutionObservation;
   brief: string;
@@ -90,6 +96,7 @@ export async function startOrchestrator(
   runner: RunnerAdapter,
   brief: string,
   run: string,
+  initialization?: Omit<RoleInitialization, 'role' | 'attempt' | 'briefHash'>,
 ): Promise<ManagedAttempt> {
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   if (!brief.trim()) throw new Error('Expected a non-empty Orchestrator brief');
@@ -123,12 +130,25 @@ export async function startOrchestrator(
   };
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   const path = join(home(config), `orchestrator-${run}.json`);
+  if (runner.result) {
+    if (!initialization)
+      throw new Error('Persistent Orchestrator requires Run-derived initialization context');
+    attempt.initialization = {
+      ...initialization,
+      role: attempt.role,
+      attempt: attempt.id,
+      briefHash: createHash('sha256').update(brief).digest('hex'),
+    };
+    attempt.brief += initializationInstructions(attempt.initialization, directory);
+  }
   save(path, attempt);
-  writeFileSync(join(directory, 'brief.md'), brief, { mode: 0o600 });
+  writeFileSync(join(directory, 'brief.md'), attempt.brief, { mode: 0o600 });
   try {
     const receipt = await runner.start(attempt);
     if (!receipt.conversation || !receipt.address || !receipt.evidence)
       throw new Error('Expected Runner conversation, runtime address and startup evidence');
+    Object.assign(attempt, receipt);
+    if (attempt.initialization) verifyRoleInitialization(attempt);
     Object.assign(attempt, receipt, { status: 'running' });
   } catch (error) {
     attempt.status = 'unknown';

@@ -1,3 +1,4 @@
+import { initializeRole } from './initialize-role.js';
 import {
   startRun,
   inspectRuns,
@@ -42,6 +43,7 @@ test('merged delivery records and archives before releasing a real worktree; unk
     name: 'codex',
     async preflight() {},
     async start(a: IssueTurn) {
+      initializeRole(a);
       roles.push(a.role);
       if (a.role === 'landing') {
         expect(existsSync(join(checkout, '.pc-execution-owner'))).toBe(true);
