@@ -16,6 +16,8 @@ export interface ManagedAttempt {
   runner: string;
   /** Previous process identity when this attempt replaces a terminated execution. */
   dispatchId?: string;
+  /** The adapter supports correlated results from a process that remains alive. */
+  persistent?: boolean;
   predecessor?: string;
   observation?: ExecutionObservation;
   brief: string;
@@ -33,6 +35,8 @@ export interface ManagedAttempt {
   paneId?: string;
   evidence?: string;
   error?: string;
+  /** Resolved startup failures remain visible after exact-identity recovery. */
+  startupFailures?: { error: string; resolvedAt: string }[];
 }
 /** Adapter owns capability checks and evidence; a terminal alone is insufficient. */
 export interface RunnerAdapter {
@@ -107,6 +111,7 @@ export async function startOrchestrator(
     fleet: createHash('sha256').update(config.file).digest('hex'),
     role: 'orchestrator',
     runner: runner.name,
+    persistent: !!runner.result,
     brief,
     status: 'starting',
     created: new Date().toISOString(),
