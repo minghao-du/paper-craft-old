@@ -2,6 +2,10 @@
 
 The managed adapter uses the persistent native TUI under tmux. Startup requires shared assignment-bound initialization facts in addition to native acknowledgement; hook callbacks or transcript entries alone cannot satisfy that gate.
 
+Before opening the initial user conversation, run `pc workflow agy prepare` in a single-pane tmux window. This launches agy with native status callbacks configured before startup and prints its evidence directory. In that conversation, `PC_AGY_PREPARATION` points to the durable preparation files. If tmux or interactive capabilities are missing, follow the reported correction and reopen through this entry point. Existing conversations must be reopened; callbacks are configured at startup.
+
+Preparation is complete when the callback records a native conversation ID and readable transcript, bound by its launch token to the exact current pane. Preparation creates no Run, reserves no task or checkout, and grants no scheduling authority. Keep the preparation directory available for subsequent current-conversation registration; preparation alone is not registration.
+
 Use the managed agy adapter for named persistent roles; follow [Managed Run lifecycle](managed-lifecycle.md) for authority, acceptance, recovery and release.
 
 1. Preflight verifies installed interactive capabilities (`--prompt-interactive`, `--conversation`, `--settings`, `--add-dir`) and tmux. Resolve missing capabilities or configuration failures before dispatch. Startup preserves its pane and Attempt on uncertainty; inspect the recorded tmux address for trust, authentication, configuration or authorization requests. Review those requests explicitly; never confirm them automatically. Completion criterion: exact native conversation identity, live exact pane and native role acknowledgement marker for the current attempt are recorded; the shared role-specific factual initialization gate must also pass.

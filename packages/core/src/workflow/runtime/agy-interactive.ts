@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 /** Agy native hooks correlate persistent TUI turns with durable dispatches. */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { quote, type ManagedAttempt, type ExecutionObservation } from './runtime.js';
 
@@ -19,6 +19,101 @@ type NativeStep = {
 
 /** agy native transcript and status callbacks preserve exact conversation attribution. */
 export class AgyInteractive {
+  /** Launch a user conversation with evidence configured before agy starts; no Run is created. */
+  async prepare(): Promise<void> {
+    if (!process.env.TMUX || !process.env.TMUX_PANE)
+      throw new Error('Open a single-pane tmux window, then run pc workflow agy prepare again');
+    await this.preflight();
+    const pane = process.env.TMUX_PANE;
+    this.preparationPane(pane);
+    const root = join(homedir(), '.config', 'pc', 'agy-preparations');
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    const directory = mkdtempSync(join(root, 'conversation-'));
+    const token = randomUUID();
+    writeFileSync(
+      join(directory, 'preparation.json'),
+      JSON.stringify({ address: 'tmux:' + pane, token }),
+      { mode: 0o600 },
+    );
+    const hook = join(directory, 'agy-status.cjs');
+    writeFileSync(
+      hook,
+      `const fs=require('node:fs');let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const p=JSON.parse(s);if(!p.conversation_id||!p.transcript_path)return;const f=${JSON.stringify(join(directory, 'agy-native.json'))};fs.writeFileSync(f+'.tmp',JSON.stringify({...p,pane:process.env.TMUX_PANE,token:${JSON.stringify(token)},at:new Date().toISOString()}),{mode:0o600});fs.renameSync(f+'.tmp',f);});`,
+      { mode: 0o600 },
+    );
+    const settings = join(directory, 'agy-settings.json');
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        statusLine: {
+          type: 'command',
+          command: 'node ' + quote(hook),
+          enabled: true,
+          stack_with_default: true,
+        },
+      }),
+      { mode: 0o600 },
+    );
+    console.log('Prepared evidence directory: ' + directory);
+    const result = spawnSync('agy', ['--settings', settings, '--add-dir', directory], {
+      stdio: 'inherit',
+      env: { ...process.env, PC_AGY_PREPARATION: directory },
+    });
+    if (result.error || result.status !== 0)
+      throw new Error(
+        'Prepared agy exited unsuccessfully: ' + String(result.error ?? result.status),
+      );
+  }
+
+  private preparationPane(pane: string): void {
+    if (!/^%[0-9]+$/.test(pane)) throw new Error('Expected exact tmux pane ID');
+    const actual = execFileSync(
+      'tmux',
+      ['display-message', '-p', '-t', pane, '#{pane_id} #{window_panes}'],
+      { encoding: 'utf8' },
+    ).trim();
+    if (actual !== pane + ' 1')
+      throw new Error(
+        'Preparation requires the current independent single-pane tmux window; move this conversation to one and retry',
+      );
+  }
+
+  /** Validate exact callback, transcript and live pane association before a later Run registration. */
+  prepared(
+    directory: string,
+    pane = process.env.TMUX_PANE,
+  ): { conversation: string; address: string; transcript: string; directory: string } {
+    if (!pane) throw new Error('Reopen using pc workflow agy prepare inside tmux');
+    this.preparationPane(pane);
+    try {
+      const preparation = JSON.parse(readFileSync(join(directory, 'preparation.json'), 'utf8'));
+      const native = JSON.parse(readFileSync(join(directory, 'agy-native.json'), 'utf8'));
+      if (preparation.address !== 'tmux:' + pane || native.pane !== pane)
+        throw new Error('Prepared pane does not match current pane');
+      if (
+        !preparation.token ||
+        native.token !== preparation.token ||
+        !native.conversation_id ||
+        !native.transcript_path ||
+        !existsSync(native.transcript_path)
+      )
+        throw new Error('Native callback identity or transcript unavailable');
+      readFileSync(native.transcript_path, 'utf8');
+      return {
+        conversation: native.conversation_id,
+        address: preparation.address,
+        transcript: native.transcript_path,
+        directory,
+      };
+    } catch (error) {
+      throw new Error(
+        'Prepared agy callback/pane evidence unavailable; reopen with pc workflow agy prepare: ' +
+          String(error),
+        { cause: error },
+      );
+    }
+  }
+
   private native(a: ManagedAttempt): Record<string, string> | undefined {
     try {
       const n = JSON.parse(readFileSync(join(a.directory, 'agy-native.json'), 'utf8'));
@@ -80,7 +175,9 @@ export class AgyInteractive {
     if (!a.address && existsSync(join(a.directory, 'terminal.json'))) {
       try {
         a.address = (
-          JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as { address?: string }
+          JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
+            address?: string;
+          }
         ).address;
       } catch {
         /* ignore read error */
@@ -114,9 +211,7 @@ export class AgyInteractive {
       );
     } catch (error: unknown) {
       const msg = String(
-        (error as { stderr?: string; message?: string })?.stderr ??
-          (error as Error)?.message ??
-          '',
+        (error as { stderr?: string; message?: string })?.stderr ?? (error as Error)?.message ?? '',
       );
       if (msg.includes('no server running') || msg.includes('error connecting')) {
         return new Map();
@@ -157,7 +252,9 @@ export class AgyInteractive {
     }
     const resume = !!a.conversation;
     if (resume && !a.predecessor) {
-      throw new Error('Agy resume requires a linked replacement attempt and a reconciliation brief');
+      throw new Error(
+        'Agy resume requires a linked replacement attempt and a reconciliation brief',
+      );
     }
     const hook = join(a.directory, 'agy-status.cjs');
     writeFileSync(
@@ -236,7 +333,9 @@ export class AgyInteractive {
     if (!a.address && existsSync(join(a.directory, 'terminal.json'))) {
       try {
         a.address = (
-          JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as { address?: string }
+          JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
+            address?: string;
+          }
         ).address;
       } catch {
         /* ignore read error */
@@ -329,10 +428,7 @@ export class AgyInteractive {
     const prior = new Set(this.steps(a).map((s) => s.step_index));
     const file = join(a.directory, `message-${message.id}.txt`);
     writeFileSync(file, message.brief);
-    writeFileSync(
-      join(a.directory, `message-${message.id}.json`),
-      JSON.stringify(message),
-    );
+    writeFileSync(join(a.directory, `message-${message.id}.json`), JSON.stringify(message));
     const buffer = `pc-${randomUUID()}`;
     try {
       execFileSync('tmux', ['load-buffer', '-b', buffer, file]);

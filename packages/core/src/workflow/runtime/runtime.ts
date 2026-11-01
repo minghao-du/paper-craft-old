@@ -618,3 +618,5 @@ export function requireInteractive(runner: RunnerAdapter): void {
   if (runner.interactive !== true)
     throw new Error(`${runner.name} lacks verified persistent interactive lifecycle support`);
 }
+
+export { AgyInteractive } from './agy-interactive.js';
