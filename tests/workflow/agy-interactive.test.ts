@@ -502,3 +502,39 @@ test('preparation refuses a non-tmux conversation before probing or launching ag
     if (previous !== undefined) process.env.TMUX = previous;
   }
 });
+
+test('current conversation adoption renames a lone window and rejects unmarked target sessions', async () => {
+  const child = await import('node:child_process');
+  const directory = mkdtempSync(join(tmpdir(), 'pc-adopt-'));
+  const attempt = {
+    id: 'abc',
+    run: 'run-id',
+    directory,
+    address: 'tmux:%7',
+    role: 'orchestrator',
+  } as import('../../packages/core/src/workflow/runtime/runtime.js').ManagedAttempt;
+  const calls: string[][] = [];
+  vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
+    const a = args as string[];
+    calls.push(a);
+    if (a[0] === 'display-message') return '%7 1 old @3\n';
+    if (a[0] === 'list-sessions') return 'old \n';
+    if (a[0] === 'list-windows') return '@3\n';
+    return '';
+  });
+  try {
+    new AgyInteractive().adopt(attempt);
+    expect(calls.some((a) => a[0] === 'rename-session' && a.includes('pc-run-run-id'))).toBe(true);
+    expect(
+      calls.some((a) => a[0] === 'set-option' && a.includes('@pc_run_id') && a.includes('run-id')),
+    ).toBe(true);
+    vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
+      if (args?.[0] === 'display-message') return '%7 1 old @3\n';
+      if (args?.[0] === 'list-sessions') return 'pc-run-run-id \n';
+      return '';
+    });
+    expect(() => new AgyInteractive().adopt(attempt)).toThrow(/ownership/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

@@ -16,6 +16,8 @@ Use `acceptStageReceipt` with current external facts and ownership evidence. Run
 
 Inspect `pc workflow orchestrator status --config <authoritative-config>` for the registry, including Dispatch lifecycle, process state, immutable claims and acceptance evidence. Dashboard projects the same records read-only. A process exit or timeout never proves business acceptance or checkout release. Legacy records without correlation remain unknown.
 
+Use the selected provider procedure to register or launch and activate the initial Orchestrator. Dispatch requires active authority and verified initialization.
+
 On reconnect, `startRun` reconciles persisted startup identity, immutable Receipt files, reported events and accepted acknowledgements. `pc workflow orchestrator recover <run> --config <config>` provides the same recovery explicitly. Inspect `reconciliation` for blockers and accepted Dispatches awaiting scheduling; request the next stage with its original immutable inputs so replay has one effect. Recovery does not fabricate domain acceptance or infer termination from elapsed time. Missing acknowledgement may be recovered only through the selected provider's evidence channel.
 
 Use `--replace` only when the provider independently verifies the prior Orchestrator stopped. Runtime reserves the replacement and changes mutation authority before launch, retaining the prior identity. Unknown occupancy stays blocked. Stage retries use the same termination requirement. Set repair limits through `setRemediationLimit`; rejected claims persist consecutive counts and actionable feedback. Exhaustion blocks that Dispatch, not unrelated work. Acceptance clears its consecutive count. Neither replaying rejected claims nor restarting resets the budget.

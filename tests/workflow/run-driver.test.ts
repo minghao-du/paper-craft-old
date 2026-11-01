@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import {
   startRun,
+  initializeCurrentRun,
   sendStageMessage,
   releaseAcceptedExecution,
   collectBusinessTurn,
@@ -352,24 +353,82 @@ test.each(['agy', 'claude'])(
       worktrees: true,
       base: 'main',
     };
+    let interrupted = provider === 'agy';
+    let launches = 0;
     const runner = {
       name: provider,
+      current() {
+        return {
+          conversation: 'ack',
+          address: 'tmux:actual',
+          directory: project,
+          transcript: join(project, 'native.jsonl'),
+        };
+      },
+      adopt() {
+        if (interrupted) {
+          interrupted = false;
+          throw new Error('interrupted terminal adoption');
+        }
+      },
       interactive: true,
       async stopped() {
         return true;
       },
       async preflight() {},
       async start() {
+        launches++;
         return { conversation: 'ack', address: 'tmux:actual', evidence: 'provider ack' };
       },
     };
     try {
+      if (provider === 'agy') {
+        await expect(
+          startRun(
+            config,
+            runner,
+            { repository: 'owner/repo', number: 1, kind: 'issue', title: 'task', body: 'task' },
+            provider,
+          ),
+        ).rejects.toThrow(/interrupted/);
+        expect(inspectRuns(config).runs).toHaveLength(1);
+      }
       const run = await startRun(
         config,
         runner,
         { repository: 'owner/repo', number: 1, kind: 'issue', title: 'task', body: 'task' },
         provider,
       );
+      if (provider === 'agy') {
+        expect(launches).toBe(0);
+        expect(inspectRuns(config).runs).toHaveLength(1);
+        expect(run.orchestrator?.status).toBe('starting');
+        await expect(
+          dispatchStage(config, runner, {
+            runId: run.id,
+            authority: run.orchestratorId,
+            subject: 'owner/repo#1',
+            role: 'worker',
+            stage: 'implementation',
+            inputRevision: 'v1',
+            brief: 'task',
+            prerequisites: [],
+          }),
+        ).rejects.toThrow();
+        const a = run.orchestrator!;
+        writeFileSync(
+          join(a.directory, 'initialization.json'),
+          JSON.stringify({ ...a.initialization, conversation: 'wrong' }),
+        );
+        expect(() => initializeCurrentRun(config, runner, run.id)).toThrow(/conversation/);
+        writeFileSync(
+          join(a.directory, 'initialization.json'),
+          JSON.stringify({ ...a.initialization, conversation: a.conversation }),
+        );
+        initializeCurrentRun(config, runner, run.id);
+        const again = await startRun(config, runner, run.subject, provider);
+        expect(again.orchestrator?.id).toBe(a.id);
+      }
       const stage = await dispatchStage(config, runner, {
         runId: run.id,
         authority: run.orchestratorId,
