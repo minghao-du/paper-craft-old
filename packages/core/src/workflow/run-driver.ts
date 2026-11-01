@@ -556,7 +556,15 @@ export async function acceptStageReceipt(
       !facts.evidence ||
       receipt.outcome !== 'completed' ||
       current.lifecycle === 'superseded' ||
-      !!current.acceptedReceipt ||
+      (!!current.acceptedReceipt &&
+        !(
+          receipt.corrects === current.acceptedReceipt &&
+          receipt.messageIds?.some((id) =>
+            current.messages?.some(
+              (m) => m.id === id && m.attemptId === receipt.attemptId && m.status !== 'completed',
+            ),
+          )
+        )) ||
       receipt.inputRevision !== current.inputRevision ||
       facts.currentRevision !== current.inputRevision
     )
@@ -1098,8 +1106,11 @@ export async function acceptValidatedBusinessTurns(
   for (const attempt of attempts) {
     const registry = inspectRuns(config);
     const dispatch = registry.dispatches?.find((d) => d.attempts.some((a) => a.id === attempt.id));
-    if (!dispatch) continue;
-    const receipt = registry.receipts?.filter((r) => r.dispatchId === dispatch.id).at(-1);
+    if (!dispatch || (dispatch.lifecycle === 'accepted' && !dispatch.attempts.at(-1)?.persistent))
+      continue;
+    const receipt = dispatch.acceptedReceipt
+      ? registry.receipts?.find((r) => r.id === dispatch.acceptedReceipt)
+      : registry.receipts?.filter((r) => r.dispatchId === dispatch.id).at(-1);
     if (!receipt) throw new Error('Business completion receipt missing');
     await acceptStageReceipt(
       config,

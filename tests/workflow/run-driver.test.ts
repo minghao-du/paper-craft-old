@@ -520,9 +520,13 @@ test.each(['direct', 'validated', 'collect', 'followup', 'followup-complete'])(
         expect(live).toBe(true);
         expect(stops).toBe(0);
         expect(inspectRuns(config).resources).toHaveLength(1);
-        return;
+        receipt = publishStageReceipt(config, {
+          ...receipt,
+          corrects: receipt.id,
+          messageIds: ['next-assignment'],
+        });
       }
-      if (path === 'direct' || path === 'followup-complete')
+      if (path === 'direct' || path.startsWith('followup'))
         await expect(
           acceptStageReceipt(config, run.orchestratorId, receipt.id, verify, runner),
         ).rejects.toThrow(/Unknown termination/);
