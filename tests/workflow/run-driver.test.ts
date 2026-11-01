@@ -12,6 +12,7 @@ import {
   initializeCurrentRun,
   sendStageMessage,
   releaseAcceptedExecution,
+  releaseRunCheckout,
   collectBusinessTurn,
   acceptValidatedBusinessTurns,
   orchestratorForSubject,
@@ -451,6 +452,30 @@ test.each(['agy', 'claude'])(
         ),
       ).rejects.toThrow(/provider/);
       expect(inspectRuns(config).runs[0].provider).toBe(provider);
+      if (provider === 'agy') {
+        updateRunRegistry(config, (registry) => {
+          registry.runs[0].lifecycle = 'completed';
+        });
+        // Completion ends authority while preserving the live user execution.
+        expect(inspectRuns(config).runs[0].orchestrator).toMatchObject({
+          id: run.orchestrator!.id,
+          status: 'running',
+          currentExecution: true,
+        });
+        expect(() => orchestratorForSubject(config, 'owner/repo', 1)).toThrow(/active/);
+        await expect(recoverRun(config, runner, run.id)).rejects.toThrow(/completed/i);
+        await expect(
+          dispatchStage(config, runner, {
+            ...stage,
+            runId: run.id,
+            authority: run.orchestratorId,
+          }),
+        ).rejects.toThrow(/authority/);
+        await expect(
+          releaseRunCheckout(config, run.id, project, async (attempt) => !attempt.currentExecution),
+        ).rejects.toThrow(/occupancy/);
+        await expect(startRun(config, runner, run.subject, provider)).rejects.toThrow(/ownership/);
+      }
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
