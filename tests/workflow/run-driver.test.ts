@@ -106,6 +106,34 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     expect(snapshot.tasks.find((task) => task.runId === first.id)?.orchestratorId).toBe(
       first.orchestratorId,
     );
+    expect(snapshot.tasks.find((task) => task.runId === first.id)?.executionEvidence).toMatchObject(
+      {
+        attempts: [{ id: first.orchestratorId, conversation: 'session', execution: 'unknown' }],
+        acceptance: 'unknown',
+      },
+    );
+    const beforeRead = JSON.stringify(inspectRuns(config));
+    await readDashboardFleet({ id: 'fleet', config: config.file });
+    expect(JSON.stringify(inspectRuns(config))).toBe(beforeRead);
+    updateRunRegistry(config, (registry) => {
+      registry.runs[0].orchestrator!.observation = {
+        status: 'waiting',
+        at: '2000-01-01T00:00:00Z',
+        evidence: 'authorization pending',
+      };
+      registry.runs[0].orchestrator!.startupFailures = [
+        { error: 'startup uncertain', resolvedAt: '2000-01-01T00:01:00Z' },
+      ];
+    });
+    const waitingSnapshot = await readDashboardFleet({ id: 'fleet', config: config.file });
+    expect(
+      waitingSnapshot.tasks.find((t) => t.runId === first.id)?.executionEvidence,
+    ).toMatchObject({
+      acceptance: 'unknown',
+      attempts: [
+        { execution: 'waiting', stale: true, startupFailures: [{ error: 'startup uncertain' }] },
+      ],
+    });
     expect(inspectRuns(config).runs).toHaveLength(2);
     const request = {
       runId: first.id,
@@ -194,6 +222,31 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       ownership: true,
       evidence: 'checked current facts',
     }));
+    const acceptedView = await readDashboardFleet({ id: 'fleet', config: config.file });
+    expect(
+      acceptedView.tasks.find((t) => t.id === `fleet:managed:${stage.id}`)?.executionEvidence,
+    ).toMatchObject({
+      acceptance: 'accepted',
+      receipts: expect.arrayContaining([
+        {
+          id: corrected.id,
+          attemptId: corrected.attemptId,
+          outcome: corrected.outcome,
+          accepted: true,
+        },
+      ]),
+    });
+    updateRunRegistry(config, (state) => {
+      state.dispatches!.find((d) => d.id === stage.id)!.acceptedReceipt = 'missing-receipt';
+    });
+    const conflictingView = await readDashboardFleet({ id: 'fleet', config: config.file });
+    expect(
+      conflictingView.tasks.find((t) => t.id === `fleet:managed:${stage.id}`)?.executionEvidence
+        ?.acceptance,
+    ).toBe('conflicting');
+    updateRunRegistry(config, (state) => {
+      state.dispatches!.find((d) => d.id === stage.id)!.acceptedReceipt = corrected.id;
+    });
     verifiedStopped = false;
     await expect(
       dispatchStage(config, runner, { ...request, prerequisites: [stage.id] }),
