@@ -360,52 +360,71 @@ test.each(['agy', 'claude'])(
   },
 );
 
-test.each(['agy'])(
-  'managed %s adapter requires durable provider startup and success evidence',
-  async (provider) => {
-    const { managedRunner } = await import('../../packages/core/src/workflow/runtime.js');
-    const directory = mkdtempSync(join(tmpdir(), 'pc-stream-'));
-    const runner = managedRunner(provider);
-    const attempt = {
-      id: 'a',
-      fleet: 'fleet',
-      runner: provider,
-      role: 'worker' as const,
-      brief: 'task',
-      status: 'starting' as const,
-      created: 'now',
-      directory,
-      checkout: directory,
-      address: 'tmux:actual',
-    };
-    try {
-      writeFileSync(
-        join(directory, 'events.jsonl'),
-        JSON.stringify({ type: 'system', subtype: 'init', session_id: 'session-id' }) + '\n',
-      );
-      expect(await runner.recoverReceipt(attempt)).toBeUndefined();
-      writeFileSync(
-        join(directory, 'events.jsonl'),
-        JSON.stringify({ type: 'system', subtype: 'init', session_id: 'session-id' }) +
-          '\n' +
-          JSON.stringify({ type: 'assistant', message: { content: [] } }) +
-          '\n' +
-          JSON.stringify({ type: 'result', subtype: 'success', result: 'delivered' }) +
-          '\n',
-      );
-      expect((await runner.recoverReceipt(attempt))?.conversation).toBe('session-id');
-      writeFileSync(join(directory, 'exit-code'), '0');
-      expect(await runner.collect(attempt)).toBe('delivered');
-      writeFileSync(
-        join(directory, 'events.jsonl'),
-        JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'failed' }),
-      );
-      await expect(runner.collect(attempt)).rejects.toThrow(/completed result/);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  },
-);
+test('managed agy requires native input attribution and refuses stream or interleaved evidence', async () => {
+  const { managedRunner } = await import('../../packages/core/src/workflow/runtime.js');
+  const runner = managedRunner('agy');
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-'));
+  const a = {
+    id: 'attempt',
+    fleet: 'fleet',
+    role: 'worker' as const,
+    runner: 'agy',
+    brief: 'task',
+    directory,
+    checkout: directory,
+    created: new Date().toISOString(),
+    status: 'running' as const,
+    conversation: 'native-id',
+  };
+  const transcript = join(directory, 'transcript.jsonl');
+  writeFileSync(
+    join(directory, 'events.jsonl'),
+    JSON.stringify({ type: 'result', subtype: 'success', result: 'unattributed' }),
+  );
+  writeFileSync(join(directory, 'exit-code'), '0');
+  expect(await runner.recoverReceipt(a)).toBeUndefined();
+  expect(await runner.result(a, 'attempt')).toBeUndefined();
+  writeFileSync(
+    join(directory, 'agy-native.json'),
+    JSON.stringify({
+      conversation_id: 'native-id',
+      transcript_path: transcript,
+      agent_state: 'idle',
+    }),
+  );
+  const input = {
+    step_index: 2,
+    type: 'USER_INPUT',
+    source: 'USER_EXPLICIT',
+    status: 'DONE',
+    content: '<USER_REQUEST>\ntask\n</USER_REQUEST>',
+  };
+  const result = {
+    step_index: 3,
+    type: 'PLANNER_RESPONSE',
+    source: 'MODEL',
+    status: 'DONE',
+    content: 'accepted output',
+  };
+  try {
+    writeFileSync(transcript, [input, result].map((x) => JSON.stringify(x)).join('\n'));
+    expect(await runner.result(a, 'attempt')).toBe('accepted output');
+    expect(await runner.result(a, 'predecessor')).toBeUndefined();
+    writeFileSync(
+      transcript,
+      [
+        input,
+        { ...input, step_index: 3, content: '<USER_REQUEST>\nmanual\n</USER_REQUEST>' },
+        { ...result, step_index: 4 },
+      ]
+        .map((x) => JSON.stringify(x))
+        .join('\n'),
+    );
+    expect(await runner.result(a, 'attempt')).toBeUndefined();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('overlapping child intake reconnects ownership and consuming EPIC references preserve provider', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-overlap-')));
