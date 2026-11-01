@@ -38,6 +38,7 @@ test('merged delivery records and archives before releasing a real worktree; unk
     interrupted = false;
   const roles: string[] = [];
   const runner = {
+    interactive: true,
     name: 'codex',
     async preflight() {},
     async start(a: IssueTurn) {

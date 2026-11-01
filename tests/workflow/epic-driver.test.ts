@@ -60,6 +60,7 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
     },
   ];
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;
@@ -190,6 +191,7 @@ test('blocked EPIC work retains scope without dispatch and separates repository 
   };
   const started: ManagedAttempt[] = [];
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;

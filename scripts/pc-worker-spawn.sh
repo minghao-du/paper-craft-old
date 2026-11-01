@@ -13,6 +13,7 @@ Usage: pc worker wait <dispatch-id> [--root <dir>] [--fleet <id>]
   --root <dir>      Repository/runtime root (default: current directory)
   --fleet <id>      Fleet identifier (default: default)
   -h, --help       Show help
+Persistent roles require the verified managed interactive lifecycle.
 HELP
 }
 if [ "${1-}" = wait ]; then shift; exec bash "$SCRIPT_DIR/pc-worker-wait.sh" "$@"; fi

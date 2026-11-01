@@ -78,6 +78,7 @@ test('landing repairs failed checks and rechecks changed heads without human app
     },
   };
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;
@@ -151,6 +152,7 @@ test('moved heads repeat Landing gates and EPIC confirmation is required before 
     },
   };
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;
@@ -238,6 +240,7 @@ test('uncertain merge is reconciled once and retains merged version', async () =
     },
   };
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;

@@ -7,6 +7,9 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
   startRun,
+  sendStageMessage,
+  releaseAcceptedExecution,
+  collectBusinessTurn,
   orchestratorForSubject,
   referenceRunSubject,
   inspectRuns,
@@ -33,6 +36,7 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
   let launches = 0;
   let verifiedStopped = true;
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return verifiedStopped;
@@ -65,6 +69,11 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     expect(() => orchestratorForSubject(config, subject.repository, 7)).toThrow(
       'workflow orchestrator start 7',
     );
+    // A print/exec adapter must fail before reserving ownership or launching a role.
+    await expect(
+      startRun(config, { ...runner, interactive: false }, subject, 'codex'),
+    ).rejects.toThrow(/interactive/);
+    expect(launches).toBe(0);
     const first = await startRun(config, runner, subject, 'codex');
     expect(orchestratorForSubject(config, subject.repository, 7).runner).toBe('codex');
     updateRunRegistry(config, (registry) => {
@@ -108,6 +117,21 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       prerequisites: [],
     };
     const stage = await dispatchStage(config, runner, request);
+    let sends = 0;
+    const interactiveRunner = {
+      ...runner,
+      interactive: true,
+      async send() {
+        sends++;
+        return { status: 'uncertain' as const, evidence: 'connection lost after paste' };
+      },
+    };
+    const message = { id: 'operator-followup', brief: 'Check ownership\nThen report' };
+    await sendStageMessage(config, interactiveRunner, stage.id, first.orchestratorId, message);
+    await sendStageMessage(config, interactiveRunner, stage.id, first.orchestratorId, message);
+    expect(sends).toBe(1);
+    expect(inspectRuns(config).dispatches![0].messages![0].status).toBe('uncertain');
+    expect(inspectRuns(config).dispatches![0].lifecycle).toBe('running');
     expect((await dispatchStage(config, runner, request)).id).toBe(stage.id);
     await expect(
       dispatchStage(config, runner, {
@@ -236,6 +260,7 @@ test.each(['agy', 'claude'])(
     };
     const runner = {
       name: provider,
+      interactive: true,
       async stopped() {
         return true;
       },
@@ -339,6 +364,7 @@ test('overlapping child intake reconnects ownership and consuming EPIC reference
   };
   let launches = 0;
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;
@@ -372,6 +398,113 @@ test('overlapping child intake reconnects ownership and consuming EPIC reference
       consumingRunIds: [epic.id],
     });
     expect(launches).toBe(2);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('a persistent execution accepts durable work before exit and releases only after verified stop', async () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-interactive-')));
+  mkdirSync(join(project, 'pool'));
+  const config = {
+    file: join(project, '.epic-config.json'),
+    project,
+    root: join(project, 'pool'),
+    slots: [],
+    worktrees: true,
+    base: 'main',
+  };
+  let live = true;
+  let stops = 0;
+  let allowStop = false;
+  const runner = {
+    name: 'codex',
+    interactive: true,
+    cancellation: true,
+    async preflight() {},
+    async start() {
+      return {
+        conversation: 'exact-conversation',
+        address: 'tmux:known',
+        evidence: 'brief acknowledged',
+      };
+    },
+    async result() {
+      return 'durable correlated result';
+    },
+    async collect() {
+      throw new Error('must not wait for exit');
+    },
+    async stopped() {
+      return !live;
+    },
+    async cancel() {
+      stops++;
+      if (allowStop) live = false;
+      return { evidence: 'verified exit' };
+    },
+    async observe() {
+      return {
+        status: 'waiting' as const,
+        at: '2026-11-01T00:00:00Z',
+        evidence: 'question pending',
+      };
+    },
+  };
+  try {
+    writeFileSync(config.file, JSON.stringify({ clone_root: 'pool', local_worktrees: true }));
+    const run = await startRun(
+      config,
+      runner,
+      {
+        repository: 'owner/repo',
+        number: 99,
+        kind: 'issue',
+        title: 'controlled lifecycle',
+        body: 'complete',
+      },
+      'codex',
+    );
+    const dispatch = await dispatchStage(config, runner, {
+      runId: run.id,
+      authority: run.orchestratorId,
+      subject: 'owner/repo#99',
+      role: 'worker',
+      stage: 'implementation',
+      inputRevision: 'head',
+      brief: 'Complete one task',
+      prerequisites: [],
+    });
+    await recoverRun(config, runner, run.id);
+    expect(inspectRuns(config).dispatches![0].lifecycle).toBe('running');
+    expect(inspectRuns(config).dispatches![0].attempts[0].observation?.status).toBe('waiting');
+    await expect(
+      releaseAcceptedExecution(config, runner, dispatch.id, run.orchestratorId),
+    ).rejects.toThrow(/Acceptance/);
+    expect(stops).toBe(0);
+    expect(await collectBusinessTurn(config, runner, dispatch.attempts[0])).toBe(
+      'durable correlated result',
+    );
+    const receipt = inspectRuns(config).receipts!.at(-1)!;
+    await acceptStageReceipt(config, run.orchestratorId, receipt.id, async () => ({
+      currentRevision: 'head',
+      ownership: true,
+      evidence: 'verified durable work',
+    }));
+    expect(live).toBe(true);
+    await expect(
+      releaseAcceptedExecution(config, runner, dispatch.id, run.orchestratorId),
+    ).rejects.toThrow(/Unknown termination/);
+    expect(inspectRuns(config).resources).toHaveLength(1);
+    allowStop = true;
+    let cleaned = false;
+    await releaseAcceptedExecution(config, runner, dispatch.id, run.orchestratorId, () => {
+      cleaned = true;
+    });
+    expect(stops).toBe(2);
+    expect(cleaned).toBe(true);
+    expect(inspectRuns(config).resources).toEqual([]);
+    expect(inspectRuns(config).dispatches![0].attempts[0].conversation).toBe('exact-conversation');
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

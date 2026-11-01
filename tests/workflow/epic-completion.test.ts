@@ -22,6 +22,7 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
   let specialistPlans = 0;
   let head = 'a'.repeat(40);
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;
@@ -216,6 +217,7 @@ test('post-closure specialist failures preserve attempts and block reporting unt
     status: 'delivered' as const,
   };
   const runner = {
+    interactive: true,
     name: 'codex',
     async preflight() {},
     async stopped(a: { role: string }) {

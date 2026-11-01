@@ -14,6 +14,10 @@ export interface ManagedAttempt {
   run?: string;
   role: 'orchestrator' | 'worker' | 'epic' | 'landing' | 'pipeline-audit' | 'research-state';
   runner: string;
+  /** Previous process identity when this attempt replaces a terminated execution. */
+  dispatchId?: string;
+  predecessor?: string;
+  observation?: ExecutionObservation;
   brief: string;
   status: 'starting' | 'running' | 'unknown';
   created: string;
@@ -33,6 +37,21 @@ export interface ManagedAttempt {
 /** Adapter owns capability checks and evidence; a terminal alone is insufficient. */
 export interface RunnerAdapter {
   name: string;
+  /** True only after the complete persistent interactive lifecycle is verified. */
+  interactive?: boolean;
+  /** Correlated input into the existing process; uncertainty forbids automatic replay. */
+  send?(
+    attempt: ManagedAttempt,
+    message: { id: string; brief: string },
+  ): Promise<{
+    status: 'delivered' | 'uncertain';
+    evidence: string;
+  }>;
+  /** Durable task output; implementations must not wait for process exit. */
+  result?(attempt: ManagedAttempt, dispatchId: string): Promise<string | undefined>;
+  /** Observe execution independently of receipt acceptance. */
+  observe?(attempt: ManagedAttempt): Promise<ExecutionObservation>;
+  stopped?(attempt: ManagedAttempt): Promise<boolean>;
   /** Recover normalized startup evidence from this Runner only. */
   recoverReceipt?(
     attempt: ManagedAttempt,
@@ -67,6 +86,7 @@ export async function startOrchestrator(
 ): Promise<ManagedAttempt> {
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   if (!brief.trim()) throw new Error('Expected a non-empty Orchestrator brief');
+  requireInteractive(runner);
   await runner.preflight();
   mkdirSync(home(config), { recursive: true });
   try {
@@ -118,6 +138,7 @@ function shell(value: string): string {
  */
 export class CodexRunner implements RunnerAdapter {
   readonly name: string = 'codex';
+  readonly interactive: boolean = false;
   protected command(attempt: ManagedAttempt): string {
     return `codex exec ${[attempt.directory, ...(attempt.writableDirectories ?? [])].map((path) => `--add-dir ${shell(path)}`).join(' ')} ${attempt.conversation ? `resume ${shell(attempt.conversation)} ` : ''} -c sandbox_mode='"workspace-write"' -c approval_policy='"never"' --json --output-last-message ${shell(join(attempt.directory, 'result.md'))} -`;
   }
@@ -459,4 +480,16 @@ export async function reconcileAttempt(
     : { status: 'unknown' };
   writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(control));
   return control;
+}
+
+/** A timestamped execution observation never grants task acceptance or ownership. */
+export interface ExecutionObservation {
+  status: 'running' | 'idle' | 'waiting' | 'error' | 'exited' | 'unknown';
+  at: string;
+  evidence: string;
+}
+/** Named roles require persistent interactive execution; adapters must explicitly opt in. */
+export function requireInteractive(runner: RunnerAdapter): void {
+  if (runner.interactive !== true)
+    throw new Error(`${runner.name} lacks verified persistent interactive lifecycle support`);
 }

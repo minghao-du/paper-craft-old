@@ -39,6 +39,7 @@ test('standalone intake automatically routes two worker results back to orchestr
   };
   let workerResults = 0;
   const runner = {
+    interactive: true,
     name: 'codex',
     async stopped() {
       return true;
