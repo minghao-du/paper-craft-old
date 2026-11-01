@@ -672,6 +672,7 @@ export async function retryStage(
       directory,
       status: 'starting',
       created: new Date().toISOString(),
+      brief: `Reconcile durable Dispatch ${current.id} evidence before continuing. Scope reference: ${current.briefReference.path}. Do not replay the original brief or repeat accepted work.`,
       conversation: options.replaceConversation ? undefined : prior.conversation,
       address: undefined,
       evidence: undefined,
@@ -679,7 +680,7 @@ export async function retryStage(
     };
     if (next.initialization) {
       next.initialization = { ...next.initialization, attempt: next.id };
-      next.brief = current.brief + initializationInstructions(next.initialization, next.directory);
+      next.brief += initializationInstructions(next.initialization, next.directory);
     }
     current.attempts.push(next);
     current.lifecycle = 'reserved';

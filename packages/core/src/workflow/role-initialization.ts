@@ -16,6 +16,15 @@ export interface RoleInitialization {
   briefHash: string;
   context: { path: string; hash: string };
 }
+const workerPhases = [
+  'exploring',
+  'coding',
+  'testing',
+  'awaiting-results',
+  'quality-gate',
+  'needs-human',
+  'completed',
+];
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
 /** Append the one authoritative startup evidence instruction to a complete brief. */
@@ -23,7 +32,7 @@ export function initializationInstructions(
   expected: RoleInitialization,
   directory: string,
 ): string {
-  return `\nRole initialization gate: read the immutable context at ${expected.context.path}. Initialize your assigned role before proceeding. Write ${join(directory, 'initialization.json')} atomically with these exact assignment fields: ${JSON.stringify(expected)}. These fields acknowledge role/scope and the exact context you initialized; they are not a task completion receipt. For worker, also write actual checkout .epic-status.json (matching issue, supported live phase, nonempty summary, UTC updated_at at or after launch) and append a timestamped startup entry containing this Attempt id to .epic-worklog.md. Never claim ready without these files.\n`;
+  return `\nRole initialization gate: read the immutable context at ${expected.context.path}. Initialize your assigned role before proceeding. Write ${join(directory, 'initialization.json')} atomically with these exact assignment fields: ${JSON.stringify(expected)}. These fields acknowledge role/scope and the exact context you initialized; they are not a task completion receipt. For worker, also write actual checkout .epic-status.json (matching issue, phase from ${workerPhases.join(', ')}, nonempty summary, UTC updated_at at or after launch) and append a timestamped startup entry containing this Attempt id to .epic-worklog.md. Never claim ready without these files.\n`;
 }
 
 /** Verify the assignment-bound evidence and existing role artifacts; missing facts stay pending. */
@@ -73,15 +82,7 @@ export function verifyRoleInitialization(attempt: ManagedAttempt): string {
     const issue = Number(expected.subject.split('#').at(-1));
     if (
       status.issue !== issue ||
-      ![
-        'exploring',
-        'coding',
-        'testing',
-        'awaiting-results',
-        'quality-gate',
-        'needs-human',
-        'completed',
-      ].includes(status.phase) ||
+      !workerPhases.includes(status.phase) ||
       typeof status.summary !== 'string' ||
       !status.summary.trim() ||
       !Number.isFinite(Date.parse(status.updated_at)) ||
