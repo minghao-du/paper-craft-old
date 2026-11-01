@@ -1,3 +1,4 @@
+import { ClaudeInteractive } from './claude-interactive.js';
 /** Managed role startup and durable runner evidence, independent of the model host. */
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
@@ -145,7 +146,7 @@ export class CodexRunner implements RunnerAdapter {
   protected normalize(event: Record<string, unknown>): Record<string, unknown> {
     return event;
   }
-  readonly cancellation = false;
+  readonly cancellation: boolean = false;
   /** Verified process exit releases execution capacity, never checkout ownership. */
   async termination(attempt: ManagedAttempt): Promise<boolean> {
     const file = join(attempt.directory, 'exit-code');
@@ -380,7 +381,37 @@ abstract class StreamRunner extends CodexRunner {
 /** Explicit Claude Code stream protocol adapter. */
 export class ClaudeRunner extends StreamRunner {
   readonly name = 'claude';
+  readonly cancellation = true;
+  readonly interactive = true;
   protected resumeFlag = '--resume';
+  private readonly tui = new ClaudeInteractive();
+  preflight() {
+    return this.tui.preflight();
+  }
+  start(a: ManagedAttempt) {
+    return this.tui.start(a);
+  }
+  recoverReceipt(a: ManagedAttempt) {
+    return this.tui.recoverReceipt(a);
+  }
+  stopped(a: ManagedAttempt) {
+    return this.tui.terminated(a);
+  }
+  termination(a: ManagedAttempt) {
+    return this.tui.terminated(a);
+  }
+  cancel(a: ManagedAttempt) {
+    return this.tui.cancel(a);
+  }
+  send(a: ManagedAttempt, m: { id: string; brief: string }) {
+    return this.tui.send(a, m);
+  }
+  result(a: ManagedAttempt, id: string) {
+    return this.tui.result(a, id);
+  }
+  observe(a: ManagedAttempt) {
+    return this.tui.observe(a);
+  }
 }
 /** Explicit agy stream protocol adapter; unsupported CLI capabilities fail closed. */
 export class AgyRunner extends StreamRunner {

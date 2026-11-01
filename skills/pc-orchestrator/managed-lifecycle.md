@@ -55,3 +55,5 @@ only successful publication completes the Run. Unknown writer ownership blocks r
 Managed business turns publish immutable result receipts before progression. Runtime requires accepted Worker implementation before PR quality, exact-head quality before merge, merge before records, and records before cleanup. Distinct executions sharing a checkout transfer only after verified termination; business acceptance alone leaves occupancy reserved. An interrupted report retains its candidate and writer lock. Use finalization retry only after verifying the specific recorded writer stopped; a lock belonging to another Run remains occupied.
 
 Collection publishes a reported claim; domain acceptance follows caller validation. Managed Workers return scoped JSON with `status: completed`, matching `repository` and `issue`, and nonempty `evidence`; malformed or changes-needed results cannot authorize PR quality. Recovery reconciles a reserved merge Dispatch against the actual merged head and commit before accepting its receipt.
+
+For provider `claude`, use [the native interactive adapter procedure](claude-interactive.md).

@@ -304,7 +304,7 @@ test.each(['agy', 'claude'])(
   },
 );
 
-test.each(['agy', 'claude'])(
+test.each(['agy'])(
   'managed %s adapter requires durable provider startup and success evidence',
   async (provider) => {
     const { managedRunner } = await import('../../packages/core/src/workflow/runtime.js');
@@ -507,5 +507,47 @@ test('a persistent execution accepts durable work before exit and releases only 
     expect(inspectRuns(config).dispatches![0].attempts[0].conversation).toBe('exact-conversation');
   } finally {
     rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('Claude native correlation rejects missing prompt identity and duplicate submissions', async () => {
+  const { ClaudeRunner } = await import('../../packages/core/src/workflow/runtime.js');
+  const directory = mkdtempSync(join(tmpdir(), 'pc-native-'));
+  const hooks = join(directory, 'claude-hooks');
+  mkdirSync(hooks);
+  const attempt = {
+    id: 'a',
+    fleet: 'f',
+    runner: 'claude',
+    role: 'worker' as const,
+    brief: 'task',
+    status: 'running' as const,
+    created: 'now',
+    directory,
+    checkout: directory,
+    conversation: 'session',
+    dispatchId: 'dispatch',
+  };
+  const runner = new ClaudeRunner();
+  const emit = (name: string, event: object) =>
+    writeFileSync(join(hooks, name + '.json'), JSON.stringify({ session_id: 'session', ...event }));
+  try {
+    emit('1', { hook_event_name: 'UserPromptSubmit', prompt: 'task' });
+    emit('2', { hook_event_name: 'Stop', last_assistant_message: 'unattributed' });
+    expect(await runner.result(attempt, 'dispatch')).toBeUndefined();
+    emit('1', { hook_event_name: 'UserPromptSubmit', prompt: 'task', prompt_id: 'correct' });
+    emit('2', { hook_event_name: 'Stop', prompt_id: 'manual', last_assistant_message: 'wrong' });
+    expect(await runner.result(attempt, 'dispatch')).toBeUndefined();
+    emit('3', {
+      hook_event_name: 'Stop',
+      prompt_id: 'correct',
+      last_assistant_message: 'accepted candidate',
+    });
+    expect(await runner.result(attempt, 'dispatch')).toBe('accepted candidate');
+    expect(await runner.result(attempt, 'another-dispatch')).toBeUndefined();
+    emit('4', { hook_event_name: 'UserPromptSubmit', prompt: 'task', prompt_id: 'duplicate' });
+    expect(await runner.result(attempt, 'dispatch')).toBeUndefined();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
