@@ -1,4 +1,5 @@
 import { ClaudeInteractive } from './claude-interactive.js';
+import { AgyInteractive } from './agy-interactive.js';
 /** Managed role startup and durable runner evidence, independent of the model host. */
 import { InteractiveCodexRunner } from './codex-interactive.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -435,7 +436,49 @@ export class ClaudeRunner extends StreamRunner {
 /** Explicit agy stream protocol adapter; unsupported CLI capabilities fail closed. */
 export class AgyRunner extends StreamRunner {
   readonly name = 'agy';
+  readonly cancellation = true;
+  // Enable only after real Run lifecycle conformance.
+  readonly interactive = false;
   protected resumeFlag = '--conversation';
+  private readonly tui = new AgyInteractive();
+  preflight() {
+    return this.tui.preflight();
+  }
+  start(a: ManagedAttempt) {
+    return this.tui.start(a);
+  }
+  recoverReceipt(a: ManagedAttempt) {
+    return this.tui.recoverReceipt(a);
+  }
+  stopped(a: ManagedAttempt) {
+    return this.tui.stopped(a);
+  }
+  termination(a: ManagedAttempt) {
+    return this.tui.terminated(a);
+  }
+  cancel(a: ManagedAttempt) {
+    return this.tui.cancel(a);
+  }
+  send(a: ManagedAttempt, m: { id: string; brief: string }) {
+    return this.tui.send(a, m);
+  }
+  result(a: ManagedAttempt, id: string) {
+    return this.tui.result(a, id);
+  }
+  observe(a: ManagedAttempt) {
+    return this.tui.observe(a);
+  }
+  async collect(a: ManagedAttempt): Promise<string> {
+    for (;;) {
+      const output = await this.result(a, a.dispatchId ?? a.id);
+      if (output !== undefined) return output;
+      if (await this.stopped(a)) throw new Error('agy exited without correlated result');
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  collectable(a: ManagedAttempt): boolean {
+    return existsSync(join(a.directory, 'agy-native.json'));
+  }
 }
 /** Resolve a supported provider without fallback. */
 export function managedRunner(provider: string): CodexRunner | InteractiveCodexRunner {

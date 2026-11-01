@@ -13,3 +13,5 @@ Launch through `"$HELPER" run agy [arguments...]`, the installed zsh function, o
 ```
 
 Re-register after switching conversations if automatic recording is unavailable. Recovery executes `agy --conversation <conversation-id>` from the saved directory, with no initial prompt or permission-bypass flags. Keep agy's own conversation storage available and verify the original conversation opens and waits for input.
+
+Managed Run launch remains capability-gated until the complete role lifecycle is qualified. Manual conversation recovery above does not grant Run authority. Native agy status callbacks provide exact conversation identity and observations; task output must be correlated to the exact submitted user step in that conversation's CLI transcript. Unknown or interleaved attribution remains pending. A native ready response is supporting execution evidence; retain the role-specific initialization gates in the launch procedure.
