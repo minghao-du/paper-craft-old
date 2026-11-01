@@ -250,6 +250,12 @@ function App() {
                                   <summary>{t('main.runtimeObservations')}</summary>
                                   <pre>{JSON.stringify(task.runtimeEvidence, null, 2)}</pre>
                                 </details>
+                                {task.executionEvidence && (
+                                  <details>
+                                    <summary>{t('main.executionEvidence')}</summary>
+                                    <pre>{JSON.stringify(task.executionEvidence, null, 2)}</pre>
+                                  </details>
+                                )}
                                 <TaskLogs task={task} read={read} />
                                 <p>
                                   {t('main.blockers', {
