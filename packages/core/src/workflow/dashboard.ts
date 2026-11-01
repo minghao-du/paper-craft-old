@@ -1,3 +1,4 @@
+import type { ManagedAttempt } from './runtime.js';
 import { readWorkerInventory } from './worker-inventory.js';
 import { inspectRuns, type WorkflowRun, type RunRegistry } from './run-driver.js';
 /** File-backed evidence shared by Dashboard and JSON CLI; never scheduling authority. */
@@ -12,7 +13,75 @@ export interface FleetRegistration {
   config: string;
   project?: string;
 }
-/** Attributed task evidence; runtime and execution attempts remain unknown. */
+/** Durable execution evidence is separate from current liveness and acceptance. */
+export interface DashboardExecution {
+  attempts: {
+    id: string;
+    role: string;
+    runner: string;
+    conversation?: string;
+    address?: string;
+    predecessor?: string;
+    recordedStatus: string;
+    execution: string;
+    observation?: ManagedAttempt['observation'];
+    stale: boolean;
+    error?: string;
+    startupFailures?: ManagedAttempt['startupFailures'];
+  }[];
+  acceptance: 'accepted' | 'reported' | 'unknown' | 'conflicting';
+  receipts: { id: string; attemptId: string; outcome: string; accepted: boolean }[];
+  uncertainty: string;
+}
+function executionEvidence(
+  attempts: ManagedAttempt[],
+  registry: RunRegistry,
+  dispatchId?: string,
+): DashboardExecution {
+  const receipts = (registry.receipts ?? []).filter(
+    (r) => r.dispatchId === dispatchId && dispatchId !== undefined,
+  );
+  const dispatch = registry.dispatches?.find((d) => d.id === dispatchId);
+  const accepted = receipts.find((r) => r.id === dispatch?.acceptedReceipt);
+  const conflicting = Boolean(
+    dispatch?.acceptedReceipt && (!accepted || accepted.attemptId !== attempts.at(-1)?.id),
+  );
+  return {
+    attempts: attempts.map((a) => ({
+      id: a.id,
+      role: a.role,
+      runner: a.runner,
+      conversation: a.conversation,
+      address: a.address,
+      predecessor: a.predecessor,
+      recordedStatus: a.status,
+      execution: a.observation?.status ?? 'unknown',
+      observation: a.observation,
+      stale:
+        !a.observation ||
+        !Number.isFinite(Date.parse(a.observation.at)) ||
+        Date.now() - Date.parse(a.observation.at) > 300000,
+      error: a.error,
+      startupFailures: a.startupFailures,
+    })),
+    acceptance: conflicting
+      ? 'conflicting'
+      : accepted
+        ? 'accepted'
+        : receipts.length
+          ? 'reported'
+          : 'unknown',
+    receipts: receipts.map((r) => ({
+      id: r.id,
+      attemptId: r.attemptId,
+      outcome: r.outcome,
+      accepted: r.id === accepted?.id && !conflicting,
+    })),
+    uncertainty:
+      'Recorded observations are not current liveness. Conversation reuse does not merge attempts. Missing observations and monitoring gaps remain unknown; this is not a complete execution history.',
+  };
+}
+/** Attributed task evidence; runtime presence never grants ownership. */
 export interface DashboardTask {
   id: string;
   slot: string;
@@ -31,7 +100,8 @@ export interface DashboardTask {
   /** Verified registry ownership, absent on legacy file-only tasks. */
   runId?: string;
   orchestratorId?: string;
-  executionIdentity: 'unknown';
+  executionIdentity: string;
+  executionEvidence?: DashboardExecution;
   observedAt: string;
   stale: boolean;
   error?: string;
@@ -85,10 +155,37 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         ],
         runId: run.id,
         orchestratorId: run.orchestratorId,
+        executionEvidence: executionEvidence(
+          [...(run.priorOrchestrators ?? []), ...(run.orchestrator ? [run.orchestrator] : [])],
+          { runs, ...execution },
+        ),
         runtime: 'unknown',
         executionIdentity: 'unknown',
         observedAt,
         stale: false,
+      });
+    }
+    for (const dispatch of execution.dispatches ?? []) {
+      const attempt = dispatch.attempts.at(-1);
+      fleet.tasks.push({
+        id: `${registration.id}:managed:${dispatch.id}`,
+        slot: `managed-${dispatch.id}`,
+        path: attempt?.checkout ?? config.project,
+        role: dispatch.role,
+        source: dispatch.briefReference.path,
+        phase: dispatch.lifecycle,
+        summary: dispatch.stage,
+        blockers: [],
+        runId: dispatch.runId,
+        runtime: 'unknown',
+        executionIdentity: attempt?.id ?? 'unknown',
+        observedAt,
+        stale: false,
+        executionEvidence: executionEvidence(
+          dispatch.attempts,
+          { runs, ...execution },
+          dispatch.id,
+        ),
       });
     }
     const workers = readWorkerInventory(config.project);
