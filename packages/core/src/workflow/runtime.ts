@@ -452,13 +452,11 @@ export class ClaudeRunner extends StreamRunner {
     return existsSync(join(a.directory, 'claude-hooks'));
   }
 }
-/** Explicit agy stream protocol adapter; unsupported CLI capabilities fail closed. */
-export class AgyRunner extends StreamRunner {
+/** Managed agy persistent TUI adapter backed by native hook transcripts. */
+export class AgyRunner implements RunnerAdapter {
   readonly name = 'agy';
   readonly cancellation = true;
-  // Enable only after real Run lifecycle conformance.
-  readonly interactive = false;
-  protected resumeFlag = '--conversation';
+  readonly interactive = true;
   private readonly tui = new AgyInteractive();
   preflight() {
     return this.tui.preflight();
@@ -488,19 +486,20 @@ export class AgyRunner extends StreamRunner {
     return this.tui.observe(a);
   }
   async collect(a: ManagedAttempt): Promise<string> {
-    for (;;) {
-      const output = await this.result(a, a.dispatchId ?? a.id);
-      if (output !== undefined) return output;
-      if (await this.stopped(a)) throw new Error('agy exited without correlated result');
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    const output = await this.result(a, a.dispatchId ?? a.id);
+    if (output === undefined) throw new Error('agy has no uniquely correlated completed turn');
+    return output;
   }
   collectable(a: ManagedAttempt): boolean {
     return existsSync(join(a.directory, 'agy-native.json'));
   }
 }
 /** Resolve a supported provider without fallback. */
-export function managedRunner(provider: string): CodexRunner | InteractiveCodexRunner {
+export function managedRunner(provider: string): RunnerAdapter & {
+  stopped(attempt: ManagedAttempt): Promise<boolean>;
+  collect(attempt: ManagedAttempt): Promise<string>;
+  collectable(attempt: ManagedAttempt): boolean;
+} {
   switch (provider) {
     case 'codex':
       return new InteractiveCodexRunner();

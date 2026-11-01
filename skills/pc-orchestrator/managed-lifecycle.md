@@ -1,6 +1,6 @@
 # Managed Run lifecycle
 
-For Codex, use the [persistent TUI adapter procedure](codex-interactive.md).
+For Codex, use the [persistent TUI adapter procedure](codex-interactive.md). For agy, use the [persistent TUI adapter procedure](agy-interactive.md).
 
 Use the core Run-driver operations as transition authority. Only the owning Orchestrator requests top-level stages with `dispatchStage`; the runtime verifies Run authority, fixed provider, immutable input revision and accepted prerequisites before reserving and launching through the managed adapter. Domain acceptance remains the EPIC or specialist's judgment, represented by the workflow's current-fact verifier. A role's recommendation is not a dispatch.
 

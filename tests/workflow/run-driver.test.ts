@@ -76,9 +76,11 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     await expect(
       startRun(config, { ...runner, interactive: false }, subject, 'codex'),
     ).rejects.toThrow(/interactive/);
-    await expect(startRun(config, managedRunner('agy'), subject, 'agy')).rejects.toThrow(
-      /interactive/,
-    );
+    expect(managedRunner('agy').interactive).toBe(true);
+    await expect(
+      startRun(config, { ...managedRunner('agy'), interactive: false }, subject, 'agy'),
+    ).rejects.toThrow(/interactive/);
+    expect(managedRunner('claude').interactive).toBe(true);
     await expect(
       startRun(config, { ...managedRunner('claude'), interactive: false }, subject, 'claude'),
     ).rejects.toThrow(/interactive/);
