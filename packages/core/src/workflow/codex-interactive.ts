@@ -47,8 +47,7 @@ function files(directory: string): string[] {
 /** Native rollout identity and turn attribution are required; panes alone never acknowledge work. */
 export class InteractiveCodexRunner implements RunnerAdapter {
   readonly name = 'codex';
-  // Native transport is verified; role-specific startup facts still lack a shared contract.
-  readonly interactive = false;
+  readonly interactive = true;
   async termination(attempt: ManagedAttempt) {
     return this.stopped(attempt);
   }
@@ -227,7 +226,7 @@ export class InteractiveCodexRunner implements RunnerAdapter {
       JSON.stringify({ address: attempt.address, paneId: output }),
       { mode: 0o600 },
     );
-    const deadline = Date.now() + 20000;
+    const deadline = Date.now() + 90000;
     while (Date.now() < deadline) {
       const ack = await this.recoverReceipt(attempt);
       if (ack && roleInitializationReady(attempt)) return ack;
@@ -303,11 +302,15 @@ export class InteractiveCodexRunner implements RunnerAdapter {
       throw new Error('Exact Codex terminal address required');
     const pane = attempt.address.slice(5);
     execFileSync('tmux', ['send-keys', '-t', pane, 'C-c']);
-    execFileSync('tmux', ['send-keys', '-t', pane, 'C-c']);
+    let nextInterrupt = Date.now() + 1000;
     const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
       if (await this.stopped(attempt))
         return { evidence: 'Codex exited and terminal termination verified' };
+      if (Date.now() >= nextInterrupt && this.pane(attempt) === 'live') {
+        execFileSync('tmux', ['send-keys', '-t', pane, 'C-c']);
+        nextInterrupt = Date.now() + 1000;
+      }
       await new Promise((r) => setTimeout(r, 100));
     }
     throw new Error('Codex termination unknown; retain checkout ownership');
