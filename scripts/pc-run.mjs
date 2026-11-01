@@ -1,3 +1,4 @@
+import { runtimeRoot } from './pc-runtime-paths.mjs';
 /** Lightweight Run intake: JSON state only; scheduling belongs to the agent. */
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -31,7 +32,7 @@ try {
   }
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(options.fleet))
     throw new Error('Expected safe fleet identifier');
-  const directory = join(realpathSync(options.root), '.runtime', options.fleet, 'runs');
+  const directory = join(runtimeRoot(options.root), options.fleet, 'runs');
   let run;
   if (action === 'create') {
     const issue = Number(options.issue);

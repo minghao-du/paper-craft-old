@@ -1,8 +1,9 @@
+import { runtimeRoot } from './pc-runtime-paths.mjs';
 /** Read-only recovery inventory, with explicit receipt acknowledgment. */
 import process from 'node:process';
 import console from 'node:console';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 const safe = (value) => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(value);
 try {
   const args = process.argv.slice(2);
@@ -28,7 +29,7 @@ try {
     }
     if (!safe(fleet) || (runId && !safe(runId)) || (ack && !safe(ack)))
       throw new Error('Expected safe identifiers');
-    const runs = resolve(root, '.runtime', fleet, 'runs');
+    const runs = join(runtimeRoot(root), fleet, 'runs');
     const ids = runId
       ? [runId]
       : readdirSync(runs, { withFileTypes: true })

@@ -50,7 +50,7 @@ it('rejects stale HEAD and conflicting ownership, then merges and preserves work
     writeFileSync(log, '');
     writeFileSync(
       join(bin, 'gh'),
-      '#!/bin/bash\nprintf "%s\\n" "$*" >> "$GH_LOG"\ncase "$2" in\nview) printf \'{"headRefOid":"%s","state":"OPEN","isDraft":false,"headRefName":"worker","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}\\n\' "$HEAD_SHA";;\nchecks) exit 0;;\nmerge) exit 0;;\nesac\n',
+      '#!/bin/bash\nprintf "%s\\n" "$*" >> "$GH_LOG"\ncase "$2" in\nview) if [[ "$*" == *"--jq"* ]]; then echo "${MERGED_STATE:-MERGED}"; exit 0; fi; printf \'{"headRefOid":"%s","state":"OPEN","isDraft":false,"headRefName":"worker","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}\\n\' "$HEAD_SHA";;\nchecks) exit 0;;\nmerge) exit 0;;\nesac\n',
       { mode: 0o755 },
     );
     const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, GH_LOG: log, HEAD_SHA: head };
@@ -78,6 +78,24 @@ it('rejects stale HEAD and conflicting ownership, then merges and preserves work
     expect(invoke(head).status).not.toBe(0);
     expect(readFileSync(log, 'utf8')).not.toContain('merge ');
     env.HEAD_SHA = head;
+    const queued = spawnSync(
+      pc,
+      [
+        'pr',
+        'ready-and-merge',
+        '12',
+        '--root',
+        root,
+        '--dispatch',
+        'dispatch',
+        '--tested-head',
+        head,
+      ],
+      { env: { ...env, MERGED_STATE: 'OPEN' }, encoding: 'utf8' },
+    );
+    expect(queued.status).not.toBe(0);
+    expect(existsSync(worktree)).toBe(true);
+    expect(existsSync(join(home, 'LANDED.json'))).toBe(false);
     const landed = invoke(head);
     expect(landed.stderr).toBe('');
     expect(landed.status).toBe(0);

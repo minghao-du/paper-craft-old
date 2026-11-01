@@ -2,9 +2,11 @@
 set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 if [ "${1-}" = status ]; then shift; exec bash "$SCRIPT_DIR/pc-worker-status.sh" "$@"; fi
+if [ "${1-}" = release ]; then shift; exec bash "$SCRIPT_DIR/pc-worker-release.sh" "$@"; fi
 usage() {
   cat <<'HELP'
 Usage: pc worker wait <dispatch-id> [--root <dir>] [--fleet <id>]
+       pc worker release <dispatch-id> [--root <dir>] [--fleet <id>]
        pc worker spawn <issue-id> <role> [options]
   --run <id>        Run identifier (required when multiple Runs exist)
   --runner <cmd>    Override Run runner command; brief path is appended as one argument

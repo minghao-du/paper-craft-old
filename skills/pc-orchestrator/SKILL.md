@@ -77,3 +77,5 @@ remove locks or force cleanup. Completion means accepted issue scope, recorded
 outcomes and verified resource release.
 
 `pc workflow orchestrator issue` is deprecated and exits without dispatching.
+
+For a failed or crashed attempt, run `pc worker release <dispatch-id>` after reviewing its receipt. This verifies termination and lock ownership, preserves its evidence and worktree, and permits a new spawn for the same issue and role. Use the same `--root` and `--fleet` selectors as wait. A queued PR preserves worker resources until GitHub reports it merged.
