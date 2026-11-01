@@ -142,7 +142,9 @@ test('native completed turns require exact attempt and dispatch correlation, idl
     // Duplicate inputs for same brief return undefined
     writeFileSync(
       transcriptPath,
-      [inputStep, { ...inputStep, step_index: 1 }, resultStep].map((s) => JSON.stringify(s)).join('\n'),
+      [inputStep, { ...inputStep, step_index: 1 }, resultStep]
+        .map((s) => JSON.stringify(s))
+        .join('\n'),
     );
     expect(await tui.result(attempt, 'dispatch-1')).toBeUndefined();
 
@@ -191,10 +193,7 @@ test('startup requires exact conversation UUID, live pane, transcript input matc
 
   const tui = new AgyInteractive();
 
-  writeFileSync(
-    join(directory, 'terminal.json'),
-    JSON.stringify({ address: 'tmux:%555' }),
-  );
+  writeFileSync(join(directory, 'terminal.json'), JSON.stringify({ address: 'tmux:%555' }));
   writeFileSync(
     join(directory, 'agy-input.txt'),
     'Do work\nBefore doing further work, acknowledge applicable role/project initialization and durable-state inspection with [pc ready role=worker attempt=att-1]. Then perform only the assigned work.',
@@ -209,7 +208,9 @@ test('startup requires exact conversation UUID, live pane, transcript input matc
   );
 
   let inventory = '%555 0\n%999 1\n';
-  const spy = vi.mocked(child.execFileSync).mockImplementation((() => inventory) as unknown as typeof child.execFileSync);
+  const spy = vi
+    .mocked(child.execFileSync)
+    .mockImplementation((() => inventory) as unknown as typeof child.execFileSync);
 
   const inputStep = {
     step_index: 0,
@@ -224,7 +225,16 @@ test('startup requires exact conversation UUID, live pane, transcript input matc
     // Missing ready marker in PLANNER_RESPONSE
     writeFileSync(
       transcriptPath,
-      [inputStep, { step_index: 1, type: 'PLANNER_RESPONSE', source: 'MODEL', status: 'DONE', content: 'hello' }]
+      [
+        inputStep,
+        {
+          step_index: 1,
+          type: 'PLANNER_RESPONSE',
+          source: 'MODEL',
+          status: 'DONE',
+          content: 'hello',
+        },
+      ]
         .map((s) => JSON.stringify(s))
         .join('\n'),
     );
@@ -416,18 +426,79 @@ test('AgyRunner.collect polls result until completed or process stopped', async 
   try {
     // If stopped before result, throws
     vi.spyOn(runner, 'stopped').mockResolvedValue(true);
-    vi.spyOn((runner as unknown as { tui: { result: () => Promise<string | undefined> } }).tui, 'result').mockResolvedValue(undefined);
-    await expect(runner.collect(attempt)).rejects.toThrow(/agy exited without a correlated task result/);
+    vi.spyOn(
+      (runner as unknown as { tui: { result: () => Promise<string | undefined> } }).tui,
+      'result',
+    ).mockResolvedValue(undefined);
+    await expect(runner.collect(attempt)).rejects.toThrow(
+      /agy exited without a correlated task result/,
+    );
 
     // If result becomes available after a delay, resolves
     let calls = 0;
     vi.spyOn(runner, 'stopped').mockResolvedValue(false);
-    vi.spyOn((runner as unknown as { tui: { result: () => Promise<string | undefined> } }).tui, 'result').mockImplementation(async () => {
+    vi.spyOn(
+      (runner as unknown as { tui: { result: () => Promise<string | undefined> } }).tui,
+      'result',
+    ).mockImplementation(async () => {
       calls++;
       return calls >= 3 ? 'completed output' : undefined;
     });
     expect(await runner.collect(attempt)).toBe('completed output');
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// Preparation must bind callback evidence to the launching pane, not a recent transcript.
+test('prepared current conversation requires live exact pane and matching callback evidence', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-prepared-'));
+  const transcript = join(directory, 'transcript.jsonl');
+  const child = await import('node:child_process');
+  vi.mocked(child.execFileSync).mockReturnValue('%42 1\n');
+  writeFileSync(transcript, '{}\n');
+  writeFileSync(
+    join(directory, 'preparation.json'),
+    JSON.stringify({ address: 'tmux:%42', token: 'nonce' }),
+  );
+  writeFileSync(
+    join(directory, 'agy-native.json'),
+    JSON.stringify({
+      conversation_id: 'native-id',
+      transcript_path: transcript,
+      pane: '%42',
+      token: 'nonce',
+      agent_state: 'idle',
+    }),
+  );
+  const adapter = new AgyInteractive();
+  try {
+    expect(adapter.prepared(directory, '%42').conversation).toBe('native-id');
+    expect(() => adapter.prepared(directory, '%43')).toThrow(/pane/);
+    writeFileSync(
+      join(directory, 'agy-native.json'),
+      JSON.stringify({
+        conversation_id: 'other',
+        transcript_path: transcript,
+        pane: '%42',
+        token: 'wrong',
+      }),
+    );
+    expect(() => adapter.prepared(directory, '%42')).toThrow(/callback/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('preparation refuses a non-tmux conversation before probing or launching agy', async () => {
+  const previous = process.env.TMUX;
+  delete process.env.TMUX;
+  const child = await import('node:child_process');
+  vi.mocked(child.spawnSync).mockClear();
+  try {
+    await expect(new AgyInteractive().prepare()).rejects.toThrow(/single-pane tmux/);
+    expect(child.spawnSync).not.toHaveBeenCalled();
+  } finally {
+    if (previous !== undefined) process.env.TMUX = previous;
   }
 });

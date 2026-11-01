@@ -13,7 +13,7 @@ import { Command, Option } from 'commander';
 import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import { preserveState } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
-import { managedRunner } from '@paper-craft/core/workflow/runtime';
+import { AgyInteractive, managedRunner } from '@paper-craft/core/workflow/runtime';
 import { inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
@@ -62,6 +62,21 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         else output({ path: config.root }, opts.human());
       }),
     );
+  workflow
+    .command('agy')
+    .description('Prepare a native agy user conversation')
+    .command('prepare')
+    .description(
+      'Start agy in the current single-pane tmux window with registration evidence (no Run)',
+    )
+    .action(async () => {
+      try {
+        await new AgyInteractive().prepare();
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 2;
+      }
+    });
   registerSubagentCommands(workflow, opts);
   const orchestrator = workflow
     .command('orchestrator')
