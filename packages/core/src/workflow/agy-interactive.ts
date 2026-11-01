@@ -5,9 +5,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ManagedAttempt, ExecutionObservation } from './runtime.js';
+import { quote, type ManagedAttempt, type ExecutionObservation } from './runtime.js';
 
-const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
 const delay = () => new Promise((resolve) => setTimeout(resolve, 100));
 
 type NativeStep = {
@@ -288,19 +287,30 @@ export class AgyInteractive {
   }
 
   async result(a: ManagedAttempt, id: string): Promise<string | undefined> {
-    if (this.native(a)?.agent_state !== 'idle' || id !== (a.dispatchId ?? a.id)) return undefined;
+    if (this.native(a)?.agent_state !== 'idle') return undefined;
+    const isDispatch = id === (a.dispatchId ?? a.id);
+    const messageFile = join(a.directory, `message-${id}.json`);
+    let targetBrief: string;
+    if (isDispatch) {
+      targetBrief = existsSync(join(a.directory, 'agy-input.txt'))
+        ? readFileSync(join(a.directory, 'agy-input.txt'), 'utf8')
+        : a.brief;
+    } else if (existsSync(messageFile)) {
+      try {
+        targetBrief = (JSON.parse(readFileSync(messageFile, 'utf8')) as { brief: string }).brief;
+      } catch {
+        return undefined;
+      }
+    } else {
+      return undefined;
+    }
     const steps = this.steps(a);
-    const inputs = steps.filter((s) =>
-      this.input(
-        s,
-        existsSync(join(a.directory, 'agy-input.txt'))
-          ? readFileSync(join(a.directory, 'agy-input.txt'), 'utf8')
-          : a.brief,
-      ),
-    );
+    const inputs = steps.filter((s) => this.input(s, targetBrief));
     if (inputs.length !== 1) return undefined;
     const later = steps.filter((s) => s.step_index > inputs[0].step_index);
-    const boundary = later.findIndex((s) => s.type === 'USER_INPUT');
+    const boundary = later.findIndex(
+      (s) => s.type === 'USER_INPUT' && s.source === 'USER_EXPLICIT',
+    );
     const responseSteps = boundary < 0 ? later : later.slice(0, boundary);
     const raw = responseSteps.findLast(
       (s) => s.type === 'PLANNER_RESPONSE' && s.source === 'MODEL' && s.status === 'DONE',
@@ -317,8 +327,12 @@ export class AgyInteractive {
 
   async send(a: ManagedAttempt, message: { id: string; brief: string }) {
     const prior = new Set(this.steps(a).map((s) => s.step_index));
-    const file = join(a.directory, `message-${randomUUID()}.txt`);
+    const file = join(a.directory, `message-${message.id}.txt`);
     writeFileSync(file, message.brief);
+    writeFileSync(
+      join(a.directory, `message-${message.id}.json`),
+      JSON.stringify(message),
+    );
     const buffer = `pc-${randomUUID()}`;
     try {
       execFileSync('tmux', ['load-buffer', '-b', buffer, file]);

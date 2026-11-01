@@ -377,7 +377,10 @@ export async function dispatchStage(
       )
     )
       throw new Error('Missing mandatory accepted Worker implementation');
-    if (request.role === 'pipeline-audit' && !run.epicClosure)
+    if (
+      (request.role === 'pipeline-audit' || request.role === 'pipeline-refactor') &&
+      !run.epicClosure
+    )
       throw new Error('Pipeline requires verified EPIC closure');
     if (
       request.role === 'research-state' &&
@@ -1113,14 +1116,32 @@ export async function startBusinessTurn(
 /** Publish collected evidence; accept only after explicit domain validation. */
 export async function collectBusinessTurn(
   config: FleetConfig,
-  runner: RunnerAdapter & { collect(a: ManagedAttempt): Promise<string> },
+  runner: RunnerAdapter & {
+    collect(a: ManagedAttempt): Promise<string>;
+    stopped?(a: ManagedAttempt): Promise<boolean>;
+  },
   attempt: ManagedAttempt,
   validate?: (result: string) => void,
+  options?: { timeoutMs?: number },
 ): Promise<string> {
-  const result =
-    runner.interactive && runner.result && attempt.dispatchId
-      ? await runner.result(attempt, attempt.dispatchId)
-      : await runner.collect(attempt);
+  let result: string | undefined;
+  if (runner.interactive && runner.result && attempt.dispatchId) {
+    const deadline =
+      options?.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;
+    for (;;) {
+      result = await runner.result(attempt, attempt.dispatchId);
+      if (result !== undefined) break;
+      if (runner.stopped && (await runner.stopped(attempt))) {
+        throw new Error('Runner stopped without a correlated task result');
+      }
+      if (deadline !== undefined && Date.now() >= deadline) {
+        throw new Error('Timed out waiting for correlated task result');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  } else {
+    result = await runner.collect(attempt);
+  }
   if (result === undefined) throw new Error('No correlated task result; execution remains pending');
   const dispatch = inspectRuns(config).dispatches?.find((d) =>
     d.attempts.some((a) => a.id === attempt.id),

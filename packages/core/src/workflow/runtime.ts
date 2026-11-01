@@ -20,7 +20,14 @@ export interface ManagedAttempt {
   fleet: string;
   /** Run ownership recorded at intake. */
   run?: string;
-  role: 'orchestrator' | 'worker' | 'epic' | 'landing' | 'pipeline-audit' | 'research-state';
+  role:
+    | 'orchestrator'
+    | 'worker'
+    | 'epic'
+    | 'landing'
+    | 'pipeline-audit'
+    | 'pipeline-refactor'
+    | 'research-state';
   runner: string;
   /** Previous process identity when this attempt replaces a terminated execution. */
   dispatchId?: string;
@@ -158,9 +165,11 @@ export async function startOrchestrator(
   save(join(directory, 'attempt.json'), attempt);
   return attempt;
 }
-function shell(value: string): string {
+/** Escape a shell argument by wrapping it in single quotes. */
+export function quote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
+const shell = quote;
 /** Codex JSONL is the receipt/result channel; resume supplies subsequent input.
  * The workflow driver polls the durable log to wake and dispatch the next turn.
  */
@@ -269,7 +278,11 @@ export class CodexRunner implements RunnerAdapter {
   async start(
     attempt: ManagedAttempt,
   ): Promise<{ conversation: string; address: string; evidence: string }> {
-    const specialist = ['pipeline-audit', 'research-state'].includes(attempt.role);
+    const specialist = [
+      'pipeline-audit',
+      'pipeline-refactor',
+      'research-state',
+    ].includes(attempt.role);
     if (specialist && !attempt.terminalSession)
       throw new Error('Specialist requires a verified existing tmux session');
     const session = `pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`;
@@ -485,10 +498,14 @@ export class AgyRunner implements RunnerAdapter {
   observe(a: ManagedAttempt) {
     return this.tui.observe(a);
   }
+  /** Persistent completion uses correlated native turn output, never process exit. */
   async collect(a: ManagedAttempt): Promise<string> {
-    const output = await this.result(a, a.dispatchId ?? a.id);
-    if (output === undefined) throw new Error('agy has no uniquely correlated completed turn');
-    return output;
+    for (;;) {
+      const output = await this.tui.result(a, a.dispatchId ?? a.id);
+      if (output !== undefined) return output;
+      if (await this.stopped(a)) throw new Error('agy exited without a correlated task result');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   }
   collectable(a: ManagedAttempt): boolean {
     return existsSync(join(a.directory, 'agy-native.json'));

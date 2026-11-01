@@ -4,8 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { statSync, existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import type { ManagedAttempt, ExecutionObservation } from './runtime.js';
-const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
+import { quote, type ManagedAttempt, type ExecutionObservation } from './runtime.js';
 const delay = () => new Promise((resolve) => setTimeout(resolve, 100));
 type Hook = {
   transcript_path?: string;

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { ManagedAttempt, ExecutionObservation, RunnerAdapter } from './runtime.js';
+import { quote, type ManagedAttempt, type ExecutionObservation, type RunnerAdapter } from './runtime.js';
 
 interface NativeEvent {
   type: string;
@@ -19,7 +19,6 @@ interface NativeEvent {
     item?: { type: string; content?: { text?: string }[] };
   };
 }
-const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
 const marker = (a: ManagedAttempt, id = 'initial') =>
   `[pc attempt=${a.id} dispatch=${a.dispatchId ?? a.id} message=${id}]`;
 function events(path: string): NativeEvent[] {
@@ -54,10 +53,14 @@ export class InteractiveCodexRunner implements RunnerAdapter {
   collectable(attempt: ManagedAttempt) {
     return existsSync(join(attempt.directory, 'exit-code'));
   }
-  async collect(attempt: ManagedAttempt) {
-    const result = await this.result(attempt, attempt.dispatchId ?? attempt.id);
-    if (result === undefined) throw new Error('Codex has no uniquely correlated completed turn');
-    return result;
+  async collect(attempt: ManagedAttempt): Promise<string> {
+    for (;;) {
+      const result = await this.result(attempt, attempt.dispatchId ?? attempt.id);
+      if (result !== undefined) return result;
+      if (await this.stopped(attempt))
+        throw new Error('Codex exited without a correlated task result');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   }
   private pane(attempt: ManagedAttempt): 'live' | 'dead' | 'absent' | 'unknown' {
     if (!attempt.address?.match(/^tmux:%[0-9]+$/)) return 'unknown';
@@ -102,12 +105,22 @@ export class InteractiveCodexRunner implements RunnerAdapter {
           'Installed Codex lacks persistent prompt, queue or exact resume capabilities',
         );
     }
-    const auth = execFileSync('codex', ['login', 'status'], {
-      encoding: 'utf8',
-      timeout: 5000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    void auth;
+    let auth: string;
+    try {
+      auth = execFileSync('codex', ['login', 'status'], {
+        encoding: 'utf8',
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      throw new Error(
+        `Codex authentication check failed: ${error instanceof Error ? error.message : String(error)}: run codex login`,
+        { cause: error },
+      );
+    }
+    if (!auth.trim() || /not logged in/i.test(auth)) {
+      throw new Error('Codex authentication required: run codex login');
+    }
   }
   private native(attempt: ManagedAttempt): { path: string; data: NativeEvent[] } | undefined {
     const state = join(attempt.directory, 'codex-native.json');
@@ -262,23 +275,23 @@ export class InteractiveCodexRunner implements RunnerAdapter {
   async result(attempt: ManagedAttempt, dispatchId: string): Promise<string | undefined> {
     if (dispatchId !== (attempt.dispatchId ?? attempt.id)) return undefined;
     const data = this.native(attempt)?.data ?? [];
-    const turns = new Set(
-      data
-        .filter(
-          (e) =>
-            e.payload.thread_id === attempt.conversation &&
-            e.payload.item?.type === 'UserMessage' &&
-            e.payload.item.content?.some((c) =>
-              c.text?.startsWith(`[pc attempt=${attempt.id} dispatch=${dispatchId} message=`),
-            ),
-        )
-        .map((e) => e.payload.turn_id),
+    const matchingTurns = data
+      .filter(
+        (e) =>
+          e.payload.thread_id === attempt.conversation &&
+          e.payload.item?.type === 'UserMessage' &&
+          e.payload.item.content?.some((c) =>
+            c.text?.startsWith(`[pc attempt=${attempt.id} dispatch=${dispatchId} message=`),
+          ),
+      )
+      .map((e) => e.payload.turn_id)
+      .filter((id): id is string => Boolean(id));
+    if (matchingTurns.length === 0) return undefined;
+    const lastTurnId = matchingTurns.at(-1)!;
+    const complete = data.findLast(
+      (e) => e.payload.type === 'task_complete' && e.payload.turn_id === lastTurnId,
     );
-    const completed = data.filter(
-      (e) =>
-        e.payload.type === 'task_complete' && e.payload.turn_id && turns.has(e.payload.turn_id),
-    );
-    return completed.length === 1 ? completed[0].payload.last_agent_message : undefined;
+    return complete?.payload.last_agent_message;
   }
   async observe(attempt: ManagedAttempt): Promise<ExecutionObservation> {
     if (await this.stopped(attempt))

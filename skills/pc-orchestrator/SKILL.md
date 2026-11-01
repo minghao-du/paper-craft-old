@@ -42,7 +42,8 @@ pc worker status <run-id>
 pc worker status <run-id> --ack <dispatch-id>
 ```
 
-Named persistent roles require the [verified managed lifecycle](managed-lifecycle.md) and cannot use this transparent command path. Temporary roles outside Orchestrator, EPIC, Worker, PR landing, pipeline-refactor and research-state may use it.
+Named persistent roles require the [verified managed lifecycle](managed-lifecycle.md) and cannot use this transparent command path.
+Temporary roles outside Orchestrator, EPIC, Worker, PR landing, pipeline-refactor, pipeline-audit and research-state may use it.
 
 Spawn inherits `runner_cmd`; `--runner <command>` overrides it for that dispatch.
 The runner receives the immutable brief path as its final argument. Use a wrapper

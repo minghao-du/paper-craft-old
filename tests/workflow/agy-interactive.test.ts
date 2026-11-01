@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgyInteractive } from '../../packages/core/src/workflow/agy-interactive.js';
+import { AgyRunner } from '../../packages/core/src/workflow/runtime.js';
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
@@ -144,6 +145,27 @@ test('native completed turns require exact attempt and dispatch correlation, idl
       [inputStep, { ...inputStep, step_index: 1 }, resultStep].map((s) => JSON.stringify(s)).join('\n'),
     );
     expect(await tui.result(attempt, 'dispatch-1')).toBeUndefined();
+
+    // Non-USER_EXPLICIT step (e.g. system notification or tool output) does not prematurely truncate
+    const systemStep = {
+      step_index: 1,
+      type: 'USER_INPUT',
+      source: 'SYSTEM',
+      status: 'DONE',
+      content: '<SYSTEM_MESSAGE>background tool notification</SYSTEM_MESSAGE>',
+    };
+    const finalStep = {
+      step_index: 2,
+      type: 'PLANNER_RESPONSE',
+      source: 'MODEL',
+      status: 'DONE',
+      content: '[pc ready role=worker attempt=attempt-1]\nFinal output after tool',
+    };
+    writeFileSync(
+      transcriptPath,
+      [inputStep, systemStep, finalStep].map((s) => JSON.stringify(s)).join('\n'),
+    );
+    expect(await tui.result(attempt, 'dispatch-1')).toBe('Final output after tool');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -371,6 +393,41 @@ test('stopped and cancel verify pane absence and record agy-terminated', async (
     expect(await tui.stopped(attempt)).toBe(true);
   } finally {
     spy.mockRestore();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('AgyRunner.collect polls result until completed or process stopped', async () => {
+  const runner = new AgyRunner();
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-collect-'));
+  const attempt = {
+    id: 'att-collect',
+    dispatchId: 'disp-collect',
+    directory,
+    address: 'tmux:%999',
+    fleet: 'fleet-1',
+    role: 'worker' as const,
+    runner: 'agy',
+    brief: 'Collect test',
+    status: 'running' as const,
+    created: new Date().toISOString(),
+    checkout: directory,
+  };
+  try {
+    // If stopped before result, throws
+    vi.spyOn(runner, 'stopped').mockResolvedValue(true);
+    vi.spyOn((runner as unknown as { tui: { result: () => Promise<string | undefined> } }).tui, 'result').mockResolvedValue(undefined);
+    await expect(runner.collect(attempt)).rejects.toThrow(/agy exited without a correlated task result/);
+
+    // If result becomes available after a delay, resolves
+    let calls = 0;
+    vi.spyOn(runner, 'stopped').mockResolvedValue(false);
+    vi.spyOn((runner as unknown as { tui: { result: () => Promise<string | undefined> } }).tui, 'result').mockImplementation(async () => {
+      calls++;
+      return calls >= 3 ? 'completed output' : undefined;
+    });
+    expect(await runner.collect(attempt)).toBe('completed output');
+  } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });

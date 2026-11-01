@@ -6,7 +6,7 @@ import { managedRunner } from '../../packages/core/src/workflow/runtime.js';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import {
   startRun,
   sendStageMessage,
@@ -686,5 +686,58 @@ test('Claude native correlation rejects missing prompt identity and duplicate su
     });
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('collectBusinessTurn polls result until available or stopped', async () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-poll-')));
+  const config = {
+    file: join(project, '.epic-config.json'),
+    project,
+    root: project,
+    slots: [],
+    worktrees: true,
+    base: 'main',
+  };
+  const attempt = {
+    id: 'att-poll',
+    dispatchId: 'disp-poll',
+    directory: project,
+    fleet: 'fleet',
+    role: 'worker' as const,
+    runner: 'codex',
+    brief: 'poll test',
+    status: 'running' as const,
+    created: '',
+    checkout: project,
+  };
+  let calls = 0;
+  let isStopped = false;
+  const runner = {
+    name: 'codex',
+    interactive: true,
+    result: vi.fn(async () => {
+      calls++;
+      return calls >= 3 ? 'delayed result' : undefined;
+    }),
+    collect: vi.fn(async () => 'from collect'),
+    stopped: vi.fn(async () => isStopped),
+    preflight: vi.fn(async () => {}),
+    start: vi.fn(),
+  };
+  try {
+    const result = await collectBusinessTurn(config, runner as any, attempt);
+    expect(result).toBe('delayed result');
+    expect(calls).toBe(3);
+
+    // If runner stops while result is not yet available, throws
+    calls = 0;
+    isStopped = true;
+    runner.result.mockImplementation(async () => undefined);
+    await expect(collectBusinessTurn(config, runner as any, attempt)).rejects.toThrow(
+      /Runner stopped without a correlated task result/,
+    );
+  } finally {
+    rmSync(project, { recursive: true, force: true });
   }
 });

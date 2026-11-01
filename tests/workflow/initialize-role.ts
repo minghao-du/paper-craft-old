@@ -2,6 +2,11 @@
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
+/**
+ * Emulates role-specific startup evidence by writing the expected initialization
+ * files (initialization.json, plus .epic-status.json and .epic-worklog.md for worker)
+ * before acknowledgement is asserted.
+ */
 export function initializeRole(attempt: ManagedAttempt): void {
   const expected = attempt.initialization;
   if (!expected) return;

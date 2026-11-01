@@ -73,8 +73,81 @@ test('native completed turns require exact attempt and dispatch correlation', as
     });
     save();
     expect(await runner.result(attempt, 'task')).toBe('accepted result');
+
+    // Multiple turns in rollout for the same dispatch: subsequent turn replaces previous
+    events.push({
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        thread_id: 'conversation',
+        turn_id: 'turn-2',
+        item: {
+          type: 'UserMessage',
+          content: [
+            { type: 'text', text: '[pc attempt=replacement dispatch=task message=followup]' },
+          ],
+        },
+      },
+    });
+    save();
+    expect(await runner.result(attempt, 'task')).toBeUndefined();
+    events.push({
+      type: 'event_msg',
+      payload: { type: 'task_complete', turn_id: 'turn-2', last_agent_message: 'followup result' },
+    });
+    save();
+    expect(await runner.result(attempt, 'task')).toBe('followup result');
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('preflight validates installed flags and login status', async () => {
+  const child = await import('node:child_process');
+  const runner = new InteractiveCodexRunner();
+  const spy = vi.mocked(child.execFileSync).mockImplementation((cmd, args) => {
+    if (cmd === 'tmux') return 'tmux 3.3a';
+    if (cmd === 'codex') {
+      const argStr = (args as string[]).join(' ');
+      if (argStr === '--help') return '--no-alt-screen --add-dir [PROMPT]';
+      if (argStr === 'queue --help') return '--thread --message';
+      if (argStr === 'resume --help') return 'SESSION_ID';
+      if (argStr === 'login status') return 'Logged in using ChatGPT\n';
+    }
+    return '';
+  });
+  try {
+    await expect(runner.preflight()).resolves.toBeUndefined();
+
+    // Not logged in throws actionable error
+    spy.mockImplementation((cmd, args) => {
+      if (cmd === 'tmux') return 'tmux 3.3a';
+      if (cmd === 'codex') {
+        const argStr = (args as string[]).join(' ');
+        if (argStr === '--help') return '--no-alt-screen --add-dir [PROMPT]';
+        if (argStr === 'queue --help') return '--thread --message';
+        if (argStr === 'resume --help') return 'SESSION_ID';
+        if (argStr === 'login status') return 'Not logged in\n';
+      }
+      return '';
+    });
+    await expect(runner.preflight()).rejects.toThrow(/Codex authentication required: run codex login/);
+
+    // Authentication failure exit code throws actionable error
+    spy.mockImplementation((cmd, args) => {
+      if (cmd === 'tmux') return 'tmux 3.3a';
+      if (cmd === 'codex') {
+        const argStr = (args as string[]).join(' ');
+        if (argStr === '--help') return '--no-alt-screen --add-dir [PROMPT]';
+        if (argStr === 'queue --help') return '--thread --message';
+        if (argStr === 'resume --help') return 'SESSION_ID';
+        if (argStr === 'login status') throw new Error('Command failed: codex login status');
+      }
+      return '';
+    });
+    await expect(runner.preflight()).rejects.toThrow(/Codex authentication check failed.*run codex login/);
+  } finally {
+    spy.mockRestore();
   }
 });
 

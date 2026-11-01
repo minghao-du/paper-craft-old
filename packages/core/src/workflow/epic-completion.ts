@@ -171,7 +171,10 @@ export async function completeEpic(
       const context = await provider.finalizationContext();
       if (retryFinalization) {
         for (const attempt of run.turns) {
-          if (attempt.retired || !['pipeline-audit', 'research-state'].includes(attempt.role))
+          if (
+            attempt.retired ||
+            !['pipeline-audit', 'pipeline-refactor', 'research-state'].includes(attempt.role)
+          )
             continue;
           if (!runner.stopped || !(await runner.stopped(attempt)))
             throw new Error(
@@ -189,7 +192,10 @@ export async function completeEpic(
       }
       if (retryFinalization) {
         for (const attempt of run.turns) {
-          if (['pipeline-audit', 'research-state'].includes(attempt.role)) attempt.retired = true;
+          if (
+            ['pipeline-audit', 'pipeline-refactor', 'research-state'].includes(attempt.role)
+          )
+            attempt.retired = true;
         }
         save();
       }
@@ -208,7 +214,7 @@ export async function completeEpic(
           !retryFinalization &&
           run.turns.some(
             (t) =>
-              ['pipeline-audit', 'research-state'].includes(t.role) &&
+              ['pipeline-audit', 'pipeline-refactor', 'research-state'].includes(t.role) &&
               !t.retired &&
               t.result === undefined,
           )
