@@ -5,6 +5,7 @@ import { expect, test } from 'vitest';
 import { ClaudeRunner, type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
 import {
   startRun,
+  recoverRun,
   dispatchStage,
   collectBusinessTurn,
   inspectRuns,
@@ -26,7 +27,12 @@ test.skipIf(!process.env.PC_CLAUDE_CONFORMANCE)(
     };
     writeFileSync(config.file, '{}');
     mkdirSync(join(root, 'pool'));
-    const runner = new ClaudeRunner();
+    // Exercise the candidate at the real Run seam; production remains fail-closed
+    // until the existing role-specific durable startup verifiers are wired.
+    class Candidate extends ClaudeRunner {
+      readonly interactive = true;
+    }
+    const runner = new Candidate();
     const owned: ManagedAttempt[] = [];
     const started = Date.now();
     try {
@@ -42,8 +48,8 @@ test.skipIf(!process.env.PC_CLAUDE_CONFORMANCE)(
         },
         'claude',
       );
+      if (run.orchestrator) owned.push(run.orchestrator);
       expect(run.lifecycle).toBe('running');
-      owned.push(run.orchestrator!);
       const dispatch = await dispatchStage(config, runner, {
         runId: run.id,
         authority: run.orchestrator!.id,
@@ -72,7 +78,41 @@ test.skipIf(!process.env.PC_CLAUDE_CONFORMANCE)(
         'accepted',
       );
       expect(await runner.stopped(attempt)).toBe(true);
-      console.log('Claude complete Run lifecycle ms', Date.now() - started);
+      const old = run.orchestrator!;
+      await runner.cancel(old);
+      expect(await runner.recoverReceipt(old)).toBeUndefined();
+      const recovered = await recoverRun(config, runner, run.id, {
+        replaceOrchestrator: true,
+        stopped: runner.stopped.bind(runner),
+      });
+      const replacement = inspectRuns(config).runs.find((r) => r.id === run.id)!.orchestrator!;
+      owned.push(replacement);
+      expect(recovered.blockers).toEqual([]);
+      expect(replacement.id).not.toBe(old.id);
+      expect(replacement.predecessor).toBe(old.id);
+      expect(replacement.conversation).toBe(old.conversation);
+      expect(replacement.brief).not.toBe(old.brief);
+      expect(replacement.brief).toContain('Do not replay');
+      expect(await runner.result(replacement, replacement.id)).toBeTruthy();
+      expect(await runner.stopped(replacement)).toBe(false);
+      await runner.cancel(replacement);
+      const reassigned = await recoverRun(config, runner, run.id, {
+        replaceOrchestrator: true,
+        newConversation: true,
+        stopped: runner.stopped.bind(runner),
+      });
+      const fresh = inspectRuns(config).runs.find((r) => r.id === run.id)!.orchestrator!;
+      owned.push(fresh);
+      expect(reassigned.blockers).toEqual([]);
+      expect(fresh.predecessor).toBe(replacement.id);
+      expect(fresh.conversation).not.toBe(replacement.conversation);
+      expect(fresh.brief).not.toBe(old.brief);
+      expect(await runner.result(fresh, fresh.id)).toBeTruthy();
+
+      console.log(
+        'Claude complete Run lifecycle and exact managed recovery ms',
+        Date.now() - started,
+      );
     } finally {
       for (const attempt of owned)
         if (!(await runner.stopped(attempt))) await runner.cancel(attempt);

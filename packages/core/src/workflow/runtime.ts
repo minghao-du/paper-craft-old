@@ -387,7 +387,8 @@ abstract class StreamRunner extends CodexRunner {
 export class ClaudeRunner extends StreamRunner {
   readonly name = 'claude';
   readonly cancellation = true;
-  readonly interactive = true;
+  // Native conformance is necessary; existing role initialization gates remain required.
+  readonly interactive: boolean = false;
   protected resumeFlag = '--resume';
   private readonly tui = new ClaudeInteractive();
   preflight() {

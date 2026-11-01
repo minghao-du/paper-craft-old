@@ -2,11 +2,12 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { statSync, existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import type { ManagedAttempt, ExecutionObservation } from './runtime.js';
 const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
 const delay = () => new Promise((resolve) => setTimeout(resolve, 100));
 type Hook = {
+  transcript_path?: string;
   session_id: string;
   hook_event_name: string;
   prompt_id?: string;
@@ -80,6 +81,10 @@ export class ClaudeInteractive {
   async start(a: ManagedAttempt) {
     mkdirSync(join(a.directory, 'claude-hooks'), { recursive: true });
     const resume = !!a.conversation;
+    if (resume && !a.predecessor)
+      throw new Error(
+        'Claude resume requires a linked replacement attempt and a reconciliation brief',
+      );
     a.conversation ??= randomUUID();
     const hook = join(a.directory, 'claude-hook.cjs');
     writeFileSync(
@@ -112,7 +117,15 @@ export class ClaudeInteractive {
       '--settings',
       settings,
       '--strict-mcp-config',
-      ...(!resume ? [a.brief] : []),
+      '--append-system-prompt',
+      `Initialize role ${a.role} using applicable project/role instructions and durable state. Once initialization is complete, emit a separate assistant text line exactly [pc ready role=${a.role} attempt=${a.id}] before continuing the task. Never emit this acknowledgement if initialization is blocked. This is execution readiness, not task acceptance.`,
+      ...[
+        a.directory,
+        ...(a.predecessor ? [dirname(a.directory)] : []),
+        ...(a.writableDirectories ?? []),
+      ].flatMap((path) => ['--add-dir', path]),
+      '--',
+      a.brief,
     ];
     const script = join(a.directory, 'claude-launch.sh');
     writeFileSync(
@@ -132,7 +145,7 @@ export class ClaudeInteractive {
       JSON.stringify({ address: a.address, conversation: a.conversation }),
     );
     execFileSync('tmux', ['set-option', '-p', '-t', this.address(a), 'remain-on-exit', 'on']);
-    for (let n = 0; n < 150; n++) {
+    for (let n = 0; n < 600; n++) {
       const receipt = await this.recoverReceipt(a);
       if (receipt) return receipt;
       await delay();
@@ -147,18 +160,69 @@ export class ClaudeInteractive {
   async recoverReceipt(a: ManagedAttempt) {
     if (!a.conversation && existsSync(join(a.directory, 'terminal.json')))
       Object.assign(a, JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')));
+    if (!a.address?.startsWith('tmux:') || !a.conversation) return undefined;
+    // Historic hooks never authorize a missing or dead execution.
+    if (this.panes().get(this.address(a)) !== '0') return undefined;
     const events = this.events(a);
     if (!events.some((e) => e.hook_event_name === 'SessionStart')) return undefined;
-    if (
-      !a.predecessor &&
-      !events.some((e) => e.hook_event_name === 'UserPromptSubmit' && e.prompt === a.brief)
-    )
-      return undefined;
+    const submissions = events.filter(
+      (e) => e.hook_event_name === 'UserPromptSubmit' && e.prompt === a.brief && !!e.prompt_id,
+    );
+    if (submissions.length !== 1) return undefined;
+    if (!this.ready(a, events, submissions[0].prompt_id!)) return undefined;
     return {
       conversation: a.conversation!,
       address: a.address!,
-      evidence: 'Native Claude SessionStart and exact initial submission (or exact resume)',
+      evidence:
+        'Live native Claude session, exact brief submission and correlated assistant acknowledgement',
     };
+  }
+  private ready(a: ManagedAttempt, hooks: Hook[], prompt: string): boolean {
+    const path = hooks.find((e) => e.hook_event_name === 'SessionStart')?.transcript_path;
+    if (!path || !existsSync(path)) return false;
+    type Native = {
+      uuid: string;
+      parentUuid?: string;
+      sessionId?: string;
+      type?: string;
+      promptId?: string;
+      message?: { content?: string | { type: string; text?: string }[] };
+    };
+    const records: Native[] = readFileSync(path, 'utf8')
+      .split('\n')
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line) as Native];
+        } catch {
+          return [];
+        }
+      })
+      .filter((e) => e.sessionId === a.conversation);
+    const index = new Map(records.map((e) => [e.uuid, e]));
+    const marker = `[pc ready role=${a.role} attempt=${a.id}]`;
+    for (const record of records) {
+      if (
+        record.type !== 'assistant' ||
+        !Array.isArray(record.message?.content) ||
+        !record.message.content.some(
+          (c) => c.type === 'text' && c.text?.split('\n').some((line) => line.trim() === marker),
+        )
+      )
+        continue;
+      let parent = record.parentUuid;
+      const seen = new Set<string>();
+      while (parent && !seen.has(parent)) {
+        seen.add(parent);
+        const previous = index.get(parent);
+        if (!previous) break;
+        if (previous.type === 'user' && previous.promptId) {
+          if (previous.promptId === prompt) return true;
+          break;
+        }
+        parent = previous.parentUuid;
+      }
+    }
+    return false;
   }
   async result(a: ManagedAttempt, id: string): Promise<string | undefined> {
     if (id !== (a.dispatchId ?? a.id)) return undefined;
@@ -170,7 +234,14 @@ export class ClaudeInteractive {
     const results = events.filter(
       (e) => e.hook_event_name === 'Stop' && e.prompt_id === submissions[0].prompt_id,
     );
-    return results.length === 1 ? results[0].last_assistant_message : undefined;
+    const marker = `[pc ready role=${a.role} attempt=${a.id}]`;
+    return results.length === 1
+      ? results[0].last_assistant_message
+          ?.split('\n')
+          .filter((line) => line.trim() !== marker)
+          .join('\n')
+          .trim() || undefined
+      : undefined;
   }
   async send(a: ManagedAttempt, message: { id: string; brief: string }) {
     const prior = new Set(
