@@ -191,6 +191,9 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       async () => true,
     );
     expect(retried.attempts).toHaveLength(2);
+    expect(retried.attempts[1].brief).not.toContain(request.brief);
+    expect(retried.attempts[1].brief).toContain(stage.briefReference.path);
+    expect(retried.attempts[1].brief).toContain('Do not replay');
     expect(retried.attempts[1].conversation).toBe(stage.attempts[0].conversation);
     expect(retried.attempts[1].predecessor).toBe(stage.attempts[0].id);
     const dependent = {
