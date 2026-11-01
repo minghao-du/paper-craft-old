@@ -16,7 +16,7 @@ Accept an issue number, runner command and optional conversational requirements:
 ```markdown
 /pc-orchestrator
 - **Issue**: #79
-- **Runner**: claude -p
+- **Runner**: claude
 - **Requirements**:
   - Keep changes within the requested scope
 ```
@@ -24,7 +24,7 @@ Accept an issue number, runner command and optional conversational requirements:
 Record all additional requirements with repeated `--instructions`:
 
 ```bash
-pc run create --issue 79 --runner 'claude -p' --instructions 'Keep changes within the requested scope'
+pc run create --issue 79 --runner 'claude' --instructions 'Keep changes within the requested scope'
 pc run inspect <run-id>
 ```
 
