@@ -17,6 +17,14 @@ For SSH access forward the same local port and open the startup link through tha
 Omit `--config` to inspect remembered registrations.
 Build with `pnpm run build` before launch.
 
+Runs dispatched through `pc run` / `pc worker` are discovered under the configured project's
+`.runtime/<fleet>/runs/`. Dashboard and `pc worker status` share the dispatch inventory.
+Rows distinguish `in-flight`, `completed` (receipt present) and `exited-without-receipt`;
+`handled` records acknowledgement, not acceptance or successful validation.
+Missing legacy `.epic-status.json` files are not collection errors. Invalid evidence still reports an error.
+Worker rows use their recorded worktree for terminal observations and their dispatch's `worker.log`
+for the default Logs view. Logs may be absent if the runner does not write that file.
+
 Expand each row for attributed sources, observation times, blockers and collection failures.
 Runtime occupancy and execution attempts remain unknown.
 A phase record does not establish a running agent, completion or slot availability.
@@ -24,6 +32,8 @@ Refresh is bounded by the collection schedule; clients share cached observations
 The Dashboard writes only its own registration/cache data and exposes no workflow controls.
 
 Expand “Git checkout constraints” for per-Fleet branch, changed files, cached-base relation, holds and collision evidence.
+Checks include worktrees from the current dispatch inventory as well as legacy configured slots.
+Completed dispatches whose worktrees have been removed retain their task records but are omitted from Git checkout checks; missing in-flight worktrees remain probe failures.
 Git observations refresh independently every 60 seconds (configure with `--git-interval` in milliseconds), with bounded probes and per-Fleet failure backoff.
 Failed collections retain attributed stale successes.
 Reads never fetch Git refs; a clean checkout does not establish slot availability.

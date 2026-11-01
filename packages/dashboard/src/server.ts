@@ -1,6 +1,6 @@
 import { observationHistory } from './history.js';
 import { readTaskLog } from './logs.js';
-import { loadFleetConfig, workflowSource } from '@paper-craft/core/workflow/fleet-config';
+import { dashboardTaskSource } from '@paper-craft/core/workflow/dashboard';
 /** Protected local HTTP adapter over shared file evidence. */
 import {
   observeRuntime,
@@ -160,7 +160,7 @@ export async function createDashboard(options: DashboardOptions) {
         if (!force && Date.now() < (runtimeDue.get(task.id) ?? 0)) continue;
         const fleet = fleets.find((f) => f.tasks.some((t) => t.id === task.id));
         try {
-          workflowSource(loadFleetConfig(fleet!.config), task.path);
+          dashboardTaskSource(fleet!.config, task);
         } catch {
           runtimeCache.delete(task.id);
           continue;

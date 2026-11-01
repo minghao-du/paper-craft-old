@@ -1,7 +1,9 @@
+import { readWorkerInventory } from './worker-inventory.js';
 import { inspectRuns, type WorkflowRun, type RunRegistry } from './run-driver.js';
 /** File-backed evidence shared by Dashboard and JSON CLI; never scheduling authority. */
 import { readFile, realpath, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
 import { loadFleetConfig, workflowSource, within } from './fleet-config.js';
 
 /** Registered monitoring source; project is an optional research association. */
@@ -33,6 +35,10 @@ export interface DashboardTask {
   observedAt: string;
   stale: boolean;
   error?: string;
+  /** Durable dispatch identity, distinct from verified process liveness. */
+  dispatchId?: string;
+  fleetId?: string;
+  handled?: boolean;
 }
 /** One registered Fleet, including failures instead of disappearing registrations. */
 export interface DashboardFleet {
@@ -83,6 +89,29 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         executionIdentity: 'unknown',
         observedAt,
         stale: false,
+      });
+    }
+    const workers = readWorkerInventory(config.project);
+    for (const worker of workers) {
+      fleet.tasks.push({
+        id: `${registration.id}:dispatch:${worker.fleet_id}:${worker.dispatch_id}`,
+        slot: `${worker.role}-${worker.dispatch_id}`,
+        path: worker.worktree,
+        role: worker.role,
+        source: worker.source,
+        phase: worker.state,
+        summary: worker.receipt?.match(/^summary:\s*(.*)$/m)?.[1] ?? '',
+        blockers: [],
+        issue: worker.issue_id,
+        runId: worker.run_id,
+        dispatchId: worker.dispatch_id,
+        fleetId: worker.fleet_id,
+        handled: worker.handled,
+        runtime: 'unknown',
+        executionIdentity: 'unknown',
+        observedAt,
+        stale: false,
+        modifiedAt: worker.modifiedAt,
       });
     }
     const names = config.worktrees
@@ -163,7 +192,10 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         if (typeof record.issue === 'number') task.issue = record.issue;
         if (typeof record.pr === 'string') task.pr = record.pr;
       } catch (error) {
-        task.error = error instanceof Error ? error.message : 'Cannot read status';
+        const missing = error instanceof Error && 'code' in error && error.code === 'ENOENT';
+        if (missing && workers.length && location.slot === 'orchestrator') continue;
+        if (missing) task.summary = 'No legacy status record';
+        else task.error = error instanceof Error ? error.message : 'Cannot read status';
       }
       fleet.tasks.push(task);
     }
@@ -171,4 +203,32 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
     fleet.error = error instanceof Error ? error.message : 'Cannot load Fleet configuration';
   }
   return fleet;
+}
+
+/** Revalidate a dispatch before reading its checkout or log; never trust a cached path. */
+export function dashboardTaskSource(
+  configFile: string,
+  task: DashboardTask,
+): { directory: string; log: string } {
+  const config = loadFleetConfig(configFile);
+  if (!task.dispatchId) {
+    const directory = workflowSource(config, task.path);
+    return { directory, log: join(directory, '.epic-worklog.md') };
+  }
+  const worker = readWorkerInventory(config.project).find(
+    (w) =>
+      w.dispatch_id === task.dispatchId && w.run_id === task.runId && w.fleet_id === task.fleetId,
+  );
+  if (!worker || worker.source !== task.source || worker.worktree !== task.path)
+    throw new Error('Dispatch source changed');
+  // Removed worktrees remain visible as historical records, but cannot be probed.
+  const directory = workflowSourceDirectory(worker.worktree);
+  return { directory, log: join(worker.source, '..', 'worker.log') };
+}
+
+function workflowSourceDirectory(path: string): string {
+  if (!existsSync(path)) return path;
+  const physical = realpathSync(path);
+  if (physical !== path) throw new Error('Worker checkout must not be redirected');
+  return physical;
 }

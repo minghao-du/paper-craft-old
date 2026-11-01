@@ -1,6 +1,7 @@
 /** Git/file checks deliberately make no claims about agent or process liveness. */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, lstatSync } from 'node:fs';
+import { readWorkerInventory } from './worker-inventory.js';
 import { join } from 'node:path';
 import { directory, pathExists, workflowSource, type FleetConfig } from './fleet-config.js';
 
@@ -66,15 +67,33 @@ export interface SlotReport {
   landedOverlap: string[];
 }
 
-function slotNames(config: FleetConfig): string[] {
+function slotLocations(config: FleetConfig): { name: string; path: string; runtime: boolean }[] {
   const names = config.worktrees
     ? readdirSync(config.root, { withFileTypes: true })
         .filter((d) => d.isDirectory() && /^issue-\d+$/.test(d.name))
         .map((d) => d.name)
         .sort()
     : config.slots;
-  if (!names.length) throw new Error(`No configured slots to check in ${config.file}`);
-  return names;
+  const locations = names.map((name) => ({
+    name,
+    path: join(config.root, name),
+    runtime: false,
+  }));
+  const workers = readWorkerInventory(config.project);
+  for (const worker of workers) {
+    // Released/completed attempts may retain records after checkout removal.
+    // Missing in-flight checkouts remain visible as failed probes.
+    if (worker.state === 'completed' && !pathExists(worker.worktree)) continue;
+    if (!locations.some((location) => location.path === worker.worktree))
+      locations.push({
+        name: `${worker.fleet_id}/${worker.dispatch_id}`,
+        path: worker.worktree,
+        runtime: true,
+      });
+  }
+  if (!locations.length && !workers.length)
+    throw new Error(`No configured slots to check in ${config.file}`);
+  return locations;
 }
 
 function reference(config: FleetConfig): string {
@@ -84,11 +103,14 @@ function reference(config: FleetConfig): string {
 
 function inspectSlot(
   config: FleetConfig,
-  name: string,
+  location: { name: string; path: string; runtime: boolean },
   origin: string,
   fetch: boolean,
 ): SlotReport {
-  const path = workflowSource(config, join(config.root, name));
+  const { name } = location;
+  const path = location.runtime ? directory(location.path) : workflowSource(config, location.path);
+  if (location.runtime && (lstatSync(location.path).isSymbolicLink() || path !== location.path))
+    throw new Error(`Runtime checkout must not be redirected: ${location.path}`);
   if (directory(git(path, 'rev-parse', '--show-toplevel')) !== path) {
     throw new Error(`Expected a Git checkout at ${path}, received a parent repository`);
   }
@@ -134,13 +156,13 @@ function inspectSlot(
   };
 }
 
-/** Check currency or conservative file overlap for every configured slot, including uncommitted work. */
+/** Check configured slots and dispatched worktrees, including uncommitted work and cached base overlap. */
 export function checkFleet(
   config: FleetConfig,
   kind: 'currency' | 'collisions',
   fetch = false,
 ): FleetReport {
-  const names = slotNames(config);
+  const locations = slotLocations(config);
   const report: FleetReport = {
     status: 'clear',
     scope: {
@@ -159,9 +181,10 @@ export function checkFleet(
   const origin = git(config.project, 'remote', 'get-url', 'origin');
   if (fetch) git(config.project, 'fetch', '--quiet', 'origin', `+refs/heads/${config.base}:${ref}`);
   git(config.project, 'rev-parse', '--verify', `${ref}^{commit}`);
-  for (const name of names) {
+  for (const location of locations) {
+    const { name } = location;
     try {
-      const slot = inspectSlot(config, name, origin, fetch);
+      const slot = inspectSlot(config, location, origin, fetch);
       report.slots.push(slot);
       if (kind === 'currency') {
         if (slot.branch !== config.base || slot.dirty || slot.held || slot.relation !== 'current') {

@@ -1,9 +1,9 @@
+import { readWorkerInventory } from '../packages/core/src/workflow/worker-inventory.ts';
 import { runtimeRoot } from './pc-runtime-paths.mjs';
 /** Read-only recovery inventory, with explicit receipt acknowledgment. */
 import process from 'node:process';
 import console from 'node:console';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync } from 'node:fs';
 const safe = (value) => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(value);
 try {
   const args = process.argv.slice(2);
@@ -29,48 +29,8 @@ try {
     }
     if (!safe(fleet) || (runId && !safe(runId)) || (ack && !safe(ack)))
       throw new Error('Expected safe identifiers');
-    const runs = join(runtimeRoot(root), fleet, 'runs');
-    const ids = runId
-      ? [runId]
-      : readdirSync(runs, { withFileTypes: true })
-          .filter((x) => x.isDirectory())
-          .map((x) => x.name)
-          .sort();
-    const attempts = [];
-    for (const id of ids) {
-      const runDir = join(runs, id);
-      const run = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'));
-      if (run.run_id !== id) throw new Error(`Run identifier mismatch: ${id}`);
-      const dispatches = join(runDir, 'dispatches');
-      if (!existsSync(dispatches)) continue;
-      for (const entry of readdirSync(dispatches, { withFileTypes: true })
-        .filter((x) => x.isDirectory())
-        .sort((a, b) => a.name.localeCompare(b.name))) {
-        const dir = join(dispatches, entry.name);
-        const dispatch = JSON.parse(readFileSync(join(dir, 'dispatch.json'), 'utf8'));
-        if (dispatch.dispatch_id !== entry.name || dispatch.run_id !== id)
-          throw new Error(`Dispatch identifier mismatch: ${entry.name}`);
-        const receiptPath = join(dir, 'RECEIPT.md');
-        const receipt = existsSync(receiptPath) ? readFileSync(receiptPath, 'utf8') : null;
-        const handledPath = join(dir, 'HANDLED.json');
-        attempts.push({
-          run_id: id,
-          dispatch_id: entry.name,
-          issue_id: dispatch.issue_id,
-          role: dispatch.role,
-          state:
-            receipt !== null
-              ? 'completed'
-              : existsSync(join(dir, 'EXIT.json'))
-                ? 'exited-without-receipt'
-                : 'in-flight',
-          handled: existsSync(handledPath),
-          receipt_path: receiptPath,
-          receipt,
-          handledPath,
-        });
-      }
-    }
+    runtimeRoot(root); // Preserve the CLI's runtime redirection guard.
+    const attempts = readWorkerInventory(root, fleet, runId);
     if (ack) {
       const matches = attempts.filter((x) => x.dispatch_id === ack);
       if (matches.length !== 1 || matches[0].receipt === null)
@@ -88,10 +48,12 @@ try {
       JSON.stringify(
         {
           fleet_id: fleet,
-          attempts: attempts.map(({ handledPath, ...attempt }) => {
-            void handledPath;
-            return attempt;
-          }),
+          attempts: attempts.map(
+            ({ handledPath, source, worktree, modifiedAt, fleet_id, ...attempt }) => {
+              void [handledPath, source, worktree, modifiedAt, fleet_id];
+              return attempt;
+            },
+          ),
         },
         null,
         2,

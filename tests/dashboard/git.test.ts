@@ -55,10 +55,53 @@ test('Git evidence uses cached refs and retains attributed stale values after fa
     expect(await read()).toEqual([evidence]);
     expect(git(worker, 'status', '--porcelain')).toBe(before);
     expect(readFileSync(join(worker, 'file.txt'), 'utf8')).toBe('edited');
+    // Current worker spawning uses runtime worktrees, without legacy configured slots.
+    const run = JSON.parse(
+      execFileSync(
+        './pc',
+        ['run', 'create', '--issue', '79', '--runner', 'fake', '--root', project],
+        { encoding: 'utf8' },
+      ),
+    );
+    const dispatch = join(project, '.runtime/default/runs', run.run_id, 'dispatches', 'active');
+    const runtimeWorker = join(project, '.runtime/default/worktrees/active');
+    mkdirSync(dispatch, { recursive: true });
+    mkdirSync(join(project, '.runtime/default/worktrees'), { recursive: true });
+    git(project, 'worktree', 'add', '-b', 'runtime-worker', runtimeWorker, 'HEAD');
+    writeFileSync(
+      join(dispatch, 'dispatch.json'),
+      JSON.stringify({
+        dispatch_id: 'active',
+        run_id: run.run_id,
+        issue_id: 80,
+        role: 'worker',
+        worktree: git(runtimeWorker, 'rev-parse', '--show-toplevel'),
+      }),
+    );
+    writeFileSync(join(runtimeWorker, 'file.txt'), 'runtime edit');
+    writeFileSync(config, JSON.stringify({ clone_root: 'pool', local_worktrees: true }));
+    const runtimeBefore = git(runtimeWorker, 'status', '--porcelain');
+    await dashboard.refresh(true);
+    evidence = (await read())[0];
+    expect(evidence.error).toBeUndefined();
+    expect(evidence.stale).toBe(false);
+    expect(evidence.value.slots).toEqual([
+      expect.objectContaining({
+        name: 'default/active',
+        branch: 'runtime-worker',
+        dirty: true,
+        touched: ['file.txt'],
+        relation: 'current',
+      }),
+    ]);
+    expect(git(runtimeWorker, 'status', '--porcelain')).toBe(runtimeBefore);
     rmSync(config);
     await dashboard.refresh(true);
     evidence = (await read())[0];
-    expect(evidence).toMatchObject({ stale: true, value: { slots: [{ branch: 'work' }] } });
+    expect(evidence).toMatchObject({
+      stale: true,
+      value: { slots: [{ branch: 'runtime-worker' }] },
+    });
     expect(evidence.error).toBeTruthy();
     expect(evidence.lastSuccessAt).toBeTruthy();
   } finally {

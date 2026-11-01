@@ -1,8 +1,9 @@
 /** Bounded on-demand log reads from registered task sources. */
 import { open, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { join } from 'node:path';
-import { loadFleetConfig, workflowSource, within } from '@paper-craft/core/workflow/fleet-config';
+import { dirname } from 'node:path';
+import { within } from '@paper-craft/core/workflow/fleet-config';
+import { dashboardTaskSource } from '@paper-craft/core/workflow/dashboard';
 import { observeRuntime, type RuntimeExecutor } from './runtime.js';
 import type { DashboardTask } from '@paper-craft/core/workflow/dashboard';
 
@@ -26,8 +27,7 @@ export async function readTaskLog(
 ) {
   const base = { kind, readAt: new Date().toISOString(), offset };
   try {
-    const config = loadFleetConfig(configFile);
-    const directory = workflowSource(config, task.path);
+    const { directory, log } = dashboardTaskSource(configFile, task);
     if (kind === 'runner')
       return {
         ...base,
@@ -67,9 +67,9 @@ export async function readTaskLog(
           'Latest bounded terminal segment; recognized prompt/credential lines omitted. Prompt context before the captured window is unknown.',
       };
     }
-    const source = join(directory, '.epic-worklog.md');
+    const source = log;
     const physical = await realpath(source);
-    if (!within(directory, physical)) throw new Error('Worklog escapes registered source');
+    if (!within(dirname(source), physical)) throw new Error('Worklog escapes registered source');
     const file = await open(
       physical,
       constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
