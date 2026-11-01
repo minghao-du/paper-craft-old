@@ -53,7 +53,7 @@ Return requested Pipeline or Research-State findings through the assigned task; 
 ## EPIC body update pattern
 
 EPIC issue bodies are the source of truth for project status.
-Update them when findings come in, items complete, or new work starts — and prune completed sections in the same edit (Step 5 above).
+Update them when findings come in, items complete, or new work starts — and prune completed sections in the same edit.
 
 **Local file convention**: Keep a persistent local copy as `ISSUE-EPIC-<N>.md` in the repo root (e.g. `ISSUE-EPIC-281.md`).
 These files are gitignored via the `ISSUE-*.md` pattern.
@@ -124,4 +124,5 @@ Key sections to maintain:
 - **Key findings**: Numbered list, append new findings
 - **Related experiments**: Add new experiment rows
 
-**Do not maintain a clone/slot assignment table in the body** — see "Fleet state is derived" in Step 5. If a dashboard entry needs a pointer to who's on it, name the issue, not the clone.
+**Do not maintain a clone/slot assignment table in the body**.
+If a dashboard entry needs a delivery pointer, name the Issue rather than the clone.

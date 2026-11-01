@@ -66,8 +66,7 @@ runtime resource boundary, not a scheduling agent.
 Workers receive immutable brief files and publish durable `RECEIPT.md` results.
 Synchronous wait detects verified premature exits; status exposes unhandled results
 on reconnect. Runner commands are platform independent; wrappers adapt prompt input
-when needed. Claude Code is not required. The autonomous
-`workflow orchestrator issue` driver is deprecated.
+when needed. Claude Code is not required.
 
 Worktrees and directory locks isolate concurrent workers. Unknown occupancy never
 means free. Landing verifies the tested PR HEAD and checks, preserves evidence,

@@ -41,8 +41,7 @@ Run 的活跃托管 Orchestrator attempt 决定调度、验收和返工。
 Worker 接收不可变的任务说明文件，并发布持久化的 `RECEIPT.md` 结果。
 同步等待检测已确认的提前退出；状态查看在重新连接时显示尚未处理的结果。
 Runner 命令独立于平台；需要时可通过包装脚本适配提示输入。
-Claude Code 不是必需的。自主执行的
-`workflow orchestrator issue` 驱动已弃用。
+Claude Code 不是必需的。
 
 Worktree 和目录锁隔离并发 worker。未知占用状态绝不意味着空闲。
 落地时验证已测试的 PR HEAD 和检查结果，保全证据，

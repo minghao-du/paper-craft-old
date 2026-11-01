@@ -93,4 +93,3 @@ pc workflow orchestrator recover <run-id> --config /absolute/path/.epic-config.j
 
 Dispatch tasks through the owning Orchestrator's [managed lifecycle](managed-lifecycle.md).
 Assign one of the seven workflow roles according to its responsibility; task specialization belongs in the brief.
-`pc workflow orchestrator issue` is deprecated and exits without dispatching.
