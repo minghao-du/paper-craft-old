@@ -160,7 +160,27 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
         dispatchStage(config, { ...runner, interactive: false }, { ...request, role }),
       ).rejects.toThrow(/interactive/);
     }
+    const beforeInvalidRole = JSON.stringify(inspectRuns(config));
+    const beforeInvalidLaunches = launches;
+    for (const invalid of [
+      { role: 'impl' as typeof request.role, stage: 'implementation' },
+      { role: 'landing' as typeof request.role, stage: 'implementation' },
+      { role: 'worker' as typeof request.role, stage: 'pr-quality' },
+    ]) {
+      await expect(dispatchStage(config, runner, { ...request, ...invalid })).rejects.toThrow(
+        /role/,
+      );
+    }
+    expect(launches).toBe(beforeInvalidLaunches);
+    expect(JSON.stringify(inspectRuns(config))).toBe(beforeInvalidRole);
     const stage = await dispatchStage(config, runner, request);
+    const registryPath = join(runtime, 'registry.json');
+    const validRegistry = JSON.stringify(inspectRuns(config));
+    const corruptRegistry = JSON.parse(validRegistry);
+    corruptRegistry.dispatches[0].role = 'phase-a-specialist';
+    writeFileSync(registryPath, JSON.stringify(corruptRegistry));
+    expect(() => inspectRuns(config)).toThrow(/phase-a-specialist/);
+    writeFileSync(registryPath, validRegistry);
     let sends = 0;
     const interactiveRunner = {
       ...runner,

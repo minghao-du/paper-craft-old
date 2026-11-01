@@ -211,10 +211,10 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     orchestrator
       .command('issue <number>')
-      .description('Deprecated: use pc-orchestrator and pc run create'),
+      .description('Deprecated: use workflow orchestrator start'),
   ).action(() => {
     console.error(
-      'workflow orchestrator issue is deprecated. Use pc-orchestrator with pc run create --issue <number> --runner <command>.',
+      'workflow orchestrator issue is deprecated. Use pc workflow orchestrator start <number> --type <issue|epic> --provider <provider> --config <config>.',
     );
     process.exitCode = 2;
   });

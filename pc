@@ -11,14 +11,14 @@ done
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$PC_ENTRY")" && pwd -P) || exit 1
 if [ "${1-}" = workflow ] && [ "${2-}" = orchestrator ] && [ "${3-}" = issue ]; then
   case " ${*} " in
-    *' --help '*|*' -h '*) echo 'Deprecated: workflow orchestrator issue. Use pc-orchestrator with pc run create --issue <number> --runner <command>.'; exit 0 ;;
-    *) echo 'workflow orchestrator issue is deprecated. Use pc-orchestrator with pc run create --issue <number> --runner <command>.' >&2; exit 2 ;;
+    *' --help '*|*' -h '*) echo 'Deprecated: workflow orchestrator issue. Use pc workflow orchestrator start <number> --type <issue|epic> --provider <provider> --config <config>.'; exit 0 ;;
+    *) echo 'workflow orchestrator issue is deprecated. Use pc workflow orchestrator start <number> --type <issue|epic> --provider <provider> --config <config>.' >&2; exit 2 ;;
   esac
 fi
 case "${1-}" in
   status) shift; exec bash "$SCRIPT_DIR/scripts/pc-worker-status.sh" "$@" ;;
   pr) shift; exec bash "$SCRIPT_DIR/scripts/pc-pr-land.sh" "$@" ;;
-  worker) shift; exec bash "$SCRIPT_DIR/scripts/pc-worker-spawn.sh" "$@" ;;
+  worker) shift; exec bash "$SCRIPT_DIR/scripts/pc-worker.sh" "$@" ;;
   run) shift; exec bash "$SCRIPT_DIR/scripts/pc-run.sh" "$@" ;;
 esac
 exec "$SCRIPT_DIR/node_modules/.bin/tsx" --conditions=paper-craft-source "$SCRIPT_DIR/packages/cli/src/main.ts" "$@"

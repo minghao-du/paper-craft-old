@@ -89,8 +89,8 @@ pc workflow orchestrator recover <run-id> --config /absolute/path/.epic-config.j
 
 **Done:** Every reported result has an acceptance/rework disposition, and unresolved execution or ownership uncertainty remains a recorded blocker to dependent work.
 
-## Temporary tasks
+## Task roles
 
-For temporary tasks outside named persistent roles, read [the transparent runner reference](temporary-tasks.md).
-Its lightweight Run, receipt and landing commands are a separate execution path.
+Dispatch tasks through the owning Orchestrator's [managed lifecycle](managed-lifecycle.md).
+Assign one of the seven workflow roles according to its responsibility; task specialization belongs in the brief.
 `pc workflow orchestrator issue` is deprecated and exits without dispatching.

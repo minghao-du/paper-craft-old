@@ -1,3 +1,4 @@
+import { assertWorkflowRole, type WorkflowRole } from './workflow-role.js';
 import { ClaudeInteractive } from './claude-interactive.js';
 import { AgyInteractive } from './agy-interactive.js';
 /** Managed role startup and durable runner evidence, independent of the model host. */
@@ -20,14 +21,7 @@ export interface ManagedAttempt {
   fleet: string;
   /** Run ownership recorded at intake. */
   run?: string;
-  role:
-    | 'orchestrator'
-    | 'worker'
-    | 'epic'
-    | 'landing'
-    | 'pipeline-audit'
-    | 'pipeline-refactor'
-    | 'research-state';
+  role: WorkflowRole;
   runner: string;
   /** Previous process identity when this attempt replaces a terminated execution. */
   dispatchId?: string;
@@ -87,6 +81,7 @@ function home(config: FleetConfig): string {
   return stateDirectory(config, '.runtime', createHash('sha256').update(config.file).digest('hex'));
 }
 function save(path: string, attempt: ManagedAttempt): void {
+  assertWorkflowRole(attempt.role, path);
   const temporary = `${path}.${randomUUID()}.tmp`;
   writeFileSync(temporary, JSON.stringify(attempt, null, 2), { mode: 0o600 });
   renameSync(temporary, path);
@@ -95,7 +90,11 @@ function save(path: string, attempt: ManagedAttempt): void {
 export function inspectOrchestrator(config: FleetConfig, run: string): ManagedAttempt | undefined {
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   const path = join(home(config), `orchestrator-${run}.json`);
-  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as ManagedAttempt) : undefined;
+  if (!existsSync(path)) return undefined;
+  const attempt = JSON.parse(readFileSync(path, 'utf8')) as ManagedAttempt;
+  assertWorkflowRole(attempt.role, path);
+  if (attempt.role !== 'orchestrator') throw new Error(`${path}: expected orchestrator role`);
+  return attempt;
 }
 /** Exclusively claim the Run orchestrator, preserving failed/unknown launches for recovery. */
 export async function startOrchestrator(
@@ -278,11 +277,9 @@ export class CodexRunner implements RunnerAdapter {
   async start(
     attempt: ManagedAttempt,
   ): Promise<{ conversation: string; address: string; evidence: string }> {
-    const specialist = [
-      'pipeline-audit',
-      'pipeline-refactor',
-      'research-state',
-    ].includes(attempt.role);
+    const specialist = ['pipeline-audit', 'pipeline-refactor', 'research-state'].includes(
+      attempt.role,
+    );
     if (specialist && !attempt.terminalSession)
       throw new Error('Specialist requires a verified existing tmux session');
     const session = `pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`;

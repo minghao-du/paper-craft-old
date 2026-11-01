@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  realpathSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, test } from 'vitest';
@@ -57,6 +65,10 @@ test('Dashboard and worker status discover the same dispatches and safely expose
     expect(await readTaskLog(config, task, 'worklog', 0, execute)).toMatchObject({
       state: 'error',
     });
+    const original = JSON.parse(readFileSync(task.source, 'utf8'));
+    writeFileSync(task.source, JSON.stringify({ ...original, role: 'impl' }));
+    expect((await readDashboardFleet({ id: 'test', config })).error).toContain('received "impl"');
+    expect(() => invoke('worker', 'status', run.run_id)).toThrow();
     writeFileSync(task.source, '{broken');
     expect((await readDashboardFleet({ id: 'test', config })).error).toBeTruthy();
   } finally {

@@ -1,3 +1,4 @@
+import { assertStageRole, assertWorkflowRole } from './workflow-role.js';
 import { initializationInstructions, verifyRoleInitialization } from './role-initialization.js';
 /** Run intake and authoritative Fleet relationships; managed execution belongs to one Run. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -98,11 +99,42 @@ function home(config: FleetConfig): string {
 /** Read only; absent legacy Run identities are never fabricated. */
 export function inspectRuns(config: FleetConfig): RunRegistry {
   const file = join(home(config), 'registry.json');
-  return existsSync(file)
-    ? (JSON.parse(readFileSync(file, 'utf8')) as RunRegistry)
+  const registry: RunRegistry = existsSync(file)
+    ? JSON.parse(readFileSync(file, 'utf8'))
     : { revision: 0, runs: [] };
+  validateRegistryRoles(registry, file);
+  return registry;
+}
+function validateRegistryRoles(registry: RunRegistry, source: string): void {
+  const checkAttempt = (attempt: ManagedAttempt, expected: ManagedAttempt['role']) => {
+    assertWorkflowRole(attempt.role, `${source}: attempt ${attempt.id}`);
+    if (attempt.role !== expected)
+      throw new Error(
+        `${source}: attempt ${attempt.id} requires workflow role ${expected}; received ${attempt.role}`,
+      );
+    if (attempt.initialization && attempt.initialization.role !== expected)
+      throw new Error(`${source}: initialization role mismatch for ${attempt.id}`);
+  };
+  for (const run of registry.runs) {
+    for (const attempt of [
+      ...(run.priorOrchestrators ?? []),
+      ...(run.orchestrator ? [run.orchestrator] : []),
+    ])
+      checkAttempt(attempt, 'orchestrator');
+  }
+  for (const dispatch of registry.dispatches ?? []) {
+    assertStageRole(dispatch.stage, dispatch.role, `${source}: dispatch ${dispatch.id}`);
+    for (const attempt of dispatch.attempts) checkAttempt(attempt, dispatch.role);
+  }
+  for (const receipt of registry.receipts ?? []) {
+    assertStageRole(receipt.stage, receipt.role, `${source}: receipt ${receipt.id}`);
+    const dispatch = registry.dispatches?.find((d) => d.id === receipt.dispatchId);
+    if (dispatch && receipt.role !== dispatch.role)
+      throw new Error(`${source}: receipt ${receipt.id} role differs from its workflow assignment`);
+  }
 }
 function save(config: FleetConfig, registry: RunRegistry): void {
+  validateRegistryRoles(registry, 'Run registry');
   const file = join(home(config), 'registry.json');
   const temp = file + '.' + randomUUID();
   registry.revision++;
@@ -343,6 +375,7 @@ export async function dispatchStage(
       throw new Error('Execution ownership changed during termination verification; retry');
     const run = authorize(registry, request.runId, request.authority);
     if (runner.name !== run.provider) throw new Error('Run provider mismatch');
+    assertStageRole(request.stage, request.role, `Run ${request.runId}`);
     if (!request.brief.trim() || !request.inputRevision || !request.stage || !request.subject)
       throw new Error('Incomplete stage inputs');
     registry.dispatches ??= [];
@@ -1126,8 +1159,7 @@ export async function collectBusinessTurn(
 ): Promise<string> {
   let result: string | undefined;
   if (runner.interactive && runner.result && attempt.dispatchId) {
-    const deadline =
-      options?.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;
+    const deadline = options?.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;
     for (;;) {
       result = await runner.result(attempt, attempt.dispatchId);
       if (result !== undefined) break;

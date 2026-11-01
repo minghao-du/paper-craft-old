@@ -1,4 +1,5 @@
 /** Read-only inventory shared by worker status and Dashboard. */
+import { assertWorkflowRole, type WorkflowRole } from './workflow-role.js';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -8,7 +9,7 @@ export interface WorkerAttempt {
   run_id: string;
   dispatch_id: string;
   issue_id: number;
-  role: string;
+  role: WorkflowRole;
   state: string;
   handled: boolean;
   receipt_path: string;
@@ -63,6 +64,7 @@ export function readWorkerInventory(root: string, fleet?: string, runId?: string
         const dispatch = JSON.parse(workerEvidence(source));
         if (dispatch.dispatch_id !== dispatchId || dispatch.run_id !== id)
           throw new Error(`Dispatch identifier mismatch: ${dispatchId}`);
+        assertWorkflowRole(dispatch.role, source);
         const receiptPath = join(dir, 'RECEIPT.md');
         const receipt = existsSync(receiptPath) ? workerEvidence(receiptPath) : null;
         const handledPath = join(dir, 'HANDLED.json');

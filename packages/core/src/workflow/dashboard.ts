@@ -1,3 +1,4 @@
+import type { WorkflowRole } from './workflow-role.js';
 import type { ManagedAttempt } from './runtime.js';
 import { readWorkerInventory } from './worker-inventory.js';
 import { inspectRuns, type WorkflowRun, type RunRegistry } from './run-driver.js';
@@ -17,7 +18,7 @@ export interface FleetRegistration {
 export interface DashboardExecution {
   attempts: {
     id: string;
-    role: string;
+    role: WorkflowRole;
     runner: string;
     conversation?: string;
     address?: string;
@@ -86,7 +87,7 @@ export interface DashboardTask {
   id: string;
   slot: string;
   path: string;
-  role: string;
+  role: WorkflowRole;
   source: string;
   phase: string;
   summary: string;
@@ -138,7 +139,7 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         id: `${registration.id}:run:${run.id}`,
         slot: `run-${run.id}`,
         path: config.project,
-        role: 'Orchestrator',
+        role: 'orchestrator',
         source: run.brief.path,
         phase: run.phase ?? run.lifecycle,
         summary: `${run.subject.repository}#${run.subject.number} (${run.provider})${run.subject.parent ? `; child of #${run.subject.parent}` : ''}`,
@@ -222,7 +223,7 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
       const task: DashboardTask = {
         ...location,
         id: `${registration.id}:${location.slot}`,
-        role: location.slot === 'orchestrator' ? 'Orchestrator / configured EPIC' : 'Worker',
+        role: location.slot === 'orchestrator' ? 'orchestrator' : 'worker',
         source: join(location.path, '.epic-status.json'),
         phase: 'unknown',
         summary: '',
