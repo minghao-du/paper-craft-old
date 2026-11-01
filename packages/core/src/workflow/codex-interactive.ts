@@ -46,7 +46,8 @@ function files(directory: string): string[] {
 /** Native rollout identity and turn attribution are required; panes alone never acknowledge work. */
 export class InteractiveCodexRunner implements RunnerAdapter {
   readonly name = 'codex';
-  readonly interactive = true;
+  // Native transport is verified; role-specific startup facts still lack a shared contract.
+  readonly interactive = false;
   async termination(attempt: ManagedAttempt) {
     return this.stopped(attempt);
   }
@@ -58,19 +59,31 @@ export class InteractiveCodexRunner implements RunnerAdapter {
     if (result === undefined) throw new Error('Codex has no uniquely correlated completed turn');
     return result;
   }
-  async stopped(attempt: ManagedAttempt): Promise<boolean> {
-    if (!existsSync(join(attempt.directory, 'exit-code')) || !attempt.address?.startsWith('tmux:'))
-      return false;
+  private pane(attempt: ManagedAttempt): 'live' | 'dead' | 'absent' | 'unknown' {
+    if (!attempt.address?.match(/^tmux:%[0-9]+$/)) return 'unknown';
     try {
-      return (
-        execFileSync('tmux', ['list-panes', '-t', attempt.address.slice(5), '-F', '#{pane_dead}'], {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-        }).trim() === '1'
+      const inventory = execFileSync(
+        'tmux',
+        ['list-panes', '-a', '-F', '#{pane_id} #{pane_dead}'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
       );
+      const row = inventory
+        .split('\n')
+        .find((line) => line.split(' ')[0] === attempt.address!.slice(5));
+      return row
+        ? row.split(' ')[1] === '0'
+          ? 'live'
+          : row.split(' ')[1] === '1'
+            ? 'dead'
+            : 'unknown'
+        : 'absent';
     } catch {
-      return true;
+      return 'unknown';
     }
+  }
+  async stopped(attempt: ManagedAttempt): Promise<boolean> {
+    if (!existsSync(join(attempt.directory, 'exit-code'))) return false;
+    return ['dead', 'absent'].includes(this.pane(attempt));
   }
   readonly cancellation = true;
   async preflight(): Promise<void> {
@@ -129,33 +142,32 @@ export class InteractiveCodexRunner implements RunnerAdapter {
     const native = this.native(attempt);
     const conversation = native?.data[0]?.payload.id;
     if (!conversation || !native) return undefined;
-    const acknowledged = native.data.some(
-      (e) =>
-        e.payload.item?.type === 'UserMessage' &&
-        e.payload.item.content?.some((c) => c.text?.startsWith(marker(attempt))),
-    );
     const address =
       attempt.address ??
       (existsSync(join(attempt.directory, 'terminal.json'))
         ? (JSON.parse(readFileSync(join(attempt.directory, 'terminal.json'), 'utf8'))
             .address as string)
         : undefined);
-    if (!address) return undefined;
-    if (!acknowledged) {
-      if (attempt.conversation !== conversation || !address.startsWith('tmux:')) return undefined;
-      try {
-        const screen = execFileSync('tmux', ['capture-pane', '-p', '-t', address.slice(5)], {
-          encoding: 'utf8',
-        });
-        if (
-          !screen.includes('› Ask Codex to do anything') ||
-          /enter confirm|enter continue|Hooks need review|Update available/.test(screen)
+    if (!address || this.pane({ ...attempt, address }) !== 'live') return undefined;
+    const turns = new Set(
+      native.data
+        .filter(
+          (e) =>
+            e.payload.item?.type === 'UserMessage' &&
+            e.payload.item.content?.some((c) => c.text?.startsWith(marker(attempt))),
         )
-          return undefined;
-      } catch {
-        return undefined;
-      }
-    }
+        .map((e) => e.payload.turn_id),
+    );
+    const ready = `[pc ready role=${attempt.role} attempt=${attempt.id}]`;
+    if (
+      !native.data.some(
+        (e) =>
+          e.payload.item?.type === 'AgentMessage' &&
+          turns.has(e.payload.turn_id) &&
+          e.payload.item.content?.some((c) => c.text?.includes(ready)),
+      )
+    )
+      return undefined;
     return {
       conversation,
       address,
@@ -163,7 +175,12 @@ export class InteractiveCodexRunner implements RunnerAdapter {
     };
   }
   async start(attempt: ManagedAttempt) {
-    // Resume deliberately omits the original brief. The owning Run reconciles before any later send.
+    // The new attempt receives reconciliation instructions, never a replay of its predecessor brief.
+    if (!existsSync(join(attempt.directory, 'brief.md')))
+      writeFileSync(join(attempt.directory, 'brief.md'), attempt.brief, {
+        mode: 0o400,
+        flag: 'wx',
+      });
     const args = attempt.conversation ? ['resume', attempt.conversation] : [];
     args.push(
       '--cd',
@@ -177,7 +194,12 @@ export class InteractiveCodexRunner implements RunnerAdapter {
       attempt.directory,
     );
     for (const path of attempt.writableDirectories ?? []) args.push('--add-dir', path);
-    if (!attempt.conversation) args.push(`${marker(attempt)}\n${attempt.brief}`);
+    const instruction = attempt.conversation
+      ? `Recover role ${attempt.role} for Run ${attempt.run ?? attempt.id}, Dispatch ${attempt.dispatchId ?? attempt.id}. This is a new authorized execution attempt. Reconcile durable brief and receipts in ${attempt.directory} and checkout ${attempt.checkout}; accepted work must not repeat. Inspect predecessor evidence and the original immutable brief before continuing only incomplete assigned work. If ownership or results are uncertain, report that uncertainty instead of executing.`
+      : attempt.brief;
+    args.push(
+      `${marker(attempt)}\nInitialize the ${attempt.role} role using applicable project/role instructions and durable workflow state. After initialization, first emit a commentary acknowledgement exactly [pc ready role=${attempt.role} attempt=${attempt.id}], then execute the assigned work.\n${instruction}`,
+    );
     const command = ['codex', ...args].map(quote).join(' ');
     const script = join(attempt.directory, 'codex-tui.sh');
     writeFileSync(

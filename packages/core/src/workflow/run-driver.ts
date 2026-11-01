@@ -615,6 +615,7 @@ export async function retryStage(
   dispatchId: string,
   authority: string,
   stopped: (attempt: ManagedAttempt) => Promise<boolean>,
+  options: { replaceConversation?: boolean } = {},
 ): Promise<StageDispatch> {
   const snapshot = inspectRuns(config);
   const dispatch = findDispatch(snapshot, dispatchId);
@@ -645,7 +646,7 @@ export async function retryStage(
       directory,
       status: 'starting',
       created: new Date().toISOString(),
-      conversation: undefined,
+      conversation: options.replaceConversation ? undefined : prior.conversation,
       address: undefined,
       evidence: undefined,
       error: undefined,
