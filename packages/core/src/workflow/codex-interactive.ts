@@ -108,7 +108,7 @@ export class InteractiveCodexRunner implements RunnerAdapter {
     const candidates = files(
       join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'sessions'),
     ).filter((p) => {
-      if (Date.parse(attempt.created) > statSync(p).mtimeMs) return false;
+      if (!attempt.conversation && Date.parse(attempt.created) > statSync(p).mtimeMs) return false;
       const data = events(p);
       return (
         data[0]?.payload.cwd === attempt.checkout &&
