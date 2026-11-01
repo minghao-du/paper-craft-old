@@ -169,6 +169,51 @@ export class AgyInteractive {
     );
   }
 
+  /** Rebuild only a missing owned Run terminal after all historical executions exited. */
+  async prepareReplacement(prior: ManagedAttempt, attempts: ManagedAttempt[]): Promise<void> {
+    if (!prior.run || prior.terminalSession !== `pc-run-${prior.run}`)
+      throw new Error(
+        'Unsupported legacy agy layout; end old executions before starting a new Run',
+      );
+    const session = prior.terminalSession;
+    let sessions: string[];
+    try {
+      sessions = execFileSync('tmux', ['list-sessions', '-F', '#{session_name} #{@pc_run_id}'], {
+        encoding: 'utf8',
+      })
+        .trim()
+        .split('\n');
+    } catch (error) {
+      if (!/no server running|error connecting/.test(String(error))) throw error;
+      sessions = [];
+    }
+    const entry = sessions.find((line) => line.split(' ')[0] === session);
+    if (entry !== undefined) {
+      if (entry !== `${session} ${prior.run}`)
+        throw new Error('Run session ownership missing or conflicting');
+      return;
+    }
+    for (const a of attempts) {
+      if (!(await this.terminated(a)))
+        throw new Error('Run execution termination unresolved; cannot rebuild session');
+    }
+    execFileSync('tmux', ['new-session', '-d', '-s', session]);
+    execFileSync('tmux', ['set-option', '-t', session, '@pc_run_id', prior.run]);
+  }
+
+  private verifyTerminal(a: ManagedAttempt): void {
+    if (!a.run) return;
+    if (a.terminalSession !== `pc-run-${a.run}`)
+      throw new Error('Unsupported legacy agy layout; historical execution will not restart');
+    const identity = execFileSync(
+      'tmux',
+      ['display-message', '-p', '-t', this.address(a), '#{session_name} #{@pc_run_id} #{pane_id}'],
+      { encoding: 'utf8' },
+    ).trim();
+    if (identity !== `${a.terminalSession} ${a.run} ${this.address(a)}`)
+      throw new Error('Run session or exact pane ownership unverified');
+  }
+
   private native(a: ManagedAttempt): Record<string, string> | undefined {
     try {
       const n = JSON.parse(
@@ -280,6 +325,7 @@ export class AgyInteractive {
   async stopped(a: ManagedAttempt): Promise<boolean> {
     const panes = this.panes();
     const addr = this.address(a);
+    if (panes.has(addr)) this.verifyTerminal(a);
     return (
       panes.get(addr) === '1' ||
       (!panes.has(addr) &&
@@ -290,6 +336,7 @@ export class AgyInteractive {
 
   async cancel(a: ManagedAttempt): Promise<{ evidence: string }> {
     const addr = this.address(a);
+    this.verifyTerminal(a);
     execFileSync('tmux', ['kill-pane', '-t', addr]);
     if (this.panes().has(addr)) throw new Error('Agy pane termination unverified');
     writeFileSync(join(a.directory, 'agy-terminated'), addr);
@@ -421,6 +468,9 @@ export class AgyInteractive {
         /* ignore read error */
       }
     }
+    if (a.run && a.terminalSession !== `pc-run-${a.run}`)
+      throw new Error('Unsupported legacy agy layout; historical execution will not restart');
+    if (a.address && this.panes().get(this.address(a)) === '0') this.verifyTerminal(a);
     const n = this.native(a);
     if (!n?.conversation_id || !a.address || this.panes().get(this.address(a)) !== '0')
       return undefined;
@@ -505,6 +555,7 @@ export class AgyInteractive {
   }
 
   async send(a: ManagedAttempt, message: { id: string; brief: string }) {
+    this.verifyTerminal(a);
     const prior = new Set(this.steps(a).map((s) => s.step_index));
     const file = join(a.directory, `message-${message.id}.txt`);
     writeFileSync(file, message.brief);
@@ -531,20 +582,23 @@ export class AgyInteractive {
 
   async observe(a: ManagedAttempt): Promise<ExecutionObservation> {
     let status: ExecutionObservation['status'] = 'unknown';
+    let evidence = 'Native agy status callback; turn completion is not acceptance';
     try {
       if (await this.terminated(a)) status = 'exited';
       else {
+        this.verifyTerminal(a);
+        if (this.panes().get(this.address(a)) !== '0') throw new Error('Pane missing');
         const state = this.native(a)?.agent_state;
         if (state === 'idle') status = 'idle';
         else if (state === 'working') status = 'running';
       }
-    } catch {
-      /* Unavailable evidence stays unknown. */
+    } catch (error) {
+      evidence = String(error);
     }
     return {
       status,
       at: new Date().toISOString(),
-      evidence: 'Native agy status callback; turn completion is not acceptance',
+      evidence,
     };
   }
 }

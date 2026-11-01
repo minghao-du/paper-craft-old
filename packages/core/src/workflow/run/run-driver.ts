@@ -851,6 +851,15 @@ export async function recoverRun(
   const snapshot = inspectRuns(config);
   const run = snapshot.runs.find((r) => r.id === runId);
   if (!run || run.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
+  if (
+    run.provider === 'agy' &&
+    run.launchStarted === false &&
+    !run.orchestrator &&
+    !inspectOrchestrator(config, runId)
+  )
+    throw new Error(
+      'Agy requires current-conversation registration; use orchestrator start from prepared conversation',
+    );
   if (run.lifecycle === 'completed')
     throw new Error('Completed Run authority has ended; start a new Run after resolving occupancy');
   if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
@@ -891,7 +900,13 @@ export async function recoverRun(
     snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts.slice(-1)) ??
     [];
   for (const attempt of [...(orchestrator?.run === runId ? [orchestrator] : []), ...attempts]) {
-    if (runner.observe) attempt.observation = await runner.observe(attempt);
+    if (runner.observe) {
+      attempt.observation = await runner.observe(attempt);
+      if (runner.name === 'agy' && attempt.observation.status === 'unknown') {
+        attempt.status = 'unknown';
+        blockers.push(`${attempt.id}: ${attempt.observation.evidence}; occupancy unresolved`);
+      }
+    }
     if (attempt.status !== 'running' && runner.recoverReceipt) {
       const ack = await runner.recoverReceipt(attempt);
       if (ack?.conversation && ack.address && ack.evidence) {
@@ -914,11 +929,20 @@ export async function recoverRun(
     ) {
       blockers.push('Orchestrator occupancy unresolved; verify termination before replacement');
     } else {
+      await runner.prepareReplacement?.(orchestrator, [
+        orchestrator,
+        ...(run.priorOrchestrators ?? []),
+        ...(snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+      ]);
       const id = randomUUID();
       const directory = join(home(config), 'runs', runId, id);
       mkdirSync(directory);
       replacement = {
         ...orchestrator,
+        currentExecution: undefined,
+        preparation: undefined,
+        paneId: undefined,
+        windowId: undefined,
         predecessor: orchestrator.id,
         id,
         directory,
