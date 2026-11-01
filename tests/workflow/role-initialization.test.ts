@@ -8,8 +8,8 @@ import {
   recoverRun,
   inspectRuns,
   updateRunRegistry,
-} from '../../packages/core/src/workflow/run-driver.js';
-import type { ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
+} from '../../packages/core/src/workflow/run/run-driver.js';
+import type { ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
 import { initializeRole } from './initialize-role.js';
 
 test('managed role startup requires actual role evidence and recovery never relaunches missing initialization', async () => {

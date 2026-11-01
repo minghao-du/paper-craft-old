@@ -2,7 +2,7 @@ import { test, expect } from 'vitest';
 import {
   finalizeEpic,
   type EpicFinalization,
-} from '../../packages/core/src/workflow/epic-finalization.js';
+} from '../../packages/core/src/workflow/delivery/epic-finalization.js';
 
 const context = {
   head: 'a'.repeat(40),
@@ -268,7 +268,7 @@ test('managed reporting serializes aliases, preserves prior report on failure an
     ).rejects.toThrow('writer failed');
     expect(readFileSync(entry, 'utf8')).toBe('previous accepted report');
     const { releaseResearchWriter } =
-      await import('../../packages/core/src/workflow/research-report.js');
+      await import('../../packages/core/src/workflow/delivery/research-report.js');
     await expect(releaseResearchWriter(entry, async () => false)).rejects.toThrow(/termination/);
     await releaseResearchWriter(entry, async () => true);
     await finalizeEpic(

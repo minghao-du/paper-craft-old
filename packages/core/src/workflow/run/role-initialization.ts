@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ManagedAttempt } from './runtime.js';
+import type { ManagedAttempt } from '../runtime/runtime.js';
 
 /** Expectations copied from the owning Run/Dispatch, never inferred from model output. */
 export interface RoleInitialization {

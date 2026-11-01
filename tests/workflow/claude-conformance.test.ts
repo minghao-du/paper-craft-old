@@ -9,8 +9,8 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { ClaudeRunner, type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
-import { verifyRoleInitialization } from '../../packages/core/src/workflow/role-initialization.js';
+import { ClaudeRunner, type ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
+import { verifyRoleInitialization } from '../../packages/core/src/workflow/run/role-initialization.js';
 import {
   startRun,
   recoverRun,
@@ -19,7 +19,7 @@ import {
   inspectRuns,
   retryStage,
   releaseAcceptedExecution,
-} from '../../packages/core/src/workflow/run-driver.js';
+} from '../../packages/core/src/workflow/run/run-driver.js';
 
 // Each mode is independent: setup, real calls, assertions and teardown fit one budget.
 test.skipIf(!process.env.PC_CLAUDE_CONFORMANCE).each(['acceptance', 'restart', 'takeover'])(

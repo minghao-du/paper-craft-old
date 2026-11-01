@@ -1,7 +1,7 @@
-import type { WorkflowRole } from './workflow-role.js';
-import type { ManagedAttempt } from './runtime.js';
+import type { WorkflowRole } from '../runtime/workflow-role.js';
+import type { ManagedAttempt } from '../runtime/runtime.js';
 import { readWorkerInventory } from './worker-inventory.js';
-import { inspectRuns, type WorkflowRun, type RunRegistry } from './run-driver.js';
+import { inspectRuns, type WorkflowRun, type RunRegistry } from '../run/run-driver.js';
 /** File-backed evidence shared by Dashboard and JSON CLI; never scheduling authority. */
 import { readFile, realpath, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';

@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { basename, join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { pathExists, within, workflowSource, type FleetConfig } from './fleet-config.js';
+import { pathExists, within, workflowSource, type FleetConfig } from './fleet/fleet-config.js';
 
 /** Create a workflow subdirectory and reject symlinks that leave its configured root. */
 export function stateDirectory(config: FleetConfig, ...parts: string[]): string {

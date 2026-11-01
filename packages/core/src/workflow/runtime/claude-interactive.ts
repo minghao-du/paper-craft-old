@@ -1,4 +1,4 @@
-import { roleInitializationReady } from './role-initialization.js';
+import { roleInitializationReady } from '../run/role-initialization.js';
 /** Claude native hooks correlate persistent TUI turns with durable dispatches. */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';

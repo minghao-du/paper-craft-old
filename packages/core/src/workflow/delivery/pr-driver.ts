@@ -5,15 +5,15 @@ import {
   acceptStageReceipt,
   updateRunRegistry,
   inspectRuns,
-} from './run-driver.js';
-import { claimDriver } from './driver-lock.js';
+} from '../run/run-driver.js';
+import { claimDriver } from '../run/driver-lock.js';
 /** Current-head PR quality, repair and automatic landing workflow. */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { stateDirectory } from './handoff.js';
-import { workflowSource, type FleetConfig } from './fleet-config.js';
+import { stateDirectory } from '../handoff.js';
+import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
 import type { RoundRunner, IssueTurn } from './issue-driver.js';
 /** Repository-scoped delivery; EPIC professional evidence is bound to its head. */
 export interface PrDelivery {

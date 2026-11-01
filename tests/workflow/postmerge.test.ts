@@ -5,14 +5,14 @@ import {
   dispatchStage,
   publishStageReceipt,
   acceptStageReceipt,
-} from '../../packages/core/src/workflow/run-driver.js';
-import type { IssueTurn } from '../../packages/core/src/workflow/issue-driver.js';
+} from '../../packages/core/src/workflow/run/run-driver.js';
+import type { IssueTurn } from '../../packages/core/src/workflow/delivery/issue-driver.js';
 import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { finishDelivery } from '../../packages/core/src/workflow/postmerge.js';
+import { finishDelivery } from '../../packages/core/src/workflow/delivery/postmerge.js';
 test('merged delivery records and archives before releasing a real worktree; unknown occupancy retains it', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-finish-')));
   const git = (...args: string[]) =>

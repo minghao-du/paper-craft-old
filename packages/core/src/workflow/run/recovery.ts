@@ -1,6 +1,6 @@
 /** Batch recovery delegates authority and evidence reconciliation to each Run. */
-import type { FleetConfig } from './fleet-config.js';
-import type { RunnerAdapter } from './runtime.js';
+import type { FleetConfig } from '../fleet/fleet-config.js';
+import type { RunnerAdapter } from '../runtime/runtime.js';
 import { inspectRuns, recoverRun } from './run-driver.js';
 
 /** Reconcile all incomplete Runs independently; never adopt unowned legacy work. */

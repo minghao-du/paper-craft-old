@@ -6,15 +6,15 @@ import {
   publishStageReceipt,
   acceptStageReceipt,
   releaseRunCheckout,
-} from './run-driver.js';
-import { claimDriver } from './driver-lock.js';
+} from '../run/run-driver.js';
+import { claimDriver } from '../run/driver-lock.js';
 /** Durable post-merge assessment, preservation and resource release. */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { stateDirectory, preserveState } from './handoff.js';
-import { workflowSource, type FleetConfig } from './fleet-config.js';
+import { stateDirectory, preserveState } from '../handoff.js';
+import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
 import { inspectIssueRun, type RoundRunner, type IssueTurn } from './issue-driver.js';
 import { drivePullRequest, type PrDelivery, type PullRequestProvider } from './pr-driver.js';
 /** External completion facts; absence of stop evidence preserves ownership. */

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { CodexRunner, type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
+import { CodexRunner, type ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
 
 test('specialists launch independent windows in the existing session and recover durable identity', async () => {

@@ -1,4 +1,4 @@
-import { roleInitializationReady, initializationInstructions } from './role-initialization.js';
+import { roleInitializationReady, initializationInstructions } from '../run/role-initialization.js';
 /** Persistent Codex TUI adapter backed by native, correlated rollout evidence. */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';

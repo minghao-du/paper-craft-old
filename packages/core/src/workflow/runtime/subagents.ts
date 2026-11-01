@@ -1,5 +1,5 @@
 /** Durable temporary delegation. Parents retain checkout ownership throughout execution. */
-import { claimDriver } from './driver-lock.js';
+import { claimDriver } from '../run/driver-lock.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
@@ -12,8 +12,8 @@ import {
 } from 'node:fs';
 import { join, isAbsolute, normalize } from 'node:path';
 import { spawn } from 'node:child_process';
-import { stateDirectory } from './handoff.js';
-import { workflowSource, type FleetConfig } from './fleet-config.js';
+import { stateDirectory } from '../handoff.js';
+import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
 
 /** Identity of the accountable parent and its logical task. */
 export interface TaskParent {

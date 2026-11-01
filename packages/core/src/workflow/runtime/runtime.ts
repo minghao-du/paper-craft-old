@@ -7,13 +7,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { stateDirectory } from './handoff.js';
+import { stateDirectory } from '../handoff.js';
 import {
   verifyRoleInitialization,
   initializationInstructions,
   type RoleInitialization,
-} from './role-initialization.js';
-import type { FleetConfig } from './fleet-config.js';
+} from '../run/role-initialization.js';
+import type { FleetConfig } from '../fleet/fleet-config.js';
 
 /** One execution attempt; unknown retains occupancy until independently verified. */
 export interface ManagedAttempt {

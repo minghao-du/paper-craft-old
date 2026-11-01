@@ -1,8 +1,8 @@
 import { initializeRole } from './initialize-role.js';
 import { createHash } from 'node:crypto';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
-import { readDashboardFleet } from '../../packages/core/src/workflow/dashboard.js';
-import { managedRunner } from '../../packages/core/src/workflow/runtime.js';
+import { readDashboardFleet } from '../../packages/core/src/workflow/fleet/dashboard.js';
+import { managedRunner } from '../../packages/core/src/workflow/runtime/runtime.js';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,7 +23,7 @@ import {
   recoverRun,
   setRemediationLimit,
   updateRunRegistry,
-} from '../../packages/core/src/workflow/run-driver.js';
+} from '../../packages/core/src/workflow/run/run-driver.js';
 
 test('intake reconnects an acknowledged Run and rejects conflicting ownership without launching', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-run-')));
@@ -663,7 +663,7 @@ test.each(['direct', 'validated', 'collect', 'followup', 'followup-complete'])(
 );
 
 test('Claude native correlation rejects missing prompt identity and duplicate submissions', async () => {
-  const { ClaudeRunner } = await import('../../packages/core/src/workflow/runtime.js');
+  const { ClaudeRunner } = await import('../../packages/core/src/workflow/runtime/runtime.js');
   const directory = mkdtempSync(join(tmpdir(), 'pc-native-'));
   const hooks = join(directory, 'claude-hooks');
   mkdirSync(hooks);

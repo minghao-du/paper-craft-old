@@ -1,4 +1,4 @@
-import { roleInitializationReady } from './role-initialization.js';
+import { roleInitializationReady } from '../run/role-initialization.js';
 import { homedir } from 'node:os';
 /** Agy native hooks correlate persistent TUI turns with durable dispatches. */
 import { execFileSync, spawnSync } from 'node:child_process';

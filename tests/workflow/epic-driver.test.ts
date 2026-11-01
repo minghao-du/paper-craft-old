@@ -2,14 +2,14 @@ import {
   startRun,
   referenceRunSubject,
   inspectRuns,
-} from '../../packages/core/src/workflow/run-driver.js';
+} from '../../packages/core/src/workflow/run/run-driver.js';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { test, expect } from 'vitest';
-import { type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
-import { driveEpic } from '../../packages/core/src/workflow/epic-driver.js';
+import { type ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
+import { driveEpic } from '../../packages/core/src/workflow/delivery/epic-driver.js';
 
 test('EPIC planning dispatches independent work concurrently, then dependencies, with attributed feedback', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-epic-')));
@@ -234,7 +234,7 @@ test('blocked EPIC work retains scope without dispatch and separates repository 
     const epic = { repository: 'owner/one', number: 35, title: 'goal', body: 'goal' };
     await expect(driveEpic(config, runner, epic)).rejects.toThrow('readiness blockers');
     expect(started.filter((t) => t.role === 'worker')).toHaveLength(0);
-    const { inspectEpicRun } = await import('../../packages/core/src/workflow/epic-driver.js');
+    const { inspectEpicRun } = await import('../../packages/core/src/workflow/delivery/epic-driver.js');
     expect(inspectEpicRun(config, 'owner/one', 35)?.status).toBe('blocked');
     expect(inspectEpicRun(config, 'owner/two', 35)).toBeUndefined();
     expect(

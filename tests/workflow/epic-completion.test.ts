@@ -1,10 +1,10 @@
 import { writeFileSync } from 'node:fs';
-import { startRun } from '../../packages/core/src/workflow/run-driver.js';
+import { startRun } from '../../packages/core/src/workflow/run/run-driver.js';
 import { test, expect } from 'vitest';
 import { mkdtempSync, realpathSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { completeEpic } from '../../packages/core/src/workflow/epic-completion.js';
+import { completeEpic } from '../../packages/core/src/workflow/delivery/epic-completion.js';
 test('goal evidence and explicit target human confirmation gate EPIC closure; repeats do not close twice', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-epic-close-')));
   mkdirSync(join(project, 'pool'));

@@ -2,7 +2,7 @@
 import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import { expandTilde } from '../utils/config.js';
+import { expandTilde } from '../../utils/config.js';
 
 const name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
 const schema = z.object({

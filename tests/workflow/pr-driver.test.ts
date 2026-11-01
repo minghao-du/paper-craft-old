@@ -4,12 +4,12 @@ import {
   startBusinessTurn,
   validateImplementationResult,
   collectBusinessTurn,
-} from '../../packages/core/src/workflow/run-driver.js';
+} from '../../packages/core/src/workflow/run/run-driver.js';
 import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { drivePullRequest } from '../../packages/core/src/workflow/pr-driver.js';
+import { drivePullRequest } from '../../packages/core/src/workflow/delivery/pr-driver.js';
 async function intake(
   config: Parameters<typeof startRun>[0],
   runner: Parameters<typeof startRun>[1],
@@ -158,7 +158,7 @@ test('moved heads repeat Landing gates and EPIC confirmation is required before 
       return true;
     },
     async preflight() {},
-    async start(a: import('../../packages/core/src/workflow/runtime.js').ManagedAttempt) {
+    async start(a: import('../../packages/core/src/workflow/runtime/runtime.js').ManagedAttempt) {
       return { conversation: a.id, address: 'tmux:test', evidence: 'receipt' };
     },
     async collect() {

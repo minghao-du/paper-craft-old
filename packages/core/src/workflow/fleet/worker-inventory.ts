@@ -1,5 +1,5 @@
 /** Read-only inventory shared by worker status and Dashboard. */
-import { assertWorkflowRole, type WorkflowRole } from './workflow-role.js';
+import { assertWorkflowRole, type WorkflowRole } from '../runtime/workflow-role.js';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 

@@ -13,7 +13,7 @@ test('independent Fleets cannot dispatch workers into the same physical checkout
   writeFileSync(
     script,
     `
-import {startRun, dispatchStage} from ${JSON.stringify(resolve('packages/core/src/workflow/run-driver.ts'))};
+import {startRun, dispatchStage} from ${JSON.stringify(resolve('packages/core/src/workflow/run/run-driver.ts'))};
 const config=JSON.parse(process.argv[2]);
 const runner={interactive:true,name:'codex',async preflight(){},async start(a){return {conversation:a.id,address:'controlled',evidence:'ack'}}};
 try {

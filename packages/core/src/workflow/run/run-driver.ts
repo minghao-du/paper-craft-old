@@ -1,4 +1,4 @@
-import { assertStageRole, assertWorkflowRole } from './workflow-role.js';
+import { assertStageRole, assertWorkflowRole } from '../runtime/workflow-role.js';
 import { initializationInstructions, verifyRoleInitialization } from './role-initialization.js';
 /** Run intake and authoritative Fleet relationships; managed execution belongs to one Run. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -14,8 +14,8 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { claimDriver } from './driver-lock.js';
-import { stateDirectory } from './handoff.js';
-import { workflowSource, type FleetConfig } from './fleet-config.js';
+import { stateDirectory } from '../handoff.js';
+import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
 import {
   inspectOrchestrator,
   requireInteractive,
@@ -24,9 +24,9 @@ import {
   startOrchestrator,
   type ManagedAttempt,
   type RunnerAdapter,
-} from './runtime.js';
-import { pipelineAccepted, type PipelineDisposition } from './epic-finalization.js';
-import type { IssueInput } from './issue-driver.js';
+} from '../runtime/runtime.js';
+import { pipelineAccepted, type PipelineDisposition } from '../delivery/epic-finalization.js';
+import type { IssueInput } from '../delivery/issue-driver.js';
 
 /** Verified tracker subject, with explicit scope rather than title heuristics. */
 export interface RunSubject extends IssueInput {
@@ -42,8 +42,8 @@ export interface WorkflowRun {
   phase?: 'post_closure_finalization' | 'completed';
   pipeline?: PipelineDisposition;
   pipelineApprovals?: Record<string, { source: 'human'; ledger: string; evidence: string }>;
-  pipelineMaintenance?: import('./epic-finalization.js').EpicFinalization['maintenanceDeliveries'];
-  report?: import('./research-report.js').ResearchReport;
+  pipelineMaintenance?: import('../delivery/epic-finalization.js').EpicFinalization['maintenanceDeliveries'];
+  report?: import('../delivery/research-report.js').ResearchReport;
   epicClosure?: { deliveryVersion: string; head: string; evidence: string; confirmed: string };
   orchestratorId: string;
   launchStarted?: boolean;

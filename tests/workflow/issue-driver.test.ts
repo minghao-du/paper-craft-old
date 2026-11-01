@@ -2,7 +2,7 @@ import {
   startRun,
   referenceRunSubject,
   inspectRuns,
-} from '../../packages/core/src/workflow/run-driver.js';
+} from '../../packages/core/src/workflow/run/run-driver.js';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,8 +12,8 @@ import {
   driveIssue,
   inspectIssueRun,
   readIssue,
-} from '../../packages/core/src/workflow/issue-driver.js';
-import { type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
+} from '../../packages/core/src/workflow/delivery/issue-driver.js';
+import { type ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
 test('standalone intake automatically routes two worker results back to orchestrator without replay', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-drive-')));
   mkdirSync(join(project, 'pool'));

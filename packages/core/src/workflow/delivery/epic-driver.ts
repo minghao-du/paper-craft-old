@@ -3,21 +3,21 @@ import {
   collectBusinessTurn,
   acceptValidatedBusinessTurns,
   validateImplementationResult,
-} from './run-driver.js';
+} from '../run/run-driver.js';
 import {
   orchestratorForSubject,
   reserveRunCheckout,
   referenceRunSubject,
   inspectRuns,
-} from './run-driver.js';
-import { claimDriver } from './driver-lock.js';
+} from '../run/run-driver.js';
+import { claimDriver } from '../run/driver-lock.js';
 /** Repository-scoped EPIC planning and dependency-aware Worker dispatch. */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { stateDirectory } from './handoff.js';
-import { workflowSource, type FleetConfig } from './fleet-config.js';
+import { stateDirectory } from '../handoff.js';
+import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
 import {
   driveIssue,
   inspectIssueRun,

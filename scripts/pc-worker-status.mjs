@@ -1,4 +1,4 @@
-import { readWorkerInventory } from '../packages/core/src/workflow/worker-inventory.ts';
+import { readWorkerInventory } from '../packages/core/src/workflow/fleet/worker-inventory.ts';
 import { runtimeRoot } from './pc-runtime-paths.mjs';
 /** Read-only recovery inventory, with explicit receipt acknowledgment. */
 import process from 'node:process';

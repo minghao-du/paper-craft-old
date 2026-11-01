@@ -2,8 +2,8 @@ import { vi, test, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgyInteractive } from '../../packages/core/src/workflow/agy-interactive.js';
-import { AgyRunner } from '../../packages/core/src/workflow/runtime.js';
+import { AgyInteractive } from '../../packages/core/src/workflow/runtime/agy-interactive.js';
+import { AgyRunner } from '../../packages/core/src/workflow/runtime/runtime.js';
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),

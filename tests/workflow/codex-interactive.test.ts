@@ -6,7 +6,7 @@ import { test, expect, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { InteractiveCodexRunner } from '../../packages/core/src/workflow/codex-interactive.js';
+import { InteractiveCodexRunner } from '../../packages/core/src/workflow/runtime/codex-interactive.js';
 
 test('native completed turns require exact attempt and dispatch correlation', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pc-native-'));

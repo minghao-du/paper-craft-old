@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, test } from 'vitest';
-import { readDashboardFleet } from '../../packages/core/src/workflow/dashboard.js';
+import { readDashboardFleet } from '../../packages/core/src/workflow/fleet/dashboard.js';
 import { readTaskLog } from '../../packages/dashboard/src/logs.js';
 
 // Real CLI intake + dispatch files: missing legacy state must not hide current workers.

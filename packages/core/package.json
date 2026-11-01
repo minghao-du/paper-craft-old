@@ -58,9 +58,9 @@
       "default": "./dist/storage/db.js"
     },
     "./workflow/fleet-config": {
-      "paper-craft-source": "./src/workflow/fleet-config.ts",
-      "types": "./dist/workflow/fleet-config.d.ts",
-      "default": "./dist/workflow/fleet-config.js"
+      "paper-craft-source": "./src/workflow/fleet/fleet-config.ts",
+      "types": "./dist/workflow/fleet/fleet-config.d.ts",
+      "default": "./dist/workflow/fleet/fleet-config.js"
     },
     "./workflow/evidence-discipline": {
       "paper-craft-source": "./src/workflow/evidence-discipline.ts",
@@ -88,9 +88,9 @@
       "default": "./dist/workflow/handoff.js"
     },
     "./workflow/fleet": {
-      "paper-craft-source": "./src/workflow/fleet.ts",
-      "types": "./dist/workflow/fleet.d.ts",
-      "default": "./dist/workflow/fleet.js"
+      "paper-craft-source": "./src/workflow/fleet/fleet.ts",
+      "types": "./dist/workflow/fleet/fleet.d.ts",
+      "default": "./dist/workflow/fleet/fleet.js"
     },
     "./workflow/index": {
       "paper-craft-source": "./src/workflow/index.ts",
@@ -103,54 +103,54 @@
       "default": "./dist/index.js"
     },
     "./workflow/dashboard": {
-      "paper-craft-source": "./src/workflow/dashboard.ts",
-      "types": "./dist/workflow/dashboard.d.ts",
-      "default": "./dist/workflow/dashboard.js"
+      "paper-craft-source": "./src/workflow/fleet/dashboard.ts",
+      "types": "./dist/workflow/fleet/dashboard.d.ts",
+      "default": "./dist/workflow/fleet/dashboard.js"
     },
     "./workflow/runtime": {
-      "paper-craft-source": "./src/workflow/runtime.ts",
-      "types": "./dist/workflow/runtime.d.ts",
-      "default": "./dist/workflow/runtime.js"
+      "paper-craft-source": "./src/workflow/runtime/runtime.ts",
+      "types": "./dist/workflow/runtime/runtime.d.ts",
+      "default": "./dist/workflow/runtime/runtime.js"
     },
     "./workflow/issue-driver": {
-      "paper-craft-source": "./src/workflow/issue-driver.ts",
-      "types": "./dist/workflow/issue-driver.d.ts",
-      "default": "./dist/workflow/issue-driver.js"
+      "paper-craft-source": "./src/workflow/delivery/issue-driver.ts",
+      "types": "./dist/workflow/delivery/issue-driver.d.ts",
+      "default": "./dist/workflow/delivery/issue-driver.js"
     },
     "./workflow/subagents": {
-      "paper-craft-source": "./src/workflow/subagents.ts",
-      "types": "./dist/workflow/subagents.d.ts",
-      "default": "./dist/workflow/subagents.js"
+      "paper-craft-source": "./src/workflow/runtime/subagents.ts",
+      "types": "./dist/workflow/runtime/subagents.d.ts",
+      "default": "./dist/workflow/runtime/subagents.js"
     },
     "./workflow/pr-driver": {
-      "paper-craft-source": "./src/workflow/pr-driver.ts",
-      "types": "./dist/workflow/pr-driver.d.ts",
-      "default": "./dist/workflow/pr-driver.js"
+      "paper-craft-source": "./src/workflow/delivery/pr-driver.ts",
+      "types": "./dist/workflow/delivery/pr-driver.d.ts",
+      "default": "./dist/workflow/delivery/pr-driver.js"
     },
     "./workflow/epic-driver": {
-      "paper-craft-source": "./src/workflow/epic-driver.ts",
-      "types": "./dist/workflow/epic-driver.d.ts",
-      "default": "./dist/workflow/epic-driver.js"
+      "paper-craft-source": "./src/workflow/delivery/epic-driver.ts",
+      "types": "./dist/workflow/delivery/epic-driver.d.ts",
+      "default": "./dist/workflow/delivery/epic-driver.js"
     },
     "./workflow/postmerge": {
-      "paper-craft-source": "./src/workflow/postmerge.ts",
-      "types": "./dist/workflow/postmerge.d.ts",
-      "default": "./dist/workflow/postmerge.js"
+      "paper-craft-source": "./src/workflow/delivery/postmerge.ts",
+      "types": "./dist/workflow/delivery/postmerge.d.ts",
+      "default": "./dist/workflow/delivery/postmerge.js"
     },
     "./workflow/epic-completion": {
-      "paper-craft-source": "./src/workflow/epic-completion.ts",
-      "types": "./dist/workflow/epic-completion.d.ts",
-      "default": "./dist/workflow/epic-completion.js"
+      "paper-craft-source": "./src/workflow/delivery/epic-completion.ts",
+      "types": "./dist/workflow/delivery/epic-completion.d.ts",
+      "default": "./dist/workflow/delivery/epic-completion.js"
     },
     "./workflow/recovery": {
-      "paper-craft-source": "./src/workflow/recovery.ts",
-      "types": "./dist/workflow/recovery.d.ts",
-      "default": "./dist/workflow/recovery.js"
+      "paper-craft-source": "./src/workflow/run/recovery.ts",
+      "types": "./dist/workflow/run/recovery.d.ts",
+      "default": "./dist/workflow/run/recovery.js"
     },
     "./workflow/run-driver": {
-      "paper-craft-source": "./src/workflow/run-driver.ts",
-      "types": "./dist/workflow/run-driver.d.ts",
-      "default": "./dist/workflow/run-driver.js"
+      "paper-craft-source": "./src/workflow/run/run-driver.ts",
+      "types": "./dist/workflow/run/run-driver.d.ts",
+      "default": "./dist/workflow/run/run-driver.js"
     }
   },
   "files": [

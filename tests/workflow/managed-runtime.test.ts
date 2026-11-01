@@ -6,7 +6,7 @@ import {
   startOrchestrator,
   inspectOrchestrator,
   type RunnerAdapter,
-} from '../../packages/core/src/workflow/runtime.js';
+} from '../../packages/core/src/workflow/runtime/runtime.js';
 
 test('startup requires runner evidence and isolates fleets, retaining a failed brief', async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-runtime-')));
@@ -108,7 +108,7 @@ test('missing capabilities refuse launch; an empty receipt cannot report success
 
 test('core waits and cancellation preserve occupied identity until verified termination', async () => {
   const { waitAttempt, cancelAttempt, inspectAttemptControl, reconcileAttempt } =
-    await import('../../packages/core/src/workflow/runtime.js');
+    await import('../../packages/core/src/workflow/runtime/runtime.js');
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-core-control-')));
   try {
     const attempt = {

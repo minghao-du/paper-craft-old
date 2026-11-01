@@ -1,11 +1,11 @@
-import { startRun } from '../../packages/core/src/workflow/run-driver.js';
+import { startRun } from '../../packages/core/src/workflow/run/run-driver.js';
 import { createHash } from 'node:crypto';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 import { test, expect } from 'vitest';
 import { mkdtempSync, realpathSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { completeEpic } from '../../packages/core/src/workflow/epic-completion.js';
+import { completeEpic } from '../../packages/core/src/workflow/delivery/epic-completion.js';
 test('collection failure resumes the original acceptance attempt and preserves explicit closure across failed close', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-recovery-')));
   mkdirSync(join(project, 'pool'));
@@ -150,9 +150,9 @@ test('collection failure resumes the original acceptance attempt and preserves e
   }
 });
 
-import { recoverAllRuns } from '../../packages/core/src/workflow/recovery.js';
+import { recoverAllRuns } from '../../packages/core/src/workflow/run/recovery.js';
 import { writeFileSync } from 'node:fs';
-import { inspectRuns, recoverRun } from '../../packages/core/src/workflow/run-driver.js';
+import { inspectRuns, recoverRun } from '../../packages/core/src/workflow/run/run-driver.js';
 test('batch recovery isolates failed providers, preserves unknown ownership without reading legacy work', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-batch-')));
   mkdirSync(join(project, 'pool'));

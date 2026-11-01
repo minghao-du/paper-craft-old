@@ -2,7 +2,7 @@ import { realpathSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { Subagents, type ShortRunner } from '../../packages/core/src/workflow/subagents.js';
+import { Subagents, type ShortRunner } from '../../packages/core/src/workflow/runtime/subagents.js';
 
 test('all core parents delegate owned read/write tasks with durable results, queue limits and Worker handoff', async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-short-')));

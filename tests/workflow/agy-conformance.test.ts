@@ -2,14 +2,14 @@ import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { AgyRunner, type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
+import { AgyRunner, type ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
 import {
   startRun,
   recoverRun,
   dispatchStage,
   collectBusinessTurn,
   inspectRuns,
-} from '../../packages/core/src/workflow/run-driver.js';
+} from '../../packages/core/src/workflow/run/run-driver.js';
 
 // Opt in from an explicitly trusted checkout; this performs real provider calls.
 test.skipIf(!process.env.PC_AGY_CONFORMANCE)(
