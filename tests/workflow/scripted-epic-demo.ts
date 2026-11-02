@@ -1,7 +1,14 @@
 /** Isolated shared toy EPIC. Scripts execute tasks; the caller chooses the schedule. */
 import { createHash } from 'node:crypto';
 import { Command } from 'commander';
-import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  realpathSync,
+  readFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -296,11 +303,31 @@ export async function runDeliveryDemo() {
   await demo.cli('execute', ['--dispatch', merge.id, '--pr', '2']);
   await accept(merge.id);
   const records = await task('final-records', 'worker', demo.delivery.head);
+  const statusPath = join(checkout, '.epic-status.json');
+  const validStatus = readFileSync(statusPath, 'utf8');
+  writeFileSync(statusPath, JSON.stringify({ assessment: 'old incomplete assessment' }));
+  const recordReceipt = inspectRuns(demo.config).receipts!.find(
+    (r) => r.dispatchId === records.id,
+  )!;
+  await demo.cli('accept', ['--receipt', recordReceipt.id, '--decision', decision, '--pr', '2']);
+  if (process.exitCode !== 2) throw new Error('Incomplete final records accepted');
+  process.exitCode = oldExit;
+  writeFileSync(statusPath, validStatus);
   await accept(records.id);
   const cleanup = await task('preservation-cleanup', 'landing', demo.delivery.head);
   // The controlled script has returned and independently reports terminated before releasing its checkout.
   demo.terminated.add(cleanup.attempts.at(-1)!.id);
+  const validHead = demo.delivery.head;
+  demo.delivery.head = 'unrelated-merged-head';
   await demo.cli('execute', ['--dispatch', cleanup.id, '--pr', '2']);
+  if (process.exitCode !== 2 || !existsSync(checkout))
+    throw new Error('Unrelated merged head authorized cleanup');
+  process.exitCode = oldExit;
+  demo.delivery.head = validHead;
+  await demo.cli('execute', ['--dispatch', cleanup.id, '--pr', '2']);
+  await demo.cli('execute', ['--dispatch', cleanup.id, '--pr', '2']);
+  if (process.exitCode === 2)
+    throw new Error('Cleanup retry could not reconcile released checkout');
   await accept(cleanup.id);
   const archive = JSON.parse(
     readFileSync(join(cleanup.attempts.at(-1)!.directory, 'cleanup.json'), 'utf8'),
@@ -319,14 +346,13 @@ export async function runDeliveryDemo() {
 export async function runAllRoleDemo() {
   const demo = await runDeliveryDemo();
   demo.git('merge', '--ff-only', 'toy-worker');
+  prepareFinalizationTasks(demo);
   const head = demo.git('rev-parse', 'HEAD');
   let previous = demo.cleanup;
   async function task(
     stage: string,
     role: 'epic' | 'pipeline-audit' | 'pipeline-refactor' | 'research-state',
-    body: (a: ManagedAttempt) => string,
   ) {
-    demo.tasks.set(stage, body);
     const dispatch = await demo.dispatch({
       subject: 'toy/epic#1',
       role,
@@ -363,13 +389,7 @@ export async function runAllRoleDemo() {
   if (process.exitCode !== 2 || demo.launched.length !== before)
     throw new Error('Premature specialist launched');
   process.exitCode = oldExit;
-  const acceptance = await task('integrated-acceptance', 'epic', () =>
-    JSON.stringify({
-      satisfied: true,
-      criteria: ['toy.txt delivered with preserved history'],
-      blockers: [],
-    }),
-  );
+  const acceptance = await task('integrated-acceptance', 'epic');
   const deliveries = inspectRuns(demo.config).deliveries!.filter((d) => d.runId === demo.run.id);
   const deliveryVersion = createHash('sha256')
     .update(JSON.stringify({ head, deliveries }))
@@ -397,47 +417,10 @@ export async function runAllRoleDemo() {
   process.exitCode = oldExit;
   writeFileSync(confirmation, validConfirmation);
   await demo.cli('close', ['--dispatch', acceptance.id, '--decision', confirmation]);
-  const pipeline = () =>
-    JSON.stringify({
-      head,
-      status: 'completed',
-      evidence: [demo.archive],
-      blockers: [],
-      scope: ['toy structural verification'],
-      checks: ['toy Git history preserved'],
-      artifacts: [demo.archive],
-      limitations: ['Controlled fixture only'],
-      disposition: 'completed_no_changes',
-      inspectedVersions: { toy: head },
-      findings: [],
-      maintenance: [],
-    });
-  await task('pipeline-audit', 'pipeline-audit', pipeline);
-  const refactor = await task('pipeline-refactor', 'pipeline-refactor', pipeline);
+  await task('pipeline-audit', 'pipeline-audit');
+  const refactor = await task('pipeline-refactor', 'pipeline-refactor');
   await demo.cli('pipeline', ['--dispatch', refactor.id]);
-  const report = await task('research-report', 'research-state', (a) => {
-    const artifact = join(a.directory, 'toy-report.md');
-    writeFileSync(
-      artifact,
-      [
-        'Objective',
-        'Accepted delivery versions',
-        'Observed repository versions',
-        'Pipeline disposition',
-        'Verified findings',
-        'Interpretation',
-        'No scientific conclusions',
-        'Missing evidence',
-        'Follow-up Issues',
-        'Limitations',
-      ].join('\n'),
-    );
-    return JSON.stringify({
-      status: 'completed',
-      artifact,
-      artifactHash: createHash('sha256').update(readFileSync(artifact)).digest('hex'),
-    });
-  });
+  const report = await task('research-report', 'research-state');
   const coordinator = join(demo.directory, 'coordinator.json');
   writeFileSync(
     coordinator,
@@ -476,6 +459,9 @@ export function prepareDeliveryTasks(demo: Awaited<ReturnType<typeof prepareScri
       join(checkout, '.epic-status.json'),
       JSON.stringify({
         issue: 2,
+        repository: 'toy/epic',
+        pr: 2,
+        releaseEvidence: 'Controlled script termination observed',
         assessment: 'Toy change delivered at evaluated head',
         followups: [],
       }),
@@ -484,7 +470,14 @@ export function prepareDeliveryTasks(demo: Awaited<ReturnType<typeof prepareScri
       join(checkout, '.epic-worklog.md'),
       'Worker final records: evaluated head merged; toy.txt delivered.\n',
     );
-    return JSON.stringify({ complete: true, assessment: 'Toy delivered', attempt: a.id });
+    return JSON.stringify({
+      complete: true,
+      assessment: 'Toy delivered',
+      worklog: 'Toy delivered at evaluated head',
+      followups: [],
+      releaseEvidence: 'Controlled script terminated',
+      attempt: a.id,
+    });
   });
   for (const stage of ['pr-quality', 'pr-merge', 'preservation-cleanup'])
     demo.tasks.set(stage, (a) =>
@@ -514,4 +507,65 @@ export function verifyAllRoleOutcome(config: ReturnType<typeof loadFleetConfig>,
   if (!readFileSync(run.report.path, 'utf8').includes('No scientific conclusions'))
     throw new Error('Missing supplied toy report');
   return { run, roles: [...roles], resources: registry.resources };
+}
+
+/** Register the shared bounded post-delivery task artifacts, independently of scheduling. */
+export function prepareFinalizationTasks(demo: Awaited<ReturnType<typeof prepareScriptedEpic>>) {
+  const archive = () => {
+    const dispatch = inspectRuns(demo!.config).dispatches!.find(
+      (d) => d.stage === 'preservation-cleanup' && d.lifecycle === 'accepted',
+    );
+    if (!dispatch) throw new Error('Missing accepted cleanup');
+    return JSON.parse(
+      readFileSync(join(dispatch.attempts.at(-1)!.directory, 'cleanup.json'), 'utf8'),
+    ).archive as string;
+  };
+  demo.tasks.set('integrated-acceptance', () =>
+    JSON.stringify({
+      satisfied: true,
+      criteria: ['toy.txt delivered with preserved history'],
+      blockers: [],
+    }),
+  );
+  for (const stage of ['pipeline-audit', 'pipeline-refactor'])
+    demo.tasks.set(stage, () => {
+      const head = demo!.git('rev-parse', 'HEAD');
+      return JSON.stringify({
+        head,
+        status: 'completed',
+        evidence: [archive()],
+        blockers: [],
+        scope: ['toy structural verification'],
+        checks: ['toy Git history preserved'],
+        artifacts: [archive()],
+        limitations: ['Controlled fixture only'],
+        disposition: 'completed_no_changes',
+        inspectedVersions: { toy: head },
+        findings: [],
+        maintenance: [],
+      });
+    });
+  demo.tasks.set('research-report', (a) => {
+    const artifact = join(a.directory, 'toy-report.md');
+    writeFileSync(
+      artifact,
+      [
+        'Objective',
+        'Accepted delivery versions',
+        'Observed repository versions',
+        'Pipeline disposition',
+        'Verified findings',
+        'Interpretation',
+        'No scientific conclusions',
+        'Missing evidence',
+        'Follow-up Issues',
+        'Limitations',
+      ].join('\n'),
+    );
+    return JSON.stringify({
+      status: 'completed',
+      artifact,
+      artifactHash: createHash('sha256').update(readFileSync(artifact)).digest('hex'),
+    });
+  });
 }

@@ -25,7 +25,7 @@ import {
   deliveryFacts,
   stagePullRequests,
   type StagePullRequests,
-} from './workflow-delivery-stage.js';
+} from '@paper-craft/core/workflow/stage-delivery';
 import { output } from '../utils/output.js';
 
 /** Controlled runners and external facts can be supplied by isolated CLI scenarios only. */

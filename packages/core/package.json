@@ -156,6 +156,11 @@
       "paper-craft-source": "./src/workflow/run/startup.ts",
       "types": "./dist/workflow/run/startup.d.ts",
       "default": "./dist/workflow/run/startup.js"
+    },
+    "./workflow/stage-delivery": {
+      "paper-craft-source": "./src/workflow/delivery/stage-delivery.ts",
+      "types": "./dist/workflow/delivery/stage-delivery.d.ts",
+      "default": "./dist/workflow/delivery/stage-delivery.js"
     }
   },
   "files": [
