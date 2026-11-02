@@ -40,8 +40,8 @@ Options:
 Commands:
   status [options]                  Read concise current Runs, pending work and
                                     resource ownership
-  start [options] <issue>           Create or reconnect a Run from configured
-                                    repository context
+  start [options] <issue>           Create or reconnect a Run; report concise
+                                    startup state
   recover [options] <run>           Recover late startup evidence without
                                     relaunch; preserve unknown occupancy
   recover-all [options]             Reconcile each incomplete Run; report
@@ -98,9 +98,11 @@ Options:
 exports[`publishes orchestrator start help 1`] = `
 "Usage: pc workflow orchestrator start [options] <issue>
 
-Create or reconnect a Run from configured repository context
+Create or reconnect a Run; report concise startup state
 
 Options:
+  --detailed                  Return the complete current structured result;
+                              logs remain referenced
   --provider <provider>       Managed provider: codex, agy, or claude
   --requirements <text>       Immutable additional Run Requirements
   --requirements-file <file>  Read immutable Run Requirements from a UTF-8 file

@@ -43,3 +43,6 @@ dist/
 
 # Local Project research state (entire workspace)
 /research-state/
+
+# Local workflow Runtime records and diagnostics
+.runtime/

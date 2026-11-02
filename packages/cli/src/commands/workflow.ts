@@ -12,7 +12,7 @@ import { landDelivery } from '@paper-craft/core/workflow/postmerge';
 import { registerSubagentCommands } from './workflow-subagents.js';
 /** Portable workflow CLI shared by agents with filesystem and command execution access. */
 import { Command, Option } from 'commander';
-import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
+import { loadFleetConfig, type FleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import { preserveState } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { managedRunner, quote } from '@paper-craft/core/workflow/runtime';
@@ -22,6 +22,7 @@ import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { inspectIssueRun } from '@paper-craft/core/workflow/issue-driver';
 import { readFileSync, existsSync } from 'node:fs';
 import { output } from '../utils/output.js';
+import { conciseError, diagnosticError } from '../workflow/diagnostics.js';
 
 interface Options {
   config: string;
@@ -51,7 +52,7 @@ function run(action: () => void): void {
   }
 }
 
-async function inspection(run: WorkflowRun, config: string) {
+async function inspection(run: WorkflowRun, config: string, detailed = true) {
   const attempt = run.orchestrator;
   let usable = false;
   if (attempt?.address && attempt.terminalSession) {
@@ -67,7 +68,7 @@ async function inspection(run: WorkflowRun, config: string) {
     lifecycle: run.lifecycle,
     attempt: attempt?.id,
     attemptStatus: attempt?.status,
-    cause: attempt?.error,
+    cause: detailed ? attempt?.error : attempt?.error ? conciseError(attempt.error) : undefined,
     evidenceDirectory: attempt?.directory,
     context: run.brief,
     statusCommand: `pc workflow orchestrator status --config ${quote(config)}`,
@@ -80,7 +81,13 @@ async function inspection(run: WorkflowRun, config: string) {
 
 function attemptSummary(attempt: WorkflowRun['orchestrator']) {
   if (!attempt) return undefined;
-  return { ...attempt, brief: undefined, startupFailures: undefined, initialization: undefined };
+  return {
+    ...attempt,
+    error: attempt.error ? conciseError(attempt.error) : undefined,
+    brief: undefined,
+    startupFailures: undefined,
+    initialization: undefined,
+  };
 }
 
 function statusSummary(registry: RunRegistry) {
@@ -93,6 +100,9 @@ function statusSummary(registry: RunRegistry) {
         requirements: undefined,
         priorOrchestrators: undefined,
         subject: { ...run.subject, body: undefined },
+        reconciliation: run.reconciliation
+          ? { ...run.reconciliation, blockers: run.reconciliation.blockers.map(conciseError) }
+          : undefined,
         orchestrator: attemptSummary(run.orchestrator),
       };
     }),
@@ -148,7 +158,17 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         {
           ...(options.detailed ? registry : statusSummary(registry)),
           inspection: await Promise.all(
-            registry.runs.map((entry) => inspection(entry, config.file)),
+            registry.runs.map(async (entry) => ({
+              ...(await inspection(entry, config.file, !!options.detailed)),
+              ...(!options.detailed
+                ? diagnosticError(
+                    config,
+                    entry.orchestrator?.error,
+                    { command: 'status', run: entry.id, attempt: entry.orchestrator?.id },
+                    false,
+                  )
+                : {}),
+            })),
           ),
         },
         opts.human(),
@@ -168,7 +188,8 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     orchestrator
       .command('start <issue>')
-      .description('Create or reconnect a Run from configured repository context')
+      .description('Create or reconnect a Run; report concise startup state')
+      .option('--detailed', 'Return the complete current structured result; logs remain referenced')
       .requiredOption('--provider <provider>', 'Managed provider: codex, agy, or claude')
       .option('--requirements <text>', 'Immutable additional Run Requirements')
       .option('--requirements-file <file>', 'Read immutable Run Requirements from a UTF-8 file')
@@ -187,6 +208,8 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         requirementsFile?: string;
       },
     ) => {
+      let config: FleetConfig | undefined;
+      let subjectReference: string | undefined;
       try {
         if (options.requirements !== undefined && options.requirementsFile !== undefined)
           throw new Error('Use only one of --requirements or --requirements-file');
@@ -201,8 +224,9 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
             );
           }
         }
-        const config = loadFleetConfig(options.config);
+        config = loadFleetConfig(options.config);
         const subject = readIssue(config.project, Number(number));
+        subjectReference = `${subject.repository}#${subject.number}`;
         const kind = /\bEPIC\b/i.test(subject.title) ? 'epic' : 'issue';
         if (options.type !== kind)
           throw new Error(
@@ -215,18 +239,45 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           options.provider,
           requirements,
         );
+        const diagnostics = diagnosticError(config, result.orchestrator?.error, {
+          command: 'start',
+          run: result.id,
+          attempt: result.orchestrator?.id,
+          subject: subjectReference,
+        });
         output(
           {
-            ...result,
-            ...(await inspection(result, config.file)),
+            ...(options.detailed ? result : {}),
+            ...(await inspection(result, config.file, !!options.detailed)),
+            ...diagnostics,
+            outcome: result.lifecycle === 'running' ? 'succeeded' : 'blocked',
+            ...(!options.detailed
+              ? {
+                  blockers: result.reconciliation?.blockers?.map(conciseError) ?? [],
+                  observation: result.orchestrator?.observation,
+                  evidence: result.orchestrator?.evidence,
+                }
+              : {}),
           },
           opts.human(),
         );
         if (result.lifecycle !== 'running') process.exitCode = 2;
       } catch (error) {
-        run(() => {
-          throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        const diagnostics = diagnosticError(config, message, {
+          command: 'start',
+          subject: subjectReference,
         });
+        output(
+          {
+            outcome: 'failed',
+            status: 'unknown',
+            ...diagnostics,
+            ...(options.detailed ? { error: message } : {}),
+          },
+          opts.human(),
+        );
+        process.exitCode = 2;
       }
     },
   );

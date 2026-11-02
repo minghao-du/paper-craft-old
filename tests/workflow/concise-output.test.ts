@@ -1,9 +1,21 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
+import {
+  readFileSync,
+  writeFileSync,
+  mkdtempSync,
+  rmSync,
+  readdirSync,
+  realpathSync,
+  symlinkSync,
+} from 'node:fs';
 import { Command } from 'commander';
 import { afterEach, expect, it, vi } from 'vitest';
 import { registerWorkflowCommands } from '../../packages/cli/src/commands/workflow.js';
 import { outputRegistry } from './fixtures/concise-output/registry.js';
-import { inspectRuns } from '@paper-craft/core/workflow/run-driver';
+import { inspectRuns, startRun } from '@paper-craft/core/workflow/run-driver';
 
 const fixture = JSON.parse(JSON.stringify(outputRegistry()));
 vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
@@ -19,8 +31,9 @@ vi.mock('@paper-craft/core/workflow/issue-driver', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/issue-driver')>()),
   readIssue: () => fixture.runs[0].subject,
 }));
-vi.mock('@paper-craft/core/workflow/fleet-config', () => ({
-  loadFleetConfig: () => ({ project: '/project', file: '/project/.epic-config.json' }),
+vi.mock('@paper-craft/core/workflow/fleet-config', async (original) => ({
+  ...(await original<typeof import('@paper-craft/core/workflow/fleet-config')>()),
+  loadFleetConfig: vi.fn(() => ({ project: '/project', file: '/project/.epic-config.json' })),
 }));
 vi.mock('@paper-craft/core/workflow/runtime', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/runtime')>()),
@@ -145,4 +158,168 @@ it('reports status read failures without treating unknown occupancy as terminati
   });
   expect(result.stderr).toBe('');
   expect(result.exitCode).toBe(2);
+});
+
+it('returns concise Start state and full detail without launching twice per invocation', async () => {
+  const current = structuredClone(outputRegistry().runs[0]);
+  vi.mocked(startRun).mockResolvedValue(current as never);
+  vi.mocked(startRun).mockClear();
+  const args = ['start', '7', '--provider', 'agy', '--type', 'issue'];
+  const result = await invoke(args);
+  if (process.env.PC_MEASURE_START)
+    writeFileSync(
+      '/tmp/pc-106-context/start-after.json',
+      JSON.stringify({
+        stdoutBytes: Buffer.byteLength(result.stdout),
+        stderrBytes: Buffer.byteLength(result.stderr),
+        totalBytes: Buffer.byteLength(result.stdout + result.stderr),
+      }),
+    );
+  const value = JSON.parse(result.stdout);
+  expect(value.outcome).toBe('blocked');
+  expect(value.run).toBe('run-1');
+  expect(value.lifecycle).toBe('blocked');
+  expect(value.attempt).toBe('attempt-current');
+  expect(value.attemptStatus).toBe('unknown');
+  expect(value.observation).toEqual({ status: 'unknown', evidence: 'Cannot establish occupancy' });
+  expect(value.blockers).toEqual(['Occupancy unknown']);
+  expect(value.context).toEqual({ path: '/runtime/context.md', hash: 'context-hash' });
+  expect(result.stdout).not.toContain('IMMUTABLE-BRIEF-BODY');
+  expect(result.stdout).not.toContain('HANDLED-HISTORY');
+  expect(result.stderr).toBe('');
+  expect(result.exitCode).toBe(2);
+  const baseline = JSON.parse(
+    readFileSync(new URL('./fixtures/concise-output/baseline.json', import.meta.url), 'utf8'),
+  )[1];
+  expect(Buffer.byteLength(result.stdout + result.stderr)).toBeLessThan(baseline.totalBytes);
+  const detailed = await invoke([...args, '--detailed']);
+  expect(JSON.parse(detailed.stdout).requirements).toBe(current.requirements);
+  expect(detailed.exitCode).toBe(2);
+  current.lifecycle = 'running';
+  current.orchestrator.status = 'running';
+  Object.assign(current.orchestrator, { evidence: '/runtime/native-ack.json' });
+  const success = await invoke(args);
+  expect(JSON.parse(success.stdout)).toMatchObject({
+    outcome: 'succeeded',
+    lifecycle: 'running',
+    attemptStatus: 'running',
+  });
+  expect(JSON.parse(success.stdout).evidence).toBe('/runtime/native-ack.json');
+  expect(success.exitCode).toBe(0);
+  expect(startRun).toHaveBeenCalledTimes(3);
+});
+
+it('keeps hidden startup diagnostics readable without changing failed or successful work', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-start-output-')));
+  const config = {
+    root,
+    project: root,
+    file: join(root, '.epic-config.json'),
+    slots: [],
+    worktrees: false,
+    base: 'main',
+  };
+  vi.mocked(loadFleetConfig).mockReturnValue(config);
+  const home = join(root, '.runtime', createHash('sha256').update(config.file).digest('hex'));
+  const message =
+    'agy capability probe failed: ' + 'TERMINAL-DETAIL '.repeat(200) + 'api_key=do-not-save';
+  const args = ['start', '7', '--provider', 'agy', '--type', 'issue'];
+  try {
+    vi.mocked(startRun).mockRejectedValue(new Error(message));
+    const failed = await invoke(args);
+    if (process.env.PC_CAPTURE_START_ERROR) {
+      writeFileSync(
+        new URL('./fixtures/concise-output/start-error-baseline.json', import.meta.url),
+        JSON.stringify(
+          {
+            message,
+            stdoutBytes: Buffer.byteLength(failed.stdout),
+            stderrBytes: Buffer.byteLength(failed.stderr),
+            totalBytes: Buffer.byteLength(failed.stdout + failed.stderr),
+            exitCode: failed.exitCode,
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+      return;
+    }
+    if (process.env.PC_MEASURE_START)
+      writeFileSync(
+        '/tmp/pc-106-context/start-error-after.json',
+        JSON.stringify({
+          stdoutBytes: Buffer.byteLength(failed.stdout),
+          stderrBytes: Buffer.byteLength(failed.stderr),
+          totalBytes: Buffer.byteLength(failed.stdout + failed.stderr),
+        }),
+      );
+    const value = JSON.parse(failed.stdout);
+    expect(value).toMatchObject({
+      outcome: 'failed',
+      status: 'unknown',
+      error: 'agy capability probe failed; inspect diagnostics and authentication/configuration',
+    });
+    expect(failed.stdout + failed.stderr).not.toContain('TERMINAL-DETAIL');
+    expect(failed.exitCode).toBe(2);
+    expect(failed.stderr).toBe('');
+    const saved = JSON.parse(readFileSync(value.diagnostics[0].path, 'utf8'));
+    expect(saved).toMatchObject({ command: 'start', subject: 'org/repo#7' });
+    expect(saved.invocation).toBeTruthy();
+    expect(saved.error).toContain('TERMINAL-DETAIL');
+    expect(saved.error).not.toContain('do-not-save');
+    const current = structuredClone(outputRegistry().runs[0]);
+    current.lifecycle = 'running';
+    current.orchestrator.status = 'running';
+    Object.assign(current.orchestrator, { error: message });
+    vi.mocked(startRun).mockResolvedValue(current as never);
+    const success = await invoke(args);
+    expect(JSON.parse(success.stdout)).toMatchObject({
+      outcome: 'succeeded',
+      lifecycle: 'running',
+    });
+    expect(success.exitCode).toBe(0);
+    const startupError =
+      'Error: Agy exited before native acknowledgement; inspect terminal and authentication/configuration at tmux:%12: ' +
+      'SAVED-TERMINAL '.repeat(100);
+    Object.assign(current.orchestrator, { error: startupError });
+    const registryPath = join(home, 'registry.json');
+    writeFileSync(registryPath, JSON.stringify({ runs: [current] }));
+    const count = readdirSync(home).length;
+    const existing = JSON.parse((await invoke(args)).stdout);
+    expect(existing.diagnostics).toEqual([
+      { path: registryPath, run: 'run-1', attempt: 'attempt-current' },
+    ]);
+    expect(readdirSync(home).length).toBe(count);
+    vi.mocked(inspectRuns).mockReturnValue({
+      ...structuredClone(fixture),
+      runs: [current],
+    } as never);
+    const status = await invoke(['status']);
+    expect(status.stdout).not.toContain('SAVED-TERMINAL');
+    expect(status.stdout).toContain(registryPath);
+    // A non-directory at the existing runtime home forces a real filesystem save failure.
+    rmSync(home, { recursive: true, force: true });
+    writeFileSync(home, 'blocked storage');
+    const unavailable = await invoke(args);
+    const unavailableValue = JSON.parse(unavailable.stdout);
+    expect(unavailableValue.outcome).toBe('succeeded');
+    expect(unavailableValue.diagnosticSaveError).toBeTruthy();
+    expect(unavailableValue.diagnostics).toBeUndefined();
+    expect(unavailable.exitCode).toBe(0);
+    expect(unavailable.stderr).toBe('');
+    // Physical-root escape must fail independently of the business result.
+    rmSync(home);
+    const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), 'pc-outside-')));
+    try {
+      symlinkSync(elsewhere, home);
+      const escaped = JSON.parse((await invoke(args)).stdout);
+      expect(escaped.outcome).toBe('succeeded');
+      expect(escaped.diagnosticSaveError).toContain('symlink');
+      expect(escaped.diagnostics).toBeUndefined();
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
