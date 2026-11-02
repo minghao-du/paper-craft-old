@@ -61,6 +61,8 @@ export interface RunnerAdapter {
   name: string;
   /** Native adapters opt into a detached per-Run startup reconciler. */
   automaticStartup?: boolean;
+  /** Require separate activation with in-process startup reconciliation (controlled runners). */
+  separateActivation?: boolean;
   /** Recover exact continuation input without replaying uncertain delivery. */
   messageReceipt?(
     attempt: ManagedAttempt,
@@ -146,7 +148,7 @@ export async function startOrchestrator(
     role: 'orchestrator',
     runner: runner.name,
     persistent: !!runner.result,
-    ...(runner.automaticStartup ? { startupGate: true } : {}),
+    ...(runner.automaticStartup || runner.separateActivation ? { startupGate: true } : {}),
     brief,
     status: 'starting',
     created: new Date().toISOString(),

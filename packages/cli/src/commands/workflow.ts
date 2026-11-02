@@ -10,6 +10,7 @@ import {
 import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
 import { finishEpic } from '../workflow/epic-completion.js';
 import { landDelivery } from '@paper-craft/core/workflow/postmerge';
+import { registerStageCommands } from './workflow-stages.js';
 import { registerSubagentCommands } from './workflow-subagents.js';
 /** Portable workflow CLI shared by agents with filesystem and command execution access. */
 import { Command, Option } from 'commander';
@@ -158,6 +159,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       }),
     );
   registerSubagentCommands(workflow, opts);
+  registerStageCommands(workflow, opts);
   const orchestrator = workflow
     .command('orchestrator')
     .description('Create or inspect a subject-scoped managed Run');

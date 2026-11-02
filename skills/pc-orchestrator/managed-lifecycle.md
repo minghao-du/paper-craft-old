@@ -73,3 +73,35 @@ only successful publication completes the Run. Unknown writer ownership blocks r
 Run completion ends scheduling authority independently of execution exit. Resource release still requires verified termination of every execution occupying the checkout, including the independent Orchestrator.
 
 **Completion is verified when** existing Issue delivery or EPIC finalization gates record `completed`, supported dispatch and recovery reject its authority, and inspection still exposes retained Attempts and unresolved execution/resource occupancy. For agy, retain the Orchestrator conversation and window for inspection. The Launcher has no cleanup or monitoring duty. Later work uses a new Run and independent Orchestrator; resolve existing resource conflicts through the normal verified release gates.
+
+## CLI stage assignments
+
+The active Orchestrator selects each assignment. Write a JSON file containing `subject`
+(`owner/repo#number`), `role`, `stage`, `inputRevision` (current checkout Git HEAD),
+`brief`, `prerequisites` (accepted Dispatch IDs), and optional `checkout`.
+Run these commands with the authoritative config, Run and Orchestrator Attempt IDs:
+
+```bash
+pc workflow stage dispatch --config "$CONFIG" --run "$RUN" --authority "$ATTEMPT" --input assignment.json
+pc workflow stage inspect --config "$CONFIG" --run "$RUN" --authority "$ATTEMPT" --dispatch "$DISPATCH"
+pc workflow stage collect --config "$CONFIG" --run "$RUN" --authority "$ATTEMPT" --dispatch "$DISPATCH" --timeout-ms 1000
+pc workflow stage accept --config "$CONFIG" --run "$RUN" --authority "$ATTEMPT" --receipt "$RECEIPT" --decision decision.md
+```
+
+For EPIC planning, use role `epic`, stage `planning`. Review the collected immutable
+result against the assigned scope; write your acceptance rationale in `decision.md`.
+Acceptance independently verifies current Git HEAD, checkout ownership, evidence
+hashes and prerequisites. Other stages require their domain acceptance operation.
+**Done:** inspection reports `accepted` and the matching Receipt acknowledgement;
+startup or a reported result alone does not meet this criterion.
+
+For scoped correction, write the correction text to a file and use `stage message`
+with `--dispatch`, a stable `--message-id`, and `--brief <file>` plus the same common
+options. Collect with the same `--message-id` to identify the correction covered by the result, then inspect it before accepting. Use `stage retry`
+only after independent prior-execution termination; it retains the existing Dispatch
+and prior Attempts. Unknown occupancy blocks replacement.
+
+For an isolated model-free planning regression, run `pnpm exec tsx scripts/workflow-demo.ts`
+after building. Retain the reported temporary evidence directory. This demonstrates
+the controlled CLI/lifecycle chain, including duplicate-dispatch protection; it does
+not establish native model execution or scientific validity.
