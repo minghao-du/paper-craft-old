@@ -15,7 +15,7 @@ import { Command } from 'commander';
 import { afterEach, expect, it, vi } from 'vitest';
 import { registerWorkflowCommands } from '../../packages/cli/src/commands/workflow.js';
 import { outputRegistry } from './fixtures/concise-output/registry.js';
-import { inspectRuns, startRun } from '@paper-craft/core/workflow/run-driver';
+import { inspectRuns, startRun, recoverRun } from '@paper-craft/core/workflow/run-driver';
 
 const fixture = JSON.parse(JSON.stringify(outputRegistry()));
 vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
@@ -319,6 +319,175 @@ it('keeps hidden startup diagnostics readable without changing failed or success
     } finally {
       rmSync(elsewhere, { recursive: true, force: true });
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it('reports Recover outcome, current evidence and uncertainty without changing recovery in detailed mode', async () => {
+  const current = structuredClone(outputRegistry().runs[0]);
+  vi.mocked(inspectRuns).mockReturnValue({ ...structuredClone(fixture), runs: [current] } as never);
+  vi.mocked(recoverRun).mockClear();
+  vi.mocked(recoverRun).mockResolvedValue({
+    blockers: ['Occupancy unknown'],
+    pendingDispatches: ['pending-0'],
+  });
+  const blocked = await invoke(['recover', 'run-1']);
+  expect(JSON.parse(blocked.stdout)).toMatchObject({
+    outcome: 'blocked',
+    blockers: ['Occupancy unknown'],
+    pendingDispatches: ['pending-0'],
+    inspection: {
+      run: 'run-1',
+      lifecycle: 'blocked',
+      attempt: 'attempt-current',
+      attemptStatus: 'unknown',
+      context: { path: '/runtime/context.md', hash: 'context-hash' },
+    },
+    observation: { status: 'unknown', evidence: 'Cannot establish occupancy' },
+    reconciliation: current.reconciliation,
+  });
+  expect(blocked.exitCode).toBe(2);
+  expect(blocked.stderr).toBe('');
+  expect(blocked.stdout).not.toContain('IMMUTABLE-BRIEF-BODY');
+  if (process.env.PC_MEASURE_RECOVER)
+    writeFileSync(
+      '/tmp/pc-106-context/recover-after.json',
+      JSON.stringify({
+        stdoutBytes: Buffer.byteLength(blocked.stdout),
+        stderrBytes: Buffer.byteLength(blocked.stderr),
+        totalBytes: Buffer.byteLength(blocked.stdout + blocked.stderr),
+      }),
+    );
+  current.lifecycle = 'running';
+  current.orchestrator.status = 'running';
+  current.reconciliation.blockers = [];
+  Object.assign(current.orchestrator, { evidence: '/runtime/recovery-ack.json' });
+  vi.mocked(recoverRun).mockResolvedValue({ blockers: [], pendingDispatches: ['pending-0'] });
+  const success = await invoke(['recover', 'run-1', '--replace']);
+  expect(JSON.parse(success.stdout)).toMatchObject({
+    outcome: 'succeeded',
+    blockers: [],
+    inspection: { lifecycle: 'running', attemptStatus: 'running' },
+  });
+  expect(JSON.parse(success.stdout).evidence).toBe('/runtime/recovery-ack.json');
+  expect(success.exitCode).toBe(0);
+  expect(success.stderr).toBe('');
+  const detailed = await invoke(['recover', 'run-1', '--replace', '--detailed']);
+  expect(JSON.parse(detailed.stdout)).toEqual(JSON.parse(success.stdout));
+  expect(detailed.exitCode).toBe(0);
+  expect(detailed.stderr).toBe('');
+  expect(recoverRun).toHaveBeenCalledTimes(3);
+  expect(vi.mocked(recoverRun).mock.calls[1][3]).toMatchObject({ replaceOrchestrator: true });
+  expect(vi.mocked(recoverRun).mock.calls[2][3]).toMatchObject({ replaceOrchestrator: true });
+});
+
+it('keeps Recover diagnostic failures separate from recovery and preserves current state on errors', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-recover-output-')));
+  const config = {
+    root,
+    project: root,
+    file: join(root, '.epic-config.json'),
+    slots: [],
+    worktrees: false,
+    base: 'main',
+  };
+  vi.mocked(loadFleetConfig).mockReturnValue(config);
+  const current = structuredClone(outputRegistry().runs[0]);
+  current.lifecycle = 'running';
+  current.orchestrator.status = 'running';
+  const message = 'agy capability probe failed: ' + 'RECOVER-TERMINAL '.repeat(200);
+  vi.mocked(inspectRuns).mockReturnValue({ ...structuredClone(fixture), runs: [current] } as never);
+  try {
+    vi.mocked(recoverRun).mockRejectedValue(new Error(message));
+    const failed = await invoke(['recover', 'run-1']);
+    if (process.env.PC_CAPTURE_RECOVER_ERROR) {
+      writeFileSync(
+        new URL('./fixtures/concise-output/recover-error-baseline.json', import.meta.url),
+        JSON.stringify(
+          {
+            message,
+            stdoutBytes: Buffer.byteLength(failed.stdout),
+            stderrBytes: Buffer.byteLength(failed.stderr),
+            totalBytes: Buffer.byteLength(failed.stdout + failed.stderr),
+            exitCode: failed.exitCode,
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+      return;
+    }
+    const value = JSON.parse(failed.stdout);
+    expect(value).toMatchObject({
+      outcome: 'failed',
+      status: 'unknown',
+      inspection: { run: 'run-1', lifecycle: 'running', attemptStatus: 'running' },
+    });
+    expect(failed.stdout + failed.stderr).not.toContain('RECOVER-TERMINAL');
+    expect(failed.exitCode).toBe(2);
+    expect(failed.stderr).toBe('');
+    const saved = JSON.parse(readFileSync(value.diagnostics[0].path, 'utf8'));
+    expect(saved).toMatchObject({
+      command: 'recover',
+      run: 'run-1',
+      attempt: 'attempt-current',
+      error: message,
+    });
+    expect(saved.invocation).toBeTruthy();
+    if (process.env.PC_MEASURE_RECOVER)
+      writeFileSync(
+        '/tmp/pc-106-context/recover-error-after.json',
+        JSON.stringify({
+          stdoutBytes: Buffer.byteLength(failed.stdout),
+          stderrBytes: Buffer.byteLength(failed.stderr),
+          totalBytes: Buffer.byteLength(failed.stdout + failed.stderr),
+        }),
+      );
+    const detailed = await invoke(['recover', 'run-1', '--detailed']);
+    expect(JSON.parse(detailed.stdout).error).toBe(message);
+    expect(detailed.exitCode).toBe(2);
+    expect(detailed.stderr).toBe('');
+    const blocker = 'worker-1: Error: Startup failed at tmux:%12: ' + 'BLOCKER-DETAIL '.repeat(100);
+    vi.mocked(recoverRun).mockResolvedValue({
+      blockers: [blocker],
+      pendingDispatches: ['pending-0'],
+    });
+    const blocked = await invoke(['recover', 'run-1']);
+    expect(JSON.parse(blocked.stdout).blockers).toEqual([
+      'worker-1: Error: Startup failed at tmux:%12',
+    ]);
+    expect(blocked.stdout + blocked.stderr).not.toContain('BLOCKER-DETAIL');
+    expect(
+      JSON.parse(readFileSync(JSON.parse(blocked.stdout).diagnostics[0].path, 'utf8')).error,
+    ).toBe(blocker);
+    expect(blocked.exitCode).toBe(2);
+    expect(blocked.stderr).toBe('');
+    // Successful reconciliation may retain an old diagnostic, without changing its outcome.
+    Object.assign(current.orchestrator, { error: message });
+    vi.mocked(recoverRun).mockResolvedValue({ blockers: [], pendingDispatches: [] });
+    const home = join(root, '.runtime', createHash('sha256').update(config.file).digest('hex'));
+    const registryPath = join(home, 'registry.json');
+    writeFileSync(registryPath, JSON.stringify({ runs: [current] }));
+    const before = readdirSync(home).length;
+    const success = await invoke(['recover', 'run-1']);
+    expect(JSON.parse(success.stdout)).toMatchObject({
+      outcome: 'succeeded',
+      diagnostics: [{ path: registryPath, run: 'run-1', attempt: 'attempt-current' }],
+    });
+    expect(success.stdout + success.stderr).not.toContain('RECOVER-TERMINAL');
+    expect(success.exitCode).toBe(0);
+    expect(readdirSync(home).length).toBe(before);
+    rmSync(home, { recursive: true });
+    writeFileSync(home, 'blocked storage');
+    const unavailable = await invoke(['recover', 'run-1']);
+    expect(JSON.parse(unavailable.stdout)).toMatchObject({
+      outcome: 'succeeded',
+      diagnosticSaveError: expect.any(String),
+    });
+    expect(JSON.parse(unavailable.stdout).diagnostics).toBeUndefined();
+    expect(unavailable.exitCode).toBe(0);
+    expect(unavailable.stderr).toBe('');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

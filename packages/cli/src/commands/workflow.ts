@@ -284,25 +284,94 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     orchestrator
       .command('recover <run>')
-      .description('Recover late startup evidence without relaunch; preserve unknown occupancy')
+      .description('Recover late startup evidence; report concise outcome and retained occupancy')
+      .option('--detailed', 'Return the complete current structured result; logs remain referenced')
       .option('--replace', 'Replace Orchestrator only after verified termination'),
   ).action(async (id: string, options: Options & { replace?: boolean }) => {
+    let config: FleetConfig | undefined;
+    let current: WorkflowRun | undefined;
     try {
-      const config = loadFleetConfig(options.config);
-      const run = inspectRuns(config).runs.find((run) => run.id === id);
-      if (!run) throw new Error('Unknown Run');
-      const runner = managedRunner(run.provider);
+      config = loadFleetConfig(options.config);
+      current = inspectRuns(config).runs.find((run) => run.id === id);
+      if (!current) throw new Error('Unknown Run');
+      const runner = managedRunner(current.provider);
       const result = await recoverRun(config, runner, id, {
         replaceOrchestrator: options.replace,
         stopped: (attempt) => runner.stopped(attempt),
       });
-      const current = inspectRuns(config).runs.find((entry) => entry.id === id)!;
-      output({ ...result, inspection: await inspection(current, config.file) }, opts.human());
+      current = inspectRuns(config).runs.find((entry) => entry.id === id)!;
+      const diagnostics = [current.orchestrator?.error, ...result.blockers]
+        .filter((error): error is string => !!error && conciseError(error) !== error)
+        .map((error) =>
+          diagnosticError(config, error, {
+            command: 'recover',
+            run: id,
+            attempt: current?.orchestrator?.id,
+          }),
+        );
+      output(
+        {
+          ...result,
+          blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
+          inspection: await inspection(current, config.file, !!options.detailed),
+          ...(diagnostics.length
+            ? {
+                diagnostics: diagnostics.some((entry) => entry.diagnostics?.length)
+                  ? diagnostics.map((entry) => entry.diagnostics ?? []).flat()
+                  : undefined,
+                diagnosticSaveError:
+                  diagnostics
+                    .map((entry) => entry.diagnosticSaveError)
+                    .filter(Boolean)
+                    .join('; ') || undefined,
+              }
+            : {}),
+          outcome: result.blockers.length ? 'blocked' : 'succeeded',
+          observation: current.orchestrator?.observation,
+          evidence: current.orchestrator?.evidence,
+          reconciliation: current.reconciliation
+            ? {
+                ...current.reconciliation,
+                blockers: options.detailed
+                  ? current.reconciliation.blockers
+                  : current.reconciliation.blockers.map(conciseError),
+              }
+            : undefined,
+        },
+        opts.human(),
+      );
       if (result.blockers.length) process.exitCode = 2;
     } catch (error) {
-      run(() => {
-        throw error;
-      });
+      // Recovery may have persisted new state before failing. Inspect without retrying work.
+      if (config) {
+        try {
+          current = inspectRuns(config).runs.find((entry) => entry.id === id) ?? current;
+        } catch {
+          /* Retain the last verified state; failure is not evidence of termination. */
+        }
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      output(
+        {
+          outcome: 'failed',
+          status: 'unknown',
+          ...(current && config
+            ? {
+                inspection: await inspection(current, config.file, !!options.detailed),
+                observation: current.orchestrator?.observation,
+                evidence: current.orchestrator?.evidence,
+              }
+            : {}),
+          ...diagnosticError(config, message, {
+            command: 'recover',
+            run: id,
+            attempt: current?.orchestrator?.id,
+          }),
+          ...(options.detailed ? { error: message } : {}),
+        },
+        opts.human(),
+      );
+      process.exitCode = 2;
     }
   });
   configured(
