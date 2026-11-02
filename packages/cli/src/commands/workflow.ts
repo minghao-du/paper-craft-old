@@ -3,6 +3,7 @@ import {
   inspectRuns,
   recoverRun,
   orchestratorForSubject,
+  type WorkflowRun,
 } from '@paper-craft/core/workflow/run-driver';
 import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
 import { finishEpic } from '../workflow/epic-completion.js';
@@ -48,6 +49,33 @@ function run(action: () => void): void {
   }
 }
 
+async function inspection(run: WorkflowRun, config: string) {
+  const attempt = run.orchestrator;
+  let usable = false;
+  if (attempt?.address && attempt.terminalSession) {
+    try {
+      const observation = await managedRunner(run.provider).observe?.(attempt);
+      usable = !!observation && ['running', 'idle', 'waiting'].includes(observation.status);
+    } catch {
+      /* Unverified terminals remain inspectable through evidence only. */
+    }
+  }
+  return {
+    run: run.id,
+    lifecycle: run.lifecycle,
+    attempt: attempt?.id,
+    attemptStatus: attempt?.status,
+    cause: attempt?.error,
+    evidenceDirectory: attempt?.directory,
+    context: run.brief,
+    statusCommand: `pc workflow orchestrator status --config ${quote(config)}`,
+    recoverCommand: `pc workflow orchestrator recover ${run.id} --config ${quote(config)}`,
+    ...(usable
+      ? { attachCommand: `tmux attach-session -t ${quote(attempt!.terminalSession!)}` }
+      : {}),
+  };
+}
+
 /** Register workflow file operations and read-only fleet checks, with JSON output by default. */
 export function registerWorkflowCommands(program: Command, opts: { human: () => boolean }): void {
   const workflow = program
@@ -68,9 +96,25 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     .description('Create or inspect a subject-scoped managed Run');
   configured(
     orchestrator.command('status').description('Read Fleet Run and Orchestrator ownership'),
-  ).action((options: Options) =>
-    run(() => output(inspectRuns(loadFleetConfig(options.config)), opts.human())),
-  );
+  ).action(async (options: Options) => {
+    try {
+      const config = loadFleetConfig(options.config);
+      const registry = inspectRuns(config);
+      output(
+        {
+          ...registry,
+          inspection: await Promise.all(
+            registry.runs.map((entry) => inspection(entry, config.file)),
+          ),
+        },
+        opts.human(),
+      );
+    } catch (error) {
+      run(() => {
+        throw error;
+      });
+    }
+  });
   configured(
     orchestrator
       .command('start <issue>')
@@ -124,13 +168,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         output(
           {
             ...result,
-            statusCommand: `pc workflow orchestrator status --config ${quote(config.file)}`,
-            recoverCommand: `pc workflow orchestrator recover ${result.id} --config ${quote(config.file)}`,
-            ...(result.orchestrator?.address && result.orchestrator.terminalSession
-              ? {
-                  attachCommand: `tmux attach-session -t ${quote(result.orchestrator.terminalSession)}`,
-                }
-              : {}),
+            ...(await inspection(result, config.file)),
           },
           opts.human(),
         );
@@ -145,7 +183,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     orchestrator
       .command('recover <run>')
-      .description('Reconcile durable results and startup identity; preserve unknown occupancy')
+      .description('Recover late startup evidence without relaunch; preserve unknown occupancy')
       .option('--replace', 'Replace Orchestrator only after verified termination'),
   ).action(async (id: string, options: Options & { replace?: boolean }) => {
     try {
@@ -157,7 +195,8 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         replaceOrchestrator: options.replace,
         stopped: (attempt) => runner.stopped(attempt),
       });
-      output(result, opts.human());
+      const current = inspectRuns(config).runs.find((entry) => entry.id === id)!;
+      output({ ...result, inspection: await inspection(current, config.file) }, opts.human());
       if (result.blockers.length) process.exitCode = 2;
     } catch (error) {
       run(() => {
