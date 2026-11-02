@@ -167,11 +167,10 @@ export async function startOrchestrator(
       attempt: attempt.id,
       briefHash: createHash('sha256').update(brief).digest('hex'),
     };
-    attempt.brief += initializationInstructions(attempt.initialization, directory);
+    if (runner.name !== 'agy')
+      attempt.brief += initializationInstructions(attempt.initialization, directory);
   }
   save(path, attempt);
-  if (runner.name === 'agy')
-    attempt.brief += `\nManaged Orchestrator assignment: Run ${run}, Attempt ${attempt.id}, config ${config.file}. Read pc-orchestrator's managed branch and its agy reference. After writing initialization.json and native ready acknowledgement, end this turn. A separate activation message will resume this exact Attempt after committed Run activation. Initialization does not dispatch work.\n`;
   writeFileSync(join(directory, 'brief.md'), attempt.brief, { mode: 0o600 });
   try {
     const receipt = await runner.start(attempt);

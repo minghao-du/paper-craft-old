@@ -536,7 +536,12 @@ test('children use separate exact panes in their Run session and cancellation le
     });
     await Promise.all(attempts.map((a) => expect(adapter.start(a)).rejects.toThrow(/exited/)));
     for (const attempt of attempts) {
-      expect(readFileSync(join(attempt.directory, 'startup.md'), 'utf8')).toBe(attempt.brief);
+      const startup = readFileSync(join(attempt.directory, 'startup.md'), 'utf8');
+      expect(startup).not.toContain(attempt.brief);
+      expect(startup).toContain(join(attempt.directory, 'startup-assignment.md'));
+      expect(readFileSync(join(attempt.directory, 'startup-assignment.md'), 'utf8')).toBe(
+        attempt.brief,
+      );
       expect(
         createHash('sha256')
           .update(readFileSync(join(attempt.directory, 'brief.md')))
@@ -632,10 +637,35 @@ test.each([false, true])(
       if (a[0] === 'capture-pane') return 'Login required';
       return '';
     });
-    const persisted = { ...attempt };
+    const contextPath = join(directory, 'context.md');
+    writeFileSync(contextPath, attempt.brief);
+    const initialization = {
+      registry: join(directory, 'registry.json'),
+      authority: attempt.id,
+      run: attempt.run,
+      subject: 'owner/repo#1',
+      role: attempt.role,
+      attempt: attempt.id,
+      briefHash: createHash('sha256').update(attempt.brief).digest('hex'),
+      context: {
+        path: contextPath,
+        hash: createHash('sha256').update(attempt.brief).digest('hex'),
+      },
+    };
+    const managed = { ...attempt, initialization, startupGate: true };
+    const persisted = { ...managed };
     try {
-      await expect(new AgyInteractive().start(attempt)).rejects.toThrow(/Login required/);
-      expect(readFileSync(join(directory, 'startup.md'), 'utf8')).toBe(attempt.brief);
+      await expect(new AgyInteractive().start(managed)).rejects.toThrow(/Login required/);
+      const startup = readFileSync(join(directory, 'startup.md'), 'utf8');
+      expect(startup).not.toContain('Task payload');
+      expect(startup).not.toContain('startup-assignment.md');
+      expect(startup).toContain('End this turn immediately');
+      expect(startup.indexOf('## Steps')).toBeLessThan(
+        startup.indexOf('## Initialization payload'),
+      );
+      const payload = startup.match(/```json\n([\s\S]*?)\n```/)![1];
+      expect(JSON.parse(payload)).toEqual(initialization);
+      expect(readFileSync(contextPath, 'utf8')).toBe(attempt.brief);
       const submitted = readFileSync(join(directory, 'agy-input.txt'), 'utf8');
       expect(submitted).toContain(join(directory, 'startup.md'));
       expect(submitted).toContain(attempt.id);
@@ -646,7 +676,7 @@ test.each([false, true])(
           "'--dangerously-skip-permissions'",
         ),
       ).toBe(dangerouslySkipPermissions);
-      expect(attempt).toMatchObject({
+      expect(managed).toMatchObject({
         address: 'tmux:%401',
         terminalSession: 'pc-run-run-independent',
         paneId: '%401',

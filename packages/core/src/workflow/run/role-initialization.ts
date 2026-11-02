@@ -27,12 +27,19 @@ const workerPhases = [
 ];
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
+/** Required role artifacts, shared by inline and file-based startup instructions. */
+export function roleArtifactInstructions(expected: RoleInitialization): string {
+  return expected.role === 'worker'
+    ? `Write actual checkout .epic-status.json (numeric issue=${Number(expected.subject.split('#').at(-1))}, phase from ${workerPhases.join(', ')}, nonempty summary, UTC updated_at at or after launch) and append a timestamped startup entry containing this Attempt id to .epic-worklog.md.`
+    : '';
+}
+
 /** Append the one authoritative startup evidence instruction to a complete brief. */
 export function initializationInstructions(
   expected: RoleInitialization,
   directory: string,
 ): string {
-  return `\nRole initialization gate: read the immutable context at ${expected.context.path}. Initialize your assigned role before proceeding. Write ${join(directory, 'initialization.json')} atomically with these exact assignment fields: ${JSON.stringify(expected)}. These fields acknowledge role/scope and the exact context you initialized; they are not a task completion receipt. For worker, also write actual checkout .epic-status.json (numeric issue=${Number(expected.subject.split('#').at(-1))}, phase from ${workerPhases.join(', ')}, nonempty summary, UTC updated_at at or after launch) and append a timestamped startup entry containing this Attempt id to .epic-worklog.md. Never claim ready without these files.\n`;
+  return `\nRole initialization gate: read the immutable context at ${expected.context.path}. Initialize your assigned role before proceeding. Write ${join(directory, 'initialization.json')} atomically with these exact assignment fields: ${JSON.stringify(expected)}. These fields acknowledge role/scope and the exact context you initialized; they are not a task completion receipt. ${roleArtifactInstructions(expected)} Never claim ready without these files.\n`;
 }
 
 /** Verify the assignment-bound evidence and existing role artifacts; missing facts stay pending. */

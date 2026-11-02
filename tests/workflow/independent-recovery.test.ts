@@ -10,6 +10,7 @@ import {
 } from '../../packages/core/src/workflow/run/run-driver.js';
 import type { ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
 import { initializeRole } from './initialize-role.js';
+import { buildAgyStartupDocument } from '../../packages/core/src/workflow/runtime/agy-startup-document.js';
 
 function fixture() {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-recovery-')));
@@ -117,9 +118,14 @@ test('replacement clears stale startup state, inherits requirements, and binds f
     expect(current.orchestrator?.predecessor).toBe(run.orchestratorId);
     expect(current.orchestrator?.error).toBeUndefined();
     expect(current.orchestrator?.brief).toContain('retain source data');
-    expect(current.orchestrator?.brief).toContain(
-      'end this turn and await a separate activation message',
-    );
+    const attempt = current.orchestrator!;
+    const assignment = join(attempt.directory, 'startup-assignment.md');
+    const startup = buildAgyStartupDocument(attempt, assignment);
+    expect(startup).toContain(assignment);
+    expect(startup).toContain(attempt.initialization!.context.path);
+    expect(startup).not.toContain(attempt.brief);
+    expect(attempt.brief).toContain('Do not replay the original brief or repeat accepted work');
+    expect(startup).toContain('emit a separate assistant text line exactly [pc ready');
     expect(current.orchestrator?.initialization?.briefHash).not.toBe(
       run.orchestrator?.initialization?.briefHash,
     );

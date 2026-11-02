@@ -542,7 +542,8 @@ export async function dispatchStage(
     };
     if (attempt.initialization) {
       attempt.initialization.attempt = attempt.id;
-      attempt.brief += initializationInstructions(attempt.initialization, attempt.directory);
+      if (runner.name !== 'agy')
+        attempt.brief += initializationInstructions(attempt.initialization, attempt.directory);
     }
     const next: StageDispatch = {
       ...request,
@@ -786,7 +787,8 @@ export async function retryStage(
     };
     if (next.initialization) {
       next.initialization = { ...next.initialization, attempt: next.id };
-      next.brief += initializationInstructions(next.initialization, next.directory);
+      if (runner.name !== 'agy')
+        next.brief += initializationInstructions(next.initialization, next.directory);
     }
     current.attempts.push(next);
     current.lifecycle = 'reserved';
@@ -979,13 +981,12 @@ export async function recoverRun(
         authority: replacement.id,
         briefHash: createHash('sha256').update(replacement.brief).digest('hex'),
       };
-      replacement.brief += initializationInstructions(
-        replacement.initialization,
-        replacement.directory,
-      );
+      if (runner.name !== 'agy')
+        replacement.brief += initializationInstructions(
+          replacement.initialization,
+          replacement.directory,
+        );
     }
-    if (runner.name === 'agy')
-      replacement.brief += `\nManaged Orchestrator assignment: Run ${runId}, Attempt ${replacement.id}, config ${config.file}. After writing initialization and native ready acknowledgement, end this turn and await a separate activation message before scheduling. Initialization does not dispatch work.\n`;
     writeFileSync(join(replacement.directory, 'brief.md'), replacement.brief, {
       mode: 0o400,
       flag: 'wx',

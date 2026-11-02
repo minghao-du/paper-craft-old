@@ -1,5 +1,6 @@
 import { refreshStartupAttempt, roleInitializationReady } from '../run/role-initialization.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { buildAgyStartupDocument } from './agy-startup-document.js';
 import { homedir } from 'node:os';
 /** Agy native hooks correlate persistent TUI turns with durable dispatches. */
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -199,7 +200,7 @@ export class AgyInteractive {
     try {
       if (readFileSync(path, 'utf8') !== brief)
         throw new Error(
-          'content does not match the current Attempt brief; preserve evidence and inspect the assignment',
+          'content does not match the current Attempt startup instructions; preserve evidence and inspect the assignment',
         );
     } catch (error) {
       throw new Error(`Cannot read or verify agy startup document ${path}: ${String(error)}`, {
@@ -212,17 +213,28 @@ export class AgyInteractive {
     if (!a.run) throw new Error('Agy child requires Run ownership');
     const session = `pc-run-${a.run}`;
     const startup = join(a.directory, 'startup.md');
+    const context = a.initialization?.context;
+    const assignmentPath =
+      context && createHash('sha256').update(a.brief).digest('hex') === context.hash
+        ? context.path
+        : join(a.directory, 'startup-assignment.md');
+    const document = buildAgyStartupDocument(a, assignmentPath);
     try {
-      if (!existsSync(startup)) {
-        const pending = join(a.directory, `startup-${randomUUID()}.tmp`);
-        try {
-          writeFileSync(pending, a.brief, { mode: 0o400, flag: 'wx' });
-          linkSync(pending, startup);
-        } finally {
-          if (existsSync(pending)) unlinkSync(pending);
+      for (const [path, content] of [
+        ...(assignmentPath !== context?.path ? [[assignmentPath, a.brief]] : []),
+        [startup, document],
+      ]) {
+        if (!existsSync(path)) {
+          const pending = join(a.directory, `startup-${randomUUID()}.tmp`);
+          try {
+            writeFileSync(pending, content, { mode: 0o400, flag: 'wx' });
+            linkSync(pending, path);
+          } finally {
+            if (existsSync(pending)) unlinkSync(pending);
+          }
         }
+        this.verifyStartup(path, content);
       }
-      this.verifyStartup(startup, a.brief);
     } catch (error) {
       throw new Error(
         `Cannot publish or verify agy startup document ${startup}: ${String(error)}`,
@@ -300,15 +312,7 @@ export class AgyInteractive {
         },
       }),
     );
-    const delivered =
-      `Run ${a.run}, role ${a.role}, Attempt ${a.id}. Read the complete startup document at ${JSON.stringify(startup)} and follow all its assignment and initialization instructions before acknowledging readiness.` +
-      '\nBefore doing further work, acknowledge applicable role/project initialization and durable-state inspection with [pc ready role=' +
-      a.role +
-      ' attempt=' +
-      a.id +
-      (a.startupGate
-        ? ']. End this turn immediately and await a separate activation message. Do not poll for activation in this turn.'
-        : ']. Then perform only the assigned work.');
+    const delivered = `Run ${a.run}, role ${a.role}, Attempt ${a.id}. Read the complete startup document at ${JSON.stringify(startup)} and follow its steps.`;
     writeFileSync(join(a.directory, 'agy-input.txt'), delivered);
     const args = [
       'agy',
@@ -370,7 +374,8 @@ export class AgyInteractive {
       }),
     );
     execFileSync('tmux', ['set-option', '-p', '-t', this.address(a), 'remain-on-exit', 'on']);
-    this.verifyStartup(startup, a.brief);
+    this.verifyStartup(startup, document);
+    if (assignmentPath !== context?.path) this.verifyStartup(assignmentPath, a.brief);
     writeFileSync(join(a.directory, 'agy-launch-ready'), 'ready', { flag: 'wx' });
     for (let n = 0; n < 600; n++) {
       const receipt = await this.recoverReceipt(a);
