@@ -42,8 +42,8 @@ Commands:
                                     resource ownership
   start [options] <issue>           Create or reconnect a Run; report concise
                                     startup state
-  recover [options] <run>           Recover late startup evidence without
-                                    relaunch; preserve unknown occupancy
+  recover [options] <run>           Recover late startup evidence; report
+                                    concise outcome and retained occupancy
   recover-all [options]             Reconcile each incomplete Run; report
                                     unowned work as blocked
   finalize-epic [options] <number>  Assess EPIC delivery; finalize specialists
@@ -73,9 +73,11 @@ Options:
 exports[`publishes orchestrator recover help 1`] = `
 "Usage: pc workflow orchestrator recover [options] <run>
 
-Recover late startup evidence without relaunch; preserve unknown occupancy
+Recover late startup evidence; report concise outcome and retained occupancy
 
 Options:
+  --detailed       Return the complete current structured result; logs remain
+                   referenced
   --replace        Replace Orchestrator only after verified termination
   --config <file>  Authoritative Fleet configuration (default:
                    ".epic-config.json")
