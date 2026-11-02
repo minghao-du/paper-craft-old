@@ -38,8 +38,8 @@ Options:
   -h, --help                        display help for command
 
 Commands:
-  status [options]                  Read Run lifecycle, retained execution state
-                                    and resource ownership
+  status [options]                  Read concise current Runs, pending work and
+                                    resource ownership
   start [options] <issue>           Create or reconnect a Run from configured
                                     repository context
   recover [options] <run>           Recover late startup evidence without
@@ -115,9 +115,11 @@ Options:
 exports[`publishes orchestrator status help 1`] = `
 "Usage: pc workflow orchestrator status [options]
 
-Read Run lifecycle, retained execution state and resource ownership
+Read concise current Runs, pending work and resource ownership
 
 Options:
+  --detailed       Return the complete current structured result; logs remain
+                   referenced
   --config <file>  Authoritative Fleet configuration (default:
                    ".epic-config.json")
   -h, --help       display help for command

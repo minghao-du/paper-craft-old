@@ -88,7 +88,7 @@ Standalone delivery ends here; an EPIC child returns its evidence to [integrated
 
 ## Failure and resume
 
-Read the persisted Run and inspect status before scheduling after a reconnect.
+Read the persisted Run and inspect status before scheduling after a reconnect. Follow the [shared output and Evidence rules](managed-lifecycle.md) when querying or expanding status.
 Use [managed recovery](managed-lifecycle.md) for receipt reconciliation, bounded rework, termination verification and ownership release.
 
 ```bash

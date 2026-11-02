@@ -1,0 +1,35 @@
+[
+  {
+    "args": [
+      "status"
+    ],
+    "exitCode": 0,
+    "stdoutBytes": 354200,
+    "stderrBytes": 0,
+    "totalBytes": 354200
+  },
+  {
+    "args": [
+      "start",
+      "7",
+      "--provider",
+      "agy",
+      "--type",
+      "issue"
+    ],
+    "exitCode": 2,
+    "stdoutBytes": 15560,
+    "stderrBytes": 0,
+    "totalBytes": 15560
+  },
+  {
+    "args": [
+      "recover",
+      "run-1"
+    ],
+    "exitCode": 2,
+    "stdoutBytes": 460,
+    "stderrBytes": 0,
+    "totalBytes": 460
+  }
+]
