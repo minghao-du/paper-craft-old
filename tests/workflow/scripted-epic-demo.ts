@@ -97,6 +97,10 @@ export async function prepareScriptedEpic(native?: RunnerAdapter, brief?: string
         evidence: join(a.directory, 'initialization.json'),
       };
     },
+    async messageReceipt(a: ManagedAttempt, message: { id: string; brief: string }) {
+      if (native && a.role === 'orchestrator') return native.messageReceipt?.(a, message);
+      return activated.has(a.id) ? join(a.directory, 'activation.json') : undefined;
+    },
     async send(a: ManagedAttempt, message: { id: string; brief: string }) {
       if (native && a.role === 'orchestrator') return native.send!(a, message);
       activated.add(a.id);
@@ -142,7 +146,9 @@ export async function prepareScriptedEpic(native?: RunnerAdapter, brief?: string
       body: brief ?? 'Change a tiny file using retained evidence.',
     },
     runner.name,
-    'Only isolated toy files. No network or scientific work.',
+    native
+      ? 'Only isolated toy files. Loopback demo endpoint only; no external network or scientific work.'
+      : 'Only isolated toy files. No network or scientific work.',
   );
   await reconcileStartup(config, runner, run.id);
   let requestNumber = 0;
