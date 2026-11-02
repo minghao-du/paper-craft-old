@@ -92,3 +92,8 @@ and any experiment execution with the caller.
 
 **Done:** The written state matches the brief, navigation resolves or has reported
 gaps, and every deferred update is accounted for.
+
+For explicit managed dispatch, acceptance and finalization commands, follow
+`managed-lifecycle.md` in the installed `/pc-orchestrator` skill directory. Use
+accepted correlated results and the current integrated version before reporting
+completion.

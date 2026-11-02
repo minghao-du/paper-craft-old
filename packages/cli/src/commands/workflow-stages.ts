@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /** Public Orchestrator-requested stage lifecycle; task choice remains with the caller. */
 import { Command } from 'commander';
 import { readFileSync, realpathSync } from 'node:fs';
@@ -7,6 +8,9 @@ import { loadFleetConfig, type FleetConfig } from '@paper-craft/core/workflow/fl
 import { managedRunner } from '@paper-craft/core/workflow/runtime';
 import {
   inspectRuns,
+  closeStageEpic,
+  dispositionStagePipeline,
+  publishStageReport,
   dispatchStage,
   collectBusinessTurn,
   acceptStageReceipt,
@@ -28,14 +32,26 @@ import { output } from '../utils/output.js';
 export interface StageBoundary {
   runner?: (provider: string) => ReturnType<typeof managedRunner>;
   pullRequests?: StagePullRequests;
+  closure?: (
+    config: FleetConfig,
+    runId: string,
+  ) => Promise<{ head: string; closed: boolean; evidence: string }>;
   facts?: (config: FleetConfig, dispatch: StageDispatch) => Promise<StageFacts>;
 }
 
 async function currentFacts(config: FleetConfig, dispatch: StageDispatch): Promise<StageFacts> {
   if (
-    !['planning', 'implementation', 'pr-quality', 'pr-merge', 'final-records'].includes(
-      dispatch.stage,
-    )
+    ![
+      'planning',
+      'implementation',
+      'pr-quality',
+      'pr-merge',
+      'final-records',
+      'integrated-acceptance',
+      'pipeline-audit',
+      'pipeline-refactor',
+      'research-report',
+    ].includes(dispatch.stage)
   )
     throw new Error('Stage requires a domain-specific authoritative acceptance operation');
   const attempt = dispatch.attempts.at(-1)!;
@@ -74,6 +90,9 @@ export function registerStageCommands(
     'retry',
     'message',
     'execute',
+    'close',
+    'pipeline',
+    'publish',
   ]) {
     group
       .command(operation)
@@ -141,6 +160,59 @@ export function registerStageCommands(
             );
             if (!dispatch) throw new Error('Expected Dispatch belonging to this Run');
             const attempt = dispatch.attempts.at(-1)!;
+            if (operation === 'close') {
+              if (!o.decision)
+                throw new Error(
+                  'Expected human confirmation and configured authoritative closure boundary',
+                );
+              result = await closeStageEpic(
+                config,
+                run.id,
+                o.authority,
+                dispatch.id,
+                JSON.parse(readFileSync(o.decision, 'utf8')),
+                async () => {
+                  if (boundary.closure) return boundary.closure(config, run.id);
+                  const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+                    cwd: config.project,
+                    encoding: 'utf8',
+                  }).trim();
+                  const state = execFileSync(
+                    'gh',
+                    [
+                      'issue',
+                      'view',
+                      String(run.subject.number),
+                      '--repo',
+                      run.subject.repository,
+                      '--json',
+                      'state',
+                    ],
+                    { encoding: 'utf8' },
+                  );
+                  return {
+                    head,
+                    closed: JSON.parse(state).state === 'CLOSED',
+                    evidence: `GitHub ${run.subject.repository}#${run.subject.number}: ${state}`,
+                  };
+                },
+              );
+            }
+            if (operation === 'pipeline') {
+              dispositionStagePipeline(config, run.id, o.authority, dispatch.id);
+              result = { disposition: 'accepted' };
+            }
+            if (operation === 'publish') {
+              if (!o.decision)
+                throw new Error('Expected coordinator identity, entry and confirmed brief JSON');
+              result = await publishStageReport(
+                config,
+                run.id,
+                o.authority,
+                dispatch.id,
+                JSON.parse(readFileSync(o.decision, 'utf8')),
+              );
+            }
             if (operation === 'execute') {
               const pr = Number(o.pr);
               if (!Number.isSafeInteger(pr) || pr <= 0) throw new Error('Expected positive --pr');
@@ -155,6 +227,22 @@ export function registerStageCommands(
             if (operation === 'inspect')
               result = {
                 dispatch,
+                closureRequest:
+                  dispatch.stage === 'integrated-acceptance'
+                    ? {
+                        head: dispatch.inputRevision,
+                        deliveryVersion: createHash('sha256')
+                          .update(
+                            JSON.stringify({
+                              head: dispatch.inputRevision,
+                              deliveries:
+                                registry.deliveries?.filter((d) => d.runId === run.id) ?? [],
+                            }),
+                          )
+                          .digest('hex'),
+                        epic: run.subject.number,
+                      }
+                    : undefined,
                 receipts: registry.receipts?.filter((r) => r.dispatchId === dispatch.id),
                 acknowledgements: registry.acknowledgements?.filter((a) =>
                   registry.receipts?.some(

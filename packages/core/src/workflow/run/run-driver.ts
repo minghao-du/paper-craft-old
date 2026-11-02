@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { writeResearchReport } from '../delivery/research-report.js';
 import { ensureStartupRecovery, reconcileStartup } from './startup.js';
 import { assertStageRole, assertWorkflowRole } from '../runtime/workflow-role.js';
 import { initializationInstructions, verifyRoleInitialization } from './role-initialization.js';
@@ -1491,4 +1493,168 @@ export async function releaseAcceptedExecution(
     runner.stopped!.bind(runner),
     cleanup,
   );
+}
+
+/** Commit externally verified closure after accepted integrated goal judgment and delivery. */
+export async function closeStageEpic(
+  config: FleetConfig,
+  runId: string,
+  authority: string,
+  dispatchId: string,
+  confirmation: { deliveryVersion: string; source: 'human'; evidence: string },
+  observe: () => Promise<{ head: string; closed: boolean; evidence: string }>,
+) {
+  const snapshot = inspectRuns(config);
+  const run = authorize(snapshot, runId, authority);
+  const dispatch = findDispatch(snapshot, dispatchId);
+  const deliveries = snapshot.deliveries?.filter((d) => d.runId === runId) ?? [];
+  const facts = await observe();
+  const version = createHash('sha256')
+    .update(JSON.stringify({ head: facts.head, deliveries }))
+    .digest('hex');
+  if (
+    run.subject.kind !== 'epic' ||
+    dispatch.runId !== runId ||
+    dispatch.role !== 'epic' ||
+    dispatch.stage !== 'integrated-acceptance' ||
+    dispatch.lifecycle !== 'accepted' ||
+    dispatch.inputRevision !== facts.head ||
+    !deliveries.length ||
+    deliveries.some((d) => d.status !== 'done' || !d.recorded || !d.released || !d.archive) ||
+    confirmation.source !== 'human' ||
+    !confirmation.evidence.trim() ||
+    confirmation.deliveryVersion !== version ||
+    !facts.closed ||
+    !facts.evidence.trim()
+  )
+    throw new Error(
+      'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+    );
+  const receipt = snapshot.receipts!.find((r) => r.id === dispatch.acceptedReceipt)!;
+  verifyRetainedStageEvidence(receipt);
+  const judgment = JSON.parse(readFileSync(receipt.evidence[0].path, 'utf8'));
+  if (
+    judgment.satisfied !== true ||
+    !judgment.criteria?.length ||
+    !Array.isArray(judgment.blockers) ||
+    judgment.blockers.length
+  )
+    throw new Error('Integrated goal remains unaccepted');
+  updateRunRegistry(config, (registry) => {
+    const current = authorize(registry, runId, authority);
+    if (registry.revision !== snapshot.revision)
+      throw new Error('Registry changed during closure verification');
+    current.epicClosure = {
+      deliveryVersion: version,
+      head: facts.head,
+      evidence: facts.evidence,
+      confirmed: confirmation.evidence,
+    };
+    current.phase = 'post_closure_finalization';
+  });
+  return { deliveryVersion: version, head: facts.head };
+}
+
+/** Retain a validated accepted Pipeline result; receipt acceptance alone is insufficient. */
+export function dispositionStagePipeline(
+  config: FleetConfig,
+  runId: string,
+  authority: string,
+  dispatchId: string,
+) {
+  updateRunRegistry(config, (registry) => {
+    const run = authorize(registry, runId, authority);
+    const dispatch = findDispatch(registry, dispatchId);
+    if (
+      !run.epicClosure ||
+      dispatch.runId !== runId ||
+      !['pipeline-audit', 'pipeline-refactor'].includes(dispatch.role) ||
+      dispatch.lifecycle !== 'accepted'
+    )
+      throw new Error('Expected accepted post-closure Pipeline receipt');
+    const receipt = registry.receipts!.find((r) => r.id === dispatch.acceptedReceipt)!;
+    verifyRetainedStageEvidence(receipt);
+    const result = JSON.parse(
+      readFileSync(receipt.evidence[0].path, 'utf8'),
+    ) as PipelineDisposition;
+    if (result.head !== run.epicClosure.head || !pipelineAccepted(result))
+      throw new Error('Pipeline disposition blocks reporting');
+    run.pipeline = result;
+  });
+}
+
+/** Publish an accepted bounded report through the normal transactional writer and complete business state. */
+export async function publishStageReport(
+  config: FleetConfig,
+  runId: string,
+  authority: string,
+  dispatchId: string,
+  coordinator: { identity: string; entry: string; brief: string },
+) {
+  const snapshot = inspectRuns(config);
+  const run = authorize(snapshot, runId, authority);
+  const dispatch = findDispatch(snapshot, dispatchId);
+  if (
+    !run.epicClosure ||
+    !pipelineAccepted(run.pipeline) ||
+    dispatch.runId !== runId ||
+    dispatch.role !== 'research-state' ||
+    dispatch.lifecycle !== 'accepted' ||
+    dispatch.inputRevision !== run.epicClosure.head
+  )
+    throw new Error('Expected accepted current Research-State result after Pipeline');
+  const receipt = snapshot.receipts!.find((r) => r.id === dispatch.acceptedReceipt)!;
+  verifyRetainedStageEvidence(receipt);
+  const result = JSON.parse(readFileSync(receipt.evidence[0].path, 'utf8'));
+  if (
+    result.status !== 'completed' ||
+    typeof result.artifact !== 'string' ||
+    !coordinator.identity.trim() ||
+    !coordinator.brief.trim()
+  )
+    throw new Error('Expected completed report artifact and coordinator-provided judgments');
+  if (
+    createHash('sha256').update(readFileSync(result.artifact)).digest('hex') !== result.artifactHash
+  )
+    throw new Error('Report artifact changed since accepted result');
+  const observedHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: config.project,
+    encoding: 'utf8',
+  }).trim();
+  if (observedHead !== run.epicClosure.head)
+    throw new Error('Integrated revision changed before report publication');
+  const report = await writeResearchReport(
+    coordinator,
+    {
+      objective: run.subject.body,
+      acceptedVersions: { integrated: run.epicClosure.head },
+      observedVersions: { integrated: dispatch.inputRevision },
+      pipeline: run.pipeline,
+      closureEvidence: run.epicClosure.evidence,
+    },
+    async (brief) => {
+      const candidate = brief.match(/candidate report (.*?); do not/)![1];
+      writeFileSync(candidate, readFileSync(result.artifact));
+      return receipt.evidence.map((e) => e.path);
+    },
+  );
+  updateRunRegistry(config, (registry) => {
+    const current = authorize(registry, runId, authority);
+    if (registry.revision !== snapshot.revision)
+      throw new Error('Registry changed during report publication');
+    current.report = report;
+    current.phase = 'completed';
+    current.lifecycle = 'completed';
+  });
+  return report;
+}
+
+function verifyRetainedStageEvidence(receipt: StageReceipt) {
+  if (
+    !receipt.evidence.length ||
+    receipt.evidence.some(
+      (e) => createHash('sha256').update(readFileSync(e.path)).digest('hex') !== e.hash,
+    )
+  )
+    throw new Error('Accepted stage evidence changed');
 }
