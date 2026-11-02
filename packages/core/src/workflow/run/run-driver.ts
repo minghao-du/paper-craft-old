@@ -37,6 +37,8 @@ export interface WorkflowRun {
   id: string;
   subject: RunSubject;
   provider: string;
+  /** Immutable opt-in inherited by agy attempts, retries and replacements. */
+  dangerouslySkipPermissions?: boolean;
   policy: { name: string; revision: number };
   lifecycle: 'reserved' | 'running' | 'blocked' | 'completed';
   phase?: 'post_closure_finalization' | 'completed';
@@ -167,6 +169,7 @@ export async function startRun(
   subject: RunSubject,
   provider: string,
   requirements?: string,
+  dangerouslySkipPermissions?: boolean,
 ): Promise<WorkflowRun> {
   if (
     !/^[\w.-]+\/[\w.-]+$/.test(subject.repository) ||
@@ -180,6 +183,12 @@ export async function startRun(
     throw new Error(
       'Managed provider must be codex, agy, or claude and match the selected adapter',
     );
+  if (dangerouslySkipPermissions && provider !== 'agy')
+    throw new Error('--dangerously-skip-permissions requires --provider agy');
+  const verifyPermissions = (run: WorkflowRun) => {
+    if (dangerouslySkipPermissions && !run.dangerouslySkipPermissions)
+      throw new Error('Permission mode conflicts with the existing Run; reuse its stored mode');
+  };
   requireInteractive(runner);
   await runner.preflight();
   const reconnect = inspectRuns(config).runs.find(
@@ -190,6 +199,7 @@ export async function startRun(
   );
 
   if (reconnect) {
+    verifyPermissions(reconnect);
     verifyRunRequirements(reconnect, requirements);
     if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
       throw new Error('Existing Run provider or scope conflict');
@@ -209,6 +219,7 @@ export async function startRun(
     );
     const owningRun = registry.runs.find((r) => r.id === ownership?.ownerRunId);
     if (owningRun && owningRun.subject.number !== subject.number) {
+      verifyPermissions(owningRun);
       verifyRunRequirements(owningRun, requirements);
       if (owningRun.provider !== provider)
         throw new Error('Existing child execution provider conflict');
@@ -226,6 +237,7 @@ export async function startRun(
         r.lifecycle !== 'completed',
     );
     if (existing) {
+      verifyPermissions(existing);
       verifyRunRequirements(existing, requirements);
       if (existing.provider !== provider || existing.subject.kind !== subject.kind)
         throw new Error('Existing Run provider or scope conflict');
@@ -241,6 +253,7 @@ export async function startRun(
       id,
       subject,
       provider,
+      ...(dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
       policy: { name: 'managed-run', revision: 1 },
       lifecycle: 'reserved',
       ...(requirements === undefined ? {} : { requirements }),
@@ -255,13 +268,20 @@ export async function startRun(
     try {
       run.launchStarted = true;
       save(config, registry);
-      run.orchestrator = await startOrchestrator(config, runner, brief, id, {
-        registry: join(home(config), 'registry.json'),
-        authority: id,
-        run: id,
-        subject: `${subject.repository}#${subject.number}`,
-        context: run.brief,
-      });
+      run.orchestrator = await startOrchestrator(
+        config,
+        runner,
+        brief,
+        id,
+        {
+          registry: join(home(config), 'registry.json'),
+          authority: id,
+          run: id,
+          subject: `${subject.repository}#${subject.number}`,
+          context: run.brief,
+        },
+        run.dangerouslySkipPermissions,
+      );
       run.lifecycle = run.orchestrator.status === 'running' ? 'running' : 'blocked';
     } catch (error) {
       run.lifecycle = 'blocked';
@@ -485,6 +505,7 @@ export async function dispatchStage(
       run: run.id,
       role: request.role,
       runner: run.provider,
+      ...(run.dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
       dispatchId: id,
       persistent: !!runner.result,
       brief: request.brief,
@@ -835,6 +856,7 @@ export async function recoverRun(
         subject: `${run.subject.repository}#${run.subject.number}`,
         context: run.brief,
       },
+      run.dangerouslySkipPermissions,
     );
     updateRunRegistry(config, (registry) => {
       const current = registry.runs.find((r) => r.id === runId)!;

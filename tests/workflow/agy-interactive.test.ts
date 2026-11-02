@@ -499,6 +499,7 @@ test('children use separate exact panes in their Run session and cancellation le
     }
     if (a[0] === 'new-session') throw new Error('Child cannot create sessions');
     if (a[0] === 'new-window') {
+      expect(a).toEqual(expect.arrayContaining(['-P', '-F', '#{pane_id}']));
       targets.push(a[a.indexOf('-t') + 1]);
       const pane = '%' + nextPane++;
       panes.set(pane, '1'); // immediate failure must affect only this pane
@@ -571,80 +572,91 @@ test('replacement rebuild requires every old Run execution terminated and reject
   }
 });
 
-test('independent Orchestrator starts outside tmux and retains exact terminal on failed startup', async () => {
-  const child = await import('node:child_process');
-  const directory = mkdtempSync(join(tmpdir(), 'pc-independent-'));
-  const prior = { tmux: process.env.TMUX, pane: process.env.TMUX_PANE };
-  delete process.env.TMUX;
-  delete process.env.TMUX_PANE;
-  const calls: string[][] = [];
-  const attempt = {
-    id: 'attempt-independent',
-    run: 'run-independent',
-    directory,
-    checkout: directory,
-    fleet: 'fleet',
-    role: 'orchestrator' as const,
-    runner: 'agy',
-    brief: 'Initialize only',
-    status: 'starting' as const,
-    created: new Date().toISOString(),
-  };
-  vi.mocked(child.execFileSync).mockImplementation((_command, args) => {
-    const a = args as string[];
-    calls.push(a);
-    if (a[0] === 'list-sessions') return 'caller-session unrelated\n';
-    if (a[0] === 'new-session') return '%401';
-    if (a[0] === 'respawn-pane') {
+test.each([false, true])(
+  'independent Orchestrator retains exact terminal (skip permissions: %s)',
+  async (dangerouslySkipPermissions) => {
+    const child = await import('node:child_process');
+    const directory = mkdtempSync(join(tmpdir(), 'pc-independent-'));
+    const prior = { tmux: process.env.TMUX, pane: process.env.TMUX_PANE };
+    delete process.env.TMUX;
+    delete process.env.TMUX_PANE;
+    const calls: string[][] = [];
+    const attempt = {
+      id: 'attempt-independent',
+      dangerouslySkipPermissions,
+      run: 'run-independent',
+      directory,
+      checkout: directory,
+      fleet: 'fleet',
+      role: 'orchestrator' as const,
+      runner: 'agy',
+      brief: 'Initialize only',
+      status: 'starting' as const,
+      created: new Date().toISOString(),
+    };
+    vi.mocked(child.execFileSync).mockImplementation((_command, args) => {
+      const a = args as string[];
+      calls.push(a);
+      if (a[0] === 'list-sessions') return 'caller-session unrelated\n';
+      if (a[0] === 'new-session') return '%401';
+      if (a[0] === 'respawn-pane') {
+        if (a.includes('-P') || a.includes('-F'))
+          throw new Error('respawn-pane: unknown flag -P/-F');
+        expect(
+          JSON.parse(readFileSync(join(directory, 'agy-settings.json'), 'utf8')).statusLine.enabled,
+        ).toBe(true);
+        return ''; // tmux respawn-pane does not print the pane ID
+      }
+      if (a[0] === 'list-panes') return '%401 1\n%200 0\n';
+      if (a[0] === 'display-message') {
+        return a.at(-1) === '#{window_id}' ? '@91' : 'pc-run-run-independent run-independent %401';
+      }
+      if (a[0] === 'capture-pane') return 'Login required';
+      return '';
+    });
+    const persisted = { ...attempt };
+    try {
+      await expect(new AgyInteractive().start(attempt)).rejects.toThrow(/Login required/);
       expect(
-        JSON.parse(readFileSync(join(directory, 'agy-settings.json'), 'utf8')).statusLine.enabled,
-      ).toBe(true);
-      return '%401';
+        readFileSync(join(directory, 'agy-launch.sh'), 'utf8').includes(
+          "'--dangerously-skip-permissions'",
+        ),
+      ).toBe(dangerouslySkipPermissions);
+      expect(attempt).toMatchObject({
+        address: 'tmux:%401',
+        terminalSession: 'pc-run-run-independent',
+        paneId: '%401',
+        windowId: '@91',
+      });
+      await expect(new AgyInteractive().recoverReceipt(persisted)).resolves.toBeUndefined();
+      expect(persisted).toMatchObject({
+        address: 'tmux:%401',
+        terminalSession: 'pc-run-run-independent',
+        paneId: '%401',
+        windowId: '@91',
+      });
+      expect(calls.find((a) => a[0] === 'new-session')).toEqual([
+        'new-session',
+        '-P',
+        '-F',
+        '#{pane_id}',
+        '-d',
+        '-s',
+        'pc-run-run-independent',
+        '-n',
+        'orchestrator-attempt-',
+      ]);
+      expect(
+        calls.some((a) =>
+          ['move-window', 'rename-session', 'rename-window', 'kill-pane'].includes(a[0]),
+        ),
+      ).toBe(false);
+    } finally {
+      if (prior.tmux === undefined) delete process.env.TMUX;
+      else process.env.TMUX = prior.tmux;
+      if (prior.pane === undefined) delete process.env.TMUX_PANE;
+      else process.env.TMUX_PANE = prior.pane;
+      rmSync(directory, { recursive: true, force: true });
     }
-    if (a[0] === 'list-panes') return '%401 1\n%200 0\n';
-    if (a[0] === 'display-message') {
-      return a.at(-1) === '#{window_id}' ? '@91' : 'pc-run-run-independent run-independent %401';
-    }
-    if (a[0] === 'capture-pane') return 'Login required';
-    return '';
-  });
-  const persisted = { ...attempt };
-  try {
-    await expect(new AgyInteractive().start(attempt)).rejects.toThrow(/Login required/);
-    expect(attempt).toMatchObject({
-      address: 'tmux:%401',
-      terminalSession: 'pc-run-run-independent',
-      paneId: '%401',
-      windowId: '@91',
-    });
-    await expect(new AgyInteractive().recoverReceipt(persisted)).resolves.toBeUndefined();
-    expect(persisted).toMatchObject({
-      address: 'tmux:%401',
-      terminalSession: 'pc-run-run-independent',
-      paneId: '%401',
-      windowId: '@91',
-    });
-    expect(calls.find((a) => a[0] === 'new-session')).toEqual([
-      'new-session',
-      '-P',
-      '-F',
-      '#{pane_id}',
-      '-d',
-      '-s',
-      'pc-run-run-independent',
-      '-n',
-      'orchestrator-attempt-',
-    ]);
-    expect(
-      calls.some((a) =>
-        ['move-window', 'rename-session', 'rename-window', 'kill-pane'].includes(a[0]),
-      ),
-    ).toBe(false);
-  } finally {
-    if (prior.tmux === undefined) delete process.env.TMUX;
-    else process.env.TMUX = prior.tmux;
-    if (prior.pane === undefined) delete process.env.TMUX_PANE;
-    else process.env.TMUX_PANE = prior.pane;
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+  },
+);

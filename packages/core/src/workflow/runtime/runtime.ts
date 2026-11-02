@@ -39,6 +39,8 @@ export interface ManagedAttempt {
   terminalSession?: string;
   /** Explicit local writing roots passed to capable runners. */
   writableDirectories?: string[];
+  /** Explicit Run-level opt-in to agy tool permission auto-approval. */
+  dangerouslySkipPermissions?: boolean;
   conversation?: string;
   address?: string;
   windowId?: string;
@@ -105,6 +107,7 @@ export async function startOrchestrator(
   brief: string,
   run: string,
   initialization?: Omit<RoleInitialization, 'role' | 'attempt' | 'briefHash'>,
+  dangerouslySkipPermissions?: boolean,
 ): Promise<ManagedAttempt> {
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   if (!brief.trim()) throw new Error('Expected a non-empty Orchestrator brief');
@@ -135,6 +138,7 @@ export async function startOrchestrator(
     created: new Date().toISOString(),
     directory,
     checkout: config.project,
+    ...(dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
   };
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   const path = join(home(config), `orchestrator-${run}.json`);

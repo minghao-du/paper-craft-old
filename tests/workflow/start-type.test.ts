@@ -58,6 +58,7 @@ it('starts empty EPICs by title and rejects conflicting explicit types before la
           { repository: 'org/repo', number: 7, title, body: '', kind },
           'codex',
           undefined,
+          undefined,
         );
         expect(process.exitCode).toBe(0);
       } else {
@@ -120,5 +121,44 @@ it('captures multiline Requirements and rejects invalid input before tracker or 
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it('forwards explicit agy permission opt-in and rejects it for other providers before intake', async () => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.mocked(readIssue).mockReturnValue({
+    repository: 'org/repo',
+    number: 7,
+    title: 'Task',
+    body: '',
+  });
+  for (const provider of ['agy', 'codex', 'claude']) {
+    vi.mocked(startRun).mockClear();
+    vi.mocked(readIssue).mockClear();
+    process.exitCode = 0;
+    const program = new Command();
+    registerWorkflowCommands(program, { human: () => false });
+    await program.parseAsync(
+      [
+        'workflow',
+        'orchestrator',
+        'start',
+        '7',
+        '--provider',
+        provider,
+        '--type',
+        'issue',
+        '--dangerously-skip-permissions',
+      ],
+      { from: 'user' },
+    );
+    if (provider === 'agy') {
+      expect(vi.mocked(startRun).mock.lastCall?.[5]).toBe(true);
+      expect(process.exitCode).toBe(0);
+    } else {
+      expect(startRun).not.toHaveBeenCalled();
+      expect(readIssue).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(2);
+    }
   }
 });

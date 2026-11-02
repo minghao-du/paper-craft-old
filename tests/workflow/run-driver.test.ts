@@ -866,3 +866,71 @@ test('collectBusinessTurn polls result until available or stopped', async () => 
     rmSync(project, { recursive: true, force: true });
   }
 });
+
+test('agy permission opt-in survives reconnect, child retry and Orchestrator replacement', async () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-agy-permissions-')));
+  mkdirSync(join(project, 'pool'));
+  const config = {
+    file: join(project, '.epic-config.json'),
+    project,
+    root: join(project, 'pool'),
+    slots: [],
+    worktrees: true,
+    base: 'main',
+  };
+  const modes: (boolean | undefined)[] = [];
+  const runner = {
+    name: 'agy',
+    interactive: true,
+    async preflight() {},
+    async stopped() {
+      return true;
+    },
+    async start(
+      attempt: import('../../packages/core/src/workflow/runtime/runtime.js').ManagedAttempt,
+    ) {
+      modes.push(attempt.dangerouslySkipPermissions);
+      return { conversation: attempt.id, address: 'tmux:%1', evidence: 'ack' };
+    },
+  };
+  const subject = {
+    repository: 'owner/repo',
+    number: 77,
+    kind: 'issue' as const,
+    title: 'Task',
+    body: '',
+  };
+  try {
+    writeFileSync(config.file, '{}');
+    const run = await startRun(config, runner, subject, 'agy', undefined, true);
+    expect(inspectRuns(config).runs[0].dangerouslySkipPermissions).toBe(true);
+    expect((await startRun(config, runner, subject, 'agy')).id).toBe(run.id);
+    const dispatch = await dispatchStage(config, runner, {
+      runId: run.id,
+      authority: run.orchestratorId,
+      subject: 'owner/repo#77',
+      role: 'worker',
+      stage: 'implementation',
+      inputRevision: '1',
+      brief: 'Implement',
+      prerequisites: [],
+    });
+    await retryStage(config, runner, dispatch.id, run.orchestratorId, runner.stopped);
+    await recoverRun(config, runner, run.id, {
+      replaceOrchestrator: true,
+      stopped: runner.stopped,
+    });
+    expect(modes).toEqual([true, true, true, true]);
+    const ordinary = await startRun(config, runner, { ...subject, number: 78 }, 'agy');
+    expect(ordinary.orchestrator?.dangerouslySkipPermissions).toBeUndefined();
+    await expect(
+      startRun(config, runner, { ...subject, number: 78 }, 'agy', undefined, true),
+    ).rejects.toThrow(/Permission mode conflicts/);
+    await expect(
+      startRun(config, { ...runner, name: 'codex' }, subject, 'codex', undefined, true),
+    ).rejects.toThrow(/requires --provider agy/);
+    expect(modes).toEqual([true, true, true, true, undefined]);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});

@@ -279,6 +279,7 @@ export class AgyInteractive {
     writeFileSync(join(a.directory, 'agy-input.txt'), delivered);
     const args = [
       'agy',
+      ...(a.dangerouslySkipPermissions ? ['--dangerously-skip-permissions'] : []),
       '--settings',
       settings,
       ...[a.directory, ...(a.writableDirectories ?? [])].flatMap((p) => ['--add-dir', p]),
@@ -292,17 +293,34 @@ export class AgyInteractive {
       `#!/bin/sh\nwhile [ ! -f ${quote(join(a.directory, 'agy-launch-ready'))} ]; do sleep 0.1; done\n${args.map(quote).join(' ')}\nprintf '%s' "$?" > ${quote(join(a.directory, 'exit-code'))}\n`,
       { mode: 0o700 },
     );
-    const tmuxArgs = [
-      ...(initial ? ['respawn-pane', '-k'] : ['new-window', '-d']),
-      '-P',
-      '-F',
-      '#{pane_id}',
-      '-t',
-      ...(initial ? [this.address(a)] : [session + ':', '-n', `${a.role}-${a.id.slice(0, 8)}`]),
-    ];
-    a.address =
-      'tmux:' +
-      execFileSync('tmux', [...tmuxArgs, '-c', a.checkout, script], { encoding: 'utf8' }).trim();
+    if (initial) {
+      execFileSync(
+        'tmux',
+        ['respawn-pane', '-k', '-t', this.address(a), '-c', a.checkout, script],
+        { encoding: 'utf8' },
+      );
+    } else {
+      a.address =
+        'tmux:' +
+        execFileSync(
+          'tmux',
+          [
+            'new-window',
+            '-d',
+            '-P',
+            '-F',
+            '#{pane_id}',
+            '-t',
+            session + ':',
+            '-n',
+            `${a.role}-${a.id.slice(0, 8)}`,
+            '-c',
+            a.checkout,
+            script,
+          ],
+          { encoding: 'utf8' },
+        ).trim();
+    }
     a.paneId = this.address(a);
     a.windowId = execFileSync('tmux', ['display-message', '-p', '-t', a.paneId, '#{window_id}'], {
       encoding: 'utf8',

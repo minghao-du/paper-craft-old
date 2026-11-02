@@ -197,6 +197,10 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       .description('Create or reconnect a Run; report concise startup state')
       .option('--detailed', 'Return the complete current structured result; logs remain referenced')
       .requiredOption('--provider <provider>', 'Managed provider: codex, agy, or claude')
+      .option(
+        '--dangerously-skip-permissions',
+        'Auto-approve agy tool permissions for this Run (agy only)',
+      )
       .option('--requirements <text>', 'Immutable additional Run Requirements')
       .option('--requirements-file <file>', 'Read immutable Run Requirements from a UTF-8 file')
       .addOption(
@@ -212,12 +216,15 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         type: 'issue' | 'epic';
         requirements?: string;
         requirementsFile?: string;
+        dangerouslySkipPermissions?: boolean;
       },
     ) => {
       let config: FleetConfig | undefined;
       let subjectReference: string | undefined;
       let startupInvoked = false;
       try {
+        if (options.dangerouslySkipPermissions && options.provider !== 'agy')
+          throw new Error('--dangerously-skip-permissions requires --provider agy');
         if (options.requirements !== undefined && options.requirementsFile !== undefined)
           throw new Error('Use only one of --requirements or --requirements-file');
         let requirements = options.requirements;
@@ -246,6 +253,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           { ...subject, kind },
           options.provider,
           requirements,
+          options.dangerouslySkipPermissions,
         );
         const diagnostics = diagnosticError(config, result.orchestrator?.error, {
           command: 'start',
