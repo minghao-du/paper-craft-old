@@ -40,7 +40,7 @@ pc workflow orchestrator start 79 --type issue --provider claude --config /absol
 pc workflow orchestrator status --config /absolute/path/.epic-config.json
 ```
 
-Retain the Run identity and assignment-bound requirements in its durable context; reconnect to existing ownership rather than allocating a second driver.
+Supply additional Requirements with `--requirements <text>` or `--requirements-file <file>` (UTF-8), never both. File contents are captured at intake, so later work does not depend on the source file. Requirements become immutable Run context inherited by every role, retry and replacement; child-specific assignments add scope without replacing those constraints. Repeated start may omit Requirements to reuse them or supply identical text; different text rejects. Retain the returned Run identity.
 For agy, follow independent startup in [agy procedure](agy-interactive.md). Codex and Claude retain controlled startup.
 
 The startup, provider and ownership gates in the execution contract determine whether dispatch is available.

@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Command } from 'commander';
 import { afterEach, expect, it, vi } from 'vitest';
 import { registerWorkflowCommands } from '../../packages/cli/src/commands/workflow.js';
@@ -49,6 +52,7 @@ it('starts empty EPICs by title and rejects conflicting explicit types before la
           expect.anything(),
           { repository: 'org/repo', number: 7, title, body: '', kind },
           'codex',
+          undefined,
         );
         expect(process.exitCode).toBe(0);
       } else {
@@ -72,5 +76,44 @@ it('requires a valid explicit type before reading GitHub or launching a Run', as
     ).rejects.toThrow();
     expect(readIssue).not.toHaveBeenCalled();
     expect(startRun).not.toHaveBeenCalled();
+  }
+});
+
+it('captures multiline Requirements and rejects invalid input before tracker or Run mutation', async () => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  const directory = mkdtempSync(join(tmpdir(), 'pc-requirements-'));
+  const file = join(directory, 'requirements.md');
+  const requirements = 'Preserve raw data\nUse TypeScript only\n';
+  writeFileSync(file, requirements);
+  vi.mocked(readIssue).mockReturnValue({
+    repository: 'org/repo',
+    number: 7,
+    title: 'Task',
+    body: '',
+  });
+  const invoke = async (args: string[]) => {
+    const program = new Command();
+    registerWorkflowCommands(program, { human: () => false });
+    await program.parseAsync(
+      ['workflow', 'orchestrator', 'start', '7', '--provider', 'codex', '--type', 'issue', ...args],
+      { from: 'user' },
+    );
+  };
+  try {
+    await invoke(['--requirements-file', file]);
+    expect(vi.mocked(startRun).mock.lastCall?.[4]).toBe(requirements);
+    for (const args of [
+      ['--requirements', 'inline', '--requirements-file', file],
+      ['--requirements-file', join(directory, 'missing')],
+    ]) {
+      vi.mocked(startRun).mockClear();
+      vi.mocked(readIssue).mockClear();
+      await invoke(args);
+      expect(startRun).not.toHaveBeenCalled();
+      expect(readIssue).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(2);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

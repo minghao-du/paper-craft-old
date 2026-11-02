@@ -49,6 +49,7 @@ export interface WorkflowRun {
   launchStarted?: boolean;
   orchestrator?: ManagedAttempt;
   brief: { path: string; hash: string };
+  requirements?: string;
   reconciliation?: { at: string; blockers: string[]; pendingDispatches: string[] };
   priorOrchestrators?: ManagedAttempt[];
 }
@@ -141,12 +142,31 @@ function save(config: FleetConfig, registry: RunRegistry): void {
   writeFileSync(temp, JSON.stringify(registry, null, 2), { mode: 0o600 });
   renameSync(temp, file);
 }
+function verifyRunRequirements(run: WorkflowRun, supplied?: string): void {
+  const context = readFileSync(run.brief.path, 'utf8');
+  if (createHash('sha256').update(context).digest('hex') !== run.brief.hash)
+    throw new Error('Immutable Run context hash mismatch; inspect the stored context');
+  if (
+    run.requirements !== undefined &&
+    !context.endsWith(`\n\n## Run Requirements\n\n${run.requirements}`)
+  )
+    throw new Error('Run Requirements do not match immutable context');
+  if (supplied !== undefined && supplied !== run.requirements)
+    throw new Error('Requirements conflict with immutable Run context; reuse stored Requirements');
+}
+function assignmentWithRequirements(run: WorkflowRun, brief: string): string {
+  verifyRunRequirements(run);
+  if (run.requirements === undefined) return brief;
+  const prefix = `## Run Requirements\n\n${run.requirements}\n\n## Assignment\n\n`;
+  return brief.startsWith(prefix) ? brief : prefix + brief;
+}
 /** Reserve before managed launch; initial bounded path preserves Fleet-wide exclusion. */
 export async function startRun(
   config: FleetConfig,
   runner: RunnerAdapter,
   subject: RunSubject,
   provider: string,
+  requirements?: string,
 ): Promise<WorkflowRun> {
   if (
     !/^[\w.-]+\/[\w.-]+$/.test(subject.repository) ||
@@ -170,6 +190,7 @@ export async function startRun(
   );
 
   if (reconnect) {
+    verifyRunRequirements(reconnect, requirements);
     if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
       throw new Error('Existing Run provider or scope conflict');
     return inspectRuns(config).runs.find((r) => r.id === reconnect.id)!;
@@ -188,6 +209,7 @@ export async function startRun(
     );
     const owningRun = registry.runs.find((r) => r.id === ownership?.ownerRunId);
     if (owningRun && owningRun.subject.number !== subject.number) {
+      verifyRunRequirements(owningRun, requirements);
       if (owningRun.provider !== provider)
         throw new Error('Existing child execution provider conflict');
       return owningRun;
@@ -204,6 +226,7 @@ export async function startRun(
         r.lifecycle !== 'completed',
     );
     if (existing) {
+      verifyRunRequirements(existing, requirements);
       if (existing.provider !== provider || existing.subject.kind !== subject.kind)
         throw new Error('Existing Run provider or scope conflict');
       return existing;
@@ -211,7 +234,7 @@ export async function startRun(
     const id = randomUUID();
     const directory = join(home(config), 'runs', id);
     mkdirSync(directory, { recursive: true });
-    const brief = `Manage only ${subject.kind} ${subject.repository}#${subject.number}. Run ${id}. Provider ${provider}.\n${subject.parent ? `Parent context #${subject.parent}; no sibling or parent closure authorization.\n` : ''}${subject.title}\n${subject.body}`;
+    const brief = `Manage only ${subject.kind} ${subject.repository}#${subject.number}. Run ${id}. Provider ${provider}.\n${subject.parent ? `Parent context #${subject.parent}; no sibling or parent closure authorization.\n` : ''}${subject.title}\n${subject.body}${requirements === undefined ? '' : `\n\n## Run Requirements\n\n${requirements}`}`;
     const path = join(directory, 'brief.md');
     writeFileSync(path, brief, { mode: 0o400, flag: 'wx' });
     const run: WorkflowRun = {
@@ -220,6 +243,7 @@ export async function startRun(
       provider,
       policy: { name: 'managed-run', revision: 1 },
       lifecycle: 'reserved',
+      ...(requirements === undefined ? {} : { requirements }),
       orchestratorId: id,
       launchStarted: false,
       brief: { path, hash: createHash('sha256').update(brief).digest('hex') },
@@ -344,6 +368,9 @@ export async function dispatchStage(
   requireInteractive(runner);
   await runner.preflight();
   const snapshot = inspectRuns(config);
+  const owningRun = authorize(snapshot, request.runId, request.authority);
+  if (!request.brief.trim()) throw new Error('Incomplete stage inputs');
+  request = { ...request, brief: assignmentWithRequirements(owningRun, request.brief) };
   const checkout = workflowSource(config, request.checkout ?? config.project);
   const occupying =
     snapshot.dispatches?.filter(
@@ -708,7 +735,10 @@ export async function retryStage(
       directory,
       status: 'starting',
       created: new Date().toISOString(),
-      brief: `Reconcile durable Dispatch ${current.id} evidence before continuing. Scope reference: ${current.briefReference.path}. Do not replay the original brief or repeat accepted work.`,
+      brief: assignmentWithRequirements(
+        run,
+        `Reconcile durable Dispatch ${current.id} evidence before continuing. Scope reference: ${current.briefReference.path}. Do not replay the original brief or repeat accepted work.`,
+      ),
       conversation: options.replaceConversation ? undefined : prior.conversation,
       address: undefined,
       evidence: undefined,
@@ -784,6 +814,7 @@ export async function recoverRun(
   const snapshot = inspectRuns(config);
   const run = snapshot.runs.find((r) => r.id === runId);
   if (!run || run.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
+  verifyRunRequirements(run);
   if (run.lifecycle === 'completed')
     throw new Error('Completed Run authority has ended; start a new Run after resolving occupancy');
   if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
@@ -870,7 +901,10 @@ export async function recoverRun(
         status: 'starting',
         created: new Date().toISOString(),
         conversation: options.newConversation ? undefined : orchestrator.conversation,
-        brief: `Reconcile durable Run ${runId} evidence before continuing. Scope reference: ${run.brief.path}. Do not replay the original brief or repeat accepted work.`,
+        brief: assignmentWithRequirements(
+          run,
+          `Reconcile durable Run ${runId} evidence before continuing. Scope reference: ${run.brief.path}. Do not replay the original brief or repeat accepted work.`,
+        ),
         address: undefined,
         evidence: undefined,
       };

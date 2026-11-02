@@ -76,14 +76,37 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       .command('start <issue>')
       .description('Create or reconnect a Run from configured repository context')
       .requiredOption('--provider <provider>', 'Managed provider: codex, agy, or claude')
+      .option('--requirements <text>', 'Immutable additional Run Requirements')
+      .option('--requirements-file <file>', 'Read immutable Run Requirements from a UTF-8 file')
       .addOption(
         new Option('--type <type>', 'Subject type; must match the title EPIC marker')
           .choices(['issue', 'epic'])
           .makeOptionMandatory(),
       ),
   ).action(
-    async (number: string, options: Options & { provider: string; type: 'issue' | 'epic' }) => {
+    async (
+      number: string,
+      options: Options & {
+        provider: string;
+        type: 'issue' | 'epic';
+        requirements?: string;
+        requirementsFile?: string;
+      },
+    ) => {
       try {
+        if (options.requirements !== undefined && options.requirementsFile !== undefined)
+          throw new Error('Use only one of --requirements or --requirements-file');
+        let requirements = options.requirements;
+        if (options.requirementsFile !== undefined) {
+          try {
+            requirements = readFileSync(options.requirementsFile, 'utf8');
+          } catch (error) {
+            throw new Error(
+              `Cannot read Requirements file ${options.requirementsFile}; provide a readable UTF-8 file`,
+              { cause: error },
+            );
+          }
+        }
         const config = loadFleetConfig(options.config);
         const subject = readIssue(config.project, Number(number));
         const kind = /\bEPIC\b/i.test(subject.title) ? 'epic' : 'issue';
@@ -96,6 +119,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           managedRunner(options.provider),
           { ...subject, kind },
           options.provider,
+          requirements,
         );
         output(
           {
