@@ -12,13 +12,18 @@ import {
   type StageRequest,
 } from '../../packages/core/src/workflow/run/run-driver.js';
 import { reconcileStartup } from '../../packages/core/src/workflow/run/startup.js';
-import type { ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
+import {
+  type ManagedAttempt,
+  type RunnerAdapter,
+} from '../../packages/core/src/workflow/runtime/runtime.js';
 import { registerStageCommands } from '../../packages/cli/src/commands/workflow-stages.js';
 import { initializeRole } from './initialize-role.js';
 
 /** Prepare shared evidence and controlled execution without dispatching subordinate work. */
-export async function prepareScriptedEpic() {
+export async function prepareScriptedEpic(native?: RunnerAdapter, brief?: string) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'pc-scripted-epic-')));
+  if (native)
+    console.error(JSON.stringify({ evidenceDirectory: directory, phase: 'preparing-native-demo' }));
   mkdirSync(join(directory, 'pool'));
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
@@ -53,13 +58,19 @@ export async function prepareScriptedEpic() {
     },
   };
   const runner = {
-    name: 'codex',
+    name: native?.name ?? 'codex',
     interactive: true,
     separateActivation: true,
     cancellation: true,
-    async preflight() {},
+    async preflight() {
+      await native?.preflight();
+    },
     async start(a: ManagedAttempt) {
       launched.push(a.id);
+      if (native && a.role === 'orchestrator') {
+        a.startupGate = true;
+        return native.start(a);
+      }
       initializeRole(a);
       writeFileSync(
         join(a.directory, 'script-start.json'),
@@ -72,6 +83,7 @@ export async function prepareScriptedEpic() {
       };
     },
     async recoverReceipt(a: ManagedAttempt) {
+      if (native && a.role === 'orchestrator') return native.recoverReceipt?.(a);
       return {
         conversation: a.id,
         address: `controlled:${a.id}`,
@@ -79,11 +91,13 @@ export async function prepareScriptedEpic() {
       };
     },
     async send(a: ManagedAttempt, message: { id: string; brief: string }) {
+      if (native && a.role === 'orchestrator') return native.send!(a, message);
       activated.add(a.id);
       writeFileSync(join(a.directory, 'activation.json'), JSON.stringify(message));
       return { status: 'delivered' as const, evidence: join(a.directory, 'activation.json') };
     },
     async result(a: ManagedAttempt) {
+      if (native && a.role === 'orchestrator') return native.result!(a, a.dispatchId ?? a.id);
       if (!activated.has(a.id)) return undefined;
       const dispatch = inspectRuns(config).dispatches?.find((d) =>
         d.attempts.some((x) => x.id === a.id),
@@ -95,9 +109,11 @@ export async function prepareScriptedEpic() {
       return JSON.stringify({ status: 'completed', artifact: path, role: a.role, attempt: a.id });
     },
     async stopped(a: ManagedAttempt) {
+      if (native && a.role === 'orchestrator') return native.stopped!(a);
       return terminated.has(a.id);
     },
     async cancel(a: ManagedAttempt) {
+      if (native && a.role === 'orchestrator') return native.cancel!(a);
       terminated.add(a.id);
       return { evidence: 'Controlled task termination' };
     },
@@ -116,7 +132,7 @@ export async function prepareScriptedEpic() {
       number: 1,
       kind: 'epic',
       title: 'Tiny EPIC',
-      body: 'Change a tiny file using retained evidence.',
+      body: brief ?? 'Change a tiny file using retained evidence.',
     },
     runner.name,
     'Only isolated toy files. No network or scientific work.',
@@ -213,40 +229,7 @@ export async function runPlanningDemo() {
 /** The same CLI scenario extended through independently verified local toy delivery. */
 export async function runDeliveryDemo() {
   const demo = await runPlanningDemo();
-  const checkout = join(demo.directory, 'pool', 'issue-2');
-  demo.git('worktree', 'add', '-b', 'toy-worker', checkout);
-  const localGit = (...args: string[]) =>
-    execFileSync('git', args, { cwd: checkout, encoding: 'utf8' }).trim();
-  demo.tasks.set('implementation', (a) => {
-    writeFileSync(join(checkout, 'toy.txt'), 'Tiny delivered change\n');
-    localGit('add', 'toy.txt');
-    localGit('commit', '-m', 'Deliver tiny change');
-    demo.delivery.head = localGit('rev-parse', 'HEAD');
-    return JSON.stringify({
-      status: 'completed',
-      artifact: join(checkout, 'toy.txt'),
-      attempt: a.id,
-    });
-  });
-  demo.tasks.set('final-records', (a) => {
-    writeFileSync(
-      join(checkout, '.epic-status.json'),
-      JSON.stringify({
-        issue: 2,
-        assessment: 'Toy change delivered at evaluated head',
-        followups: [],
-      }),
-    );
-    writeFileSync(
-      join(checkout, '.epic-worklog.md'),
-      'Worker final records: evaluated head merged; toy.txt delivered.\n',
-    );
-    return JSON.stringify({ complete: true, assessment: 'Toy delivered', attempt: a.id });
-  });
-  for (const stage of ['pr-quality', 'pr-merge', 'preservation-cleanup'])
-    demo.tasks.set(stage, (a) =>
-      JSON.stringify({ passed: true, head: demo.delivery.head, attempt: a.id, stage }),
-    );
+  const checkout = prepareDeliveryTasks(demo);
   let previous = demo.planning;
   async function task(stage: string, role: 'worker' | 'landing', revision: string) {
     const dispatch = await demo.dispatch({
@@ -467,5 +450,68 @@ export async function runAllRoleDemo() {
   await demo.cli('publish', ['--dispatch', report.id, '--decision', coordinator]);
   if (inspectRuns(demo.config).runs.find((r) => r.id === demo.run.id)!.lifecycle !== 'completed')
     throw new Error('Incomplete toy finalization: ' + demo.directory);
+  verifyAllRoleOutcome(demo.config, demo.run.id);
   return { ...demo, report: join(demo.directory, 'TOY-REPORT.md') };
+}
+
+/** Prepare tiny delivery scripts; never schedule them. */
+export function prepareDeliveryTasks(demo: Awaited<ReturnType<typeof prepareScriptedEpic>>) {
+  const checkout = join(demo.directory, 'pool', 'issue-2');
+  demo.git('worktree', 'add', '-b', 'toy-worker', checkout);
+  const localGit = (...args: string[]) =>
+    execFileSync('git', args, { cwd: checkout, encoding: 'utf8' }).trim();
+  demo.tasks.set('implementation', (a) => {
+    writeFileSync(join(checkout, 'toy.txt'), 'Tiny delivered change\n');
+    localGit('add', 'toy.txt');
+    localGit('commit', '-m', 'Deliver tiny change');
+    demo.delivery.head = localGit('rev-parse', 'HEAD');
+    return JSON.stringify({
+      status: 'completed',
+      artifact: join(checkout, 'toy.txt'),
+      attempt: a.id,
+    });
+  });
+  demo.tasks.set('final-records', (a) => {
+    writeFileSync(
+      join(checkout, '.epic-status.json'),
+      JSON.stringify({
+        issue: 2,
+        assessment: 'Toy change delivered at evaluated head',
+        followups: [],
+      }),
+    );
+    writeFileSync(
+      join(checkout, '.epic-worklog.md'),
+      'Worker final records: evaluated head merged; toy.txt delivered.\n',
+    );
+    return JSON.stringify({ complete: true, assessment: 'Toy delivered', attempt: a.id });
+  });
+  for (const stage of ['pr-quality', 'pr-merge', 'preservation-cleanup'])
+    demo.tasks.set(stage, (a) =>
+      JSON.stringify({ passed: true, head: demo.delivery.head, attempt: a.id, stage }),
+    );
+  return checkout;
+}
+
+/** Independently check the common scripted/live business outcome, retaining occupancy separately. */
+export function verifyAllRoleOutcome(config: ReturnType<typeof loadFleetConfig>, runId: string) {
+  const registry = inspectRuns(config);
+  const run = registry.runs.find((r) => r.id === runId);
+  const roles = new Set([
+    'orchestrator',
+    ...registry
+      .dispatches!.filter((d) => d.runId === runId && d.lifecycle === 'accepted')
+      .map((d) => d.role),
+  ]);
+  if (
+    run?.lifecycle !== 'completed' ||
+    !run.epicClosure ||
+    !run.pipeline ||
+    !run.report ||
+    roles.size !== 7
+  )
+    throw new Error('Incomplete seven-role toy workflow; inspect retained registry evidence');
+  if (!readFileSync(run.report.path, 'utf8').includes('No scientific conclusions'))
+    throw new Error('Missing supplied toy report');
+  return { run, roles: [...roles], resources: registry.resources };
 }

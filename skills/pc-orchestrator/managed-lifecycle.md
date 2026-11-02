@@ -159,3 +159,22 @@ Run `pnpm exec tsx scripts/workflow-demo.ts` for the isolated seven-role scripte
 regression. It retains the temporary evidence directory and makes no model or
 GitHub calls. This proves controlled CLI lifecycle behavior, not native execution
 for every role or scientific validity.
+
+## Opt-in native scheduler demonstration
+
+Run `pnpm exec tsx scripts/workflow-live-demo.ts <codex|claude|agy>` explicitly to
+replace only the toy scheduler with a real managed Orchestrator. The default
+`pnpm exec tsx scripts/workflow-demo.ts` remains model-free. The native demo
+creates an isolated checkout and loopback command endpoint; the Orchestrator
+reads `DEMO-TASKS.md` there and selects assignments and CLI operations itself.
+Subordinates execute the same fixed toy scripts. Helpers prepare artifacts,
+apply requested operations and check results; they do not choose stages.
+
+Inspect the printed evidence directory, `native-cli-requests.jsonl`, native
+startup receipts and `live-outcome.json`. Completion requires the same seven-role
+outcome check as the scripted scenario. A provider prerequisite failure or deadline
+is a blocked demonstration, never a substituted scripted success. The default
+native observation deadline is three minutes; `PC_LIVE_DEMO_TIMEOUT_MS` changes it.
+Retained resources are reported separately from business completion. This demonstrates
+native Orchestrator interface use only when completed; it does not establish native
+execution of subordinate roles, scientific validity or a numerical token guarantee.
