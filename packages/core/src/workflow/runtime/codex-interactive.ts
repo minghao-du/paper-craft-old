@@ -1,10 +1,19 @@
-import { roleInitializationReady, initializationInstructions } from '../run/role-initialization.js';
+import {
+  refreshStartupAttempt,
+  roleInitializationReady,
+  initializationInstructions,
+} from '../run/role-initialization.js';
 /** Persistent Codex TUI adapter backed by native, correlated rollout evidence. */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { quote, type ManagedAttempt, type ExecutionObservation, type RunnerAdapter } from './runtime.js';
+import {
+  quote,
+  type ManagedAttempt,
+  type ExecutionObservation,
+  type RunnerAdapter,
+} from './runtime.js';
 
 interface NativeEvent {
   type: string;
@@ -47,6 +56,7 @@ function files(directory: string): string[] {
 export class InteractiveCodexRunner implements RunnerAdapter {
   readonly name = 'codex';
   readonly interactive = true;
+  readonly automaticStartup = true;
   async termination(attempt: ManagedAttempt) {
     return this.stopped(attempt);
   }
@@ -177,6 +187,11 @@ export class InteractiveCodexRunner implements RunnerAdapter {
         (e) =>
           e.payload.item?.type === 'AgentMessage' &&
           turns.has(e.payload.turn_id) &&
+          (!attempt.startupGate ||
+            native.data.some(
+              (done) =>
+                done.payload.type === 'task_complete' && done.payload.turn_id === e.payload.turn_id,
+            )) &&
           e.payload.item.content?.some((c) => c.text?.includes(ready)),
       )
     )
@@ -215,7 +230,7 @@ export class InteractiveCodexRunner implements RunnerAdapter {
         ? initializationInstructions(attempt.initialization, attempt.directory)
         : '';
     args.push(
-      `${marker(attempt)}\nInitialize the ${attempt.role} role using applicable project/role instructions and durable workflow state. After initialization, first emit a commentary acknowledgement exactly [pc ready role=${attempt.role} attempt=${attempt.id}], then execute the assigned work.\n${instruction}${roleInstructions}`,
+      `${marker(attempt)}\nInitialize the ${attempt.role} role using applicable project/role instructions and durable workflow state. After initialization, first emit a commentary acknowledgement exactly [pc ready role=${attempt.role} attempt=${attempt.id}], ${attempt.startupGate ? 'then end this turn immediately and await a separate activation message. Do not poll for activation in this turn.' : 'then execute the assigned work.'}\n${instruction}${roleInstructions}`,
     );
     const command = ['codex', ...args].map(quote).join(' ');
     const script = join(attempt.directory, 'codex-tui.sh');
@@ -272,16 +287,33 @@ export class InteractiveCodexRunner implements RunnerAdapter {
       return { status: 'uncertain' as const, evidence: String(error) };
     }
   }
+  async messageReceipt(attempt: ManagedAttempt, message: { id: string; brief: string }) {
+    const exact = `${marker(attempt, message.id)}\n${message.brief}`;
+    return this.native(attempt)?.data.some(
+      (e) =>
+        e.payload.item?.type === 'UserMessage' &&
+        e.payload.item.content?.some((c) => c.text === exact),
+    )
+      ? 'Native exact Codex activation input'
+      : undefined;
+  }
   async result(attempt: ManagedAttempt, dispatchId: string): Promise<string | undefined> {
-    if (dispatchId !== (attempt.dispatchId ?? attempt.id)) return undefined;
+    refreshStartupAttempt(attempt);
+    if (
+      dispatchId !== (attempt.dispatchId ?? attempt.id) ||
+      (attempt.startupGate && !attempt.activation)
+    )
+      return undefined;
     const data = this.native(attempt)?.data ?? [];
     const matchingTurns = data
       .filter(
         (e) =>
           e.payload.thread_id === attempt.conversation &&
           e.payload.item?.type === 'UserMessage' &&
-          e.payload.item.content?.some((c) =>
-            c.text?.startsWith(`[pc attempt=${attempt.id} dispatch=${dispatchId} message=`),
+          e.payload.item.content?.some(
+            (c) =>
+              c.text?.startsWith(`[pc attempt=${attempt.id} dispatch=${dispatchId} message=`) &&
+              (!attempt.startupGate || !c.text.startsWith(marker(attempt))),
           ),
       )
       .map((e) => e.payload.turn_id)

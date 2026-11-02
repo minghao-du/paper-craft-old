@@ -47,12 +47,25 @@ export interface ManagedAttempt {
   paneId?: string;
   evidence?: string;
   error?: string;
+  /** End initialization before explicit activation input; persisted across caller exit. */
+  startupGate?: boolean;
+  /** Verified process termination stops startup observation, without releasing occupancy. */
+  startupStopped?: boolean;
+  /** Durable continuation intent; uncertain input is reconciled without replay. */
+  activation?: { id: string; brief: string; status: 'delivered' | 'uncertain'; evidence: string };
   /** Resolved startup failures remain visible after exact-identity recovery. */
   startupFailures?: { error: string; resolvedAt: string }[];
 }
 /** Adapter owns capability checks and evidence; a terminal alone is insufficient. */
 export interface RunnerAdapter {
   name: string;
+  /** Native adapters opt into a detached per-Run startup reconciler. */
+  automaticStartup?: boolean;
+  /** Recover exact continuation input without replaying uncertain delivery. */
+  messageReceipt?(
+    attempt: ManagedAttempt,
+    message: { id: string; brief: string },
+  ): Promise<string | undefined>;
   /** Validate replacement terminal ownership; rebuild only with complete termination evidence. */
   prepareReplacement?(prior: ManagedAttempt, attempts: ManagedAttempt[]): Promise<void>;
   /** True only after the complete persistent interactive lifecycle is verified. */
@@ -133,6 +146,7 @@ export async function startOrchestrator(
     role: 'orchestrator',
     runner: runner.name,
     persistent: !!runner.result,
+    ...(runner.automaticStartup ? { startupGate: true } : {}),
     brief,
     status: 'starting',
     created: new Date().toISOString(),
@@ -155,7 +169,7 @@ export async function startOrchestrator(
   }
   save(path, attempt);
   if (runner.name === 'agy')
-    attempt.brief += `\nManaged Orchestrator assignment: Run ${run}, Attempt ${attempt.id}, config ${config.file}. Read pc-orchestrator's managed branch and its agy reference. After writing initialization.json and native ready acknowledgement, wait until pc workflow orchestrator status --config ${quote(config.file)} reports this Run running with this exact Orchestrator attempt before scheduling. Initialization does not dispatch work.\n`;
+    attempt.brief += `\nManaged Orchestrator assignment: Run ${run}, Attempt ${attempt.id}, config ${config.file}. Read pc-orchestrator's managed branch and its agy reference. After writing initialization.json and native ready acknowledgement, end this turn. A separate activation message will resume this exact Attempt after committed Run activation. Initialization does not dispatch work.\n`;
   writeFileSync(join(directory, 'brief.md'), attempt.brief, { mode: 0o600 });
   try {
     const receipt = await runner.start(attempt);
@@ -426,6 +440,7 @@ abstract class StreamRunner extends CodexRunner {
 /** Explicit Claude Code stream protocol adapter. */
 export class ClaudeRunner extends StreamRunner {
   readonly name = 'claude';
+  readonly automaticStartup = true;
   readonly cancellation = true;
   readonly interactive: boolean = true;
   protected resumeFlag = '--resume';
@@ -438,6 +453,9 @@ export class ClaudeRunner extends StreamRunner {
   }
   recoverReceipt(a: ManagedAttempt) {
     return this.tui.recoverReceipt(a);
+  }
+  messageReceipt(a: ManagedAttempt, m: { id: string; brief: string }) {
+    return this.tui.messageReceipt(a, m);
   }
   stopped(a: ManagedAttempt) {
     return this.tui.terminated(a);
@@ -473,6 +491,7 @@ export class ClaudeRunner extends StreamRunner {
 /** Managed agy persistent TUI adapter backed by native hook transcripts. */
 export class AgyRunner implements RunnerAdapter {
   readonly name = 'agy';
+  readonly automaticStartup = true;
   readonly cancellation = true;
   readonly interactive = true;
   private readonly tui = new AgyInteractive();
@@ -487,6 +506,9 @@ export class AgyRunner implements RunnerAdapter {
   }
   recoverReceipt(a: ManagedAttempt) {
     return this.tui.recoverReceipt(a);
+  }
+  messageReceipt(a: ManagedAttempt, m: { id: string; brief: string }) {
+    return this.tui.messageReceipt(a, m);
   }
   stopped(a: ManagedAttempt) {
     return this.tui.stopped(a);

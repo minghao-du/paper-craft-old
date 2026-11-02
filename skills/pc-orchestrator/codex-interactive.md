@@ -2,6 +2,8 @@
 
 The managed adapter uses the persistent native TUI. Startup requires shared assignment-bound initialization facts in addition to native acknowledgement; input or turn events alone cannot satisfy that gate.
 
+Complete initialization with the exact ready marker and end that turn. The shared startup helper commits activation and sends a separate continuation; start assigned work only after verifying that activation. Ready-only replies are not business results.
+
 Use the managed Codex adapter for named persistent roles; follow [Managed Run lifecycle](managed-lifecycle.md) for authority, acceptance, recovery and release.
 
 1. Preflight verifies installed interactive prompt, queue and exact-resume capabilities plus login. Resolve authentication or configuration failures before dispatch. Startup preserves its pane and Attempt on uncertainty; inspect the recorded tmux address for trust or authorization requests. Review those requests explicitly; never confirm them automatically. Completion criterion: native Codex conversation identity, live exact pane and native role acknowledgement for the current attempt are recorded; the shared role-specific factual initialization gate must also pass.

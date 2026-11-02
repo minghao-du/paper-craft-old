@@ -40,8 +40,8 @@ Options:
 Commands:
   status [options]                  Read concise current Runs, pending work and
                                     resource ownership
-  start [options] <issue>           Create or reconnect a Run; report concise
-                                    startup state
+  start [options] <issue>           Create or reconnect a Run; automatically
+                                    reconcile pending startup in the background
   recover [options] <run>           Recover late startup evidence; report
                                     concise outcome and retained occupancy
   recover-all [options]             Reconcile each incomplete Run; report
@@ -100,7 +100,8 @@ Options:
 exports[`publishes orchestrator start help 1`] = `
 "Usage: pc workflow orchestrator start [options] <issue>
 
-Create or reconnect a Run; report concise startup state
+Create or reconnect a Run; automatically reconcile pending startup in the
+background
 
 Options:
   --detailed                      Return the complete current structured result;

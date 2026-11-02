@@ -10,9 +10,9 @@ Issue delivery is the shared workflow below; EPIC coordination adds planning and
 
 ## Branch selection
 
-For an explicit managed Run/Attempt assignment, read [agy procedure](agy-interactive.md) and the supplied immutable context. Validate every initialization field and context hash. Invalid or incomplete managed context stops with an error; it never enters Launcher intake. Write assignment-bound initialization and native readiness, then wait for status to show this exact Attempt as the active running Orchestrator before using Shared Issue Delivery. **Done:** committed activation is verified.
+For an explicit managed Run/Attempt assignment, read [the shared execution contract](managed-lifecycle.md), its selected provider procedure and the supplied immutable context. Validate every initialization field and context hash. Invalid or incomplete managed context stops with an error; it never enters Launcher intake. Write assignment-bound initialization and native readiness, then end that turn. The startup helper sends a separate activation message after verifying this exact Attempt. On that message, verify the Run and authority before using Shared Issue Delivery. **Done:** committed activation and continuation input are verified.
 
-Without managed context, use Intake as Launcher. For agy, report the startup result and end this invocation; the independent Orchestrator schedules delivery. **Done:** report actual Run/Attempt state and available inspection commands.
+Without managed context, use Intake as Launcher. Report the actual startup and activation status, including pending background recovery, and end this invocation; the independent Orchestrator schedules delivery. **Done:** report actual Run/Attempt state and available inspection commands.
 
 ## Intake
 

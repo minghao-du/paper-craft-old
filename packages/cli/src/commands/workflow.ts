@@ -1,3 +1,4 @@
+import { startupRecoveryStatus } from '@paper-craft/core/workflow/startup';
 import {
   startRun,
   inspectRuns,
@@ -52,7 +53,12 @@ function run(action: () => void): void {
   }
 }
 
-async function inspection(run: WorkflowRun, config: string, detailed = true) {
+async function inspection(
+  run: WorkflowRun,
+  config: FleetConfig,
+  detailed = true,
+  registry?: RunRegistry,
+) {
   const attempt = run.orchestrator;
   let usable = false;
   if (attempt?.address && attempt.terminalSession) {
@@ -68,11 +74,17 @@ async function inspection(run: WorkflowRun, config: string, detailed = true) {
     lifecycle: run.lifecycle,
     attempt: attempt?.id,
     attemptStatus: attempt?.status,
+    activationStatus: attempt?.startupGate ? (attempt.activation?.status ?? 'pending') : undefined,
+    startupRecovery: startupRecoveryStatus(
+      config,
+      run.id,
+      registry ?? { revision: 0, runs: [run] },
+    ),
     cause: detailed ? attempt?.error : attempt?.error ? conciseError(attempt.error) : undefined,
     evidenceDirectory: attempt?.directory,
     context: run.brief,
-    statusCommand: `pc workflow orchestrator status --config ${quote(config)}`,
-    recoverCommand: `pc workflow orchestrator recover ${run.id} --config ${quote(config)}`,
+    statusCommand: `pc workflow orchestrator status --config ${quote(config.file)}`,
+    recoverCommand: `pc workflow orchestrator recover ${run.id} --config ${quote(config.file)}`,
     ...(usable
       ? { attachCommand: `tmux attach-session -t ${quote(attempt!.terminalSession!)}` }
       : {}),
@@ -87,6 +99,7 @@ function attemptSummary(attempt: WorkflowRun['orchestrator']) {
     brief: undefined,
     startupFailures: undefined,
     initialization: undefined,
+    activation: attempt.activation ? { ...attempt.activation, brief: undefined } : undefined,
   };
 }
 
@@ -165,7 +178,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           ...(options.detailed ? registry : statusSummary(registry)),
           inspection: await Promise.all(
             registry.runs.map(async (entry) => ({
-              ...(await inspection(entry, config.file, !!options.detailed)),
+              ...(await inspection(entry, config, !!options.detailed, registry)),
               ...(!options.detailed
                 ? diagnosticError(
                     config,
@@ -194,7 +207,9 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     orchestrator
       .command('start <issue>')
-      .description('Create or reconnect a Run; report concise startup state')
+      .description(
+        'Create or reconnect a Run; automatically reconcile pending startup in the background',
+      )
       .option('--detailed', 'Return the complete current structured result; logs remain referenced')
       .requiredOption('--provider <provider>', 'Managed provider: codex, agy, or claude')
       .option(
@@ -264,9 +279,15 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         output(
           {
             ...(options.detailed ? result : {}),
-            ...(await inspection(result, config.file, !!options.detailed)),
+            ...(await inspection(result, config, !!options.detailed)),
             ...diagnostics,
-            outcome: result.lifecycle === 'running' ? 'succeeded' : 'blocked',
+            outcome:
+              result.orchestrator?.startupGate &&
+              result.orchestrator.activation?.status !== 'delivered'
+                ? 'pending'
+                : result.lifecycle === 'running'
+                  ? 'succeeded'
+                  : 'blocked',
             ...(!options.detailed
               ? {
                   blockers: result.reconciliation?.blockers?.map(conciseError) ?? [],
@@ -305,7 +326,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
             status: 'unknown',
             ...(current && config
               ? {
-                  ...(await inspection(current, config.file, !!options.detailed)),
+                  ...(await inspection(current, config, !!options.detailed)),
                   blockers: current.reconciliation?.blockers.map(conciseError) ?? [],
                   observation: current.orchestrator?.observation,
                   evidence: current.orchestrator?.evidence,
@@ -352,7 +373,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         {
           ...result,
           blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
-          inspection: await inspection(current, config.file, !!options.detailed),
+          inspection: await inspection(current, config, !!options.detailed),
           ...(diagnostics.length
             ? {
                 diagnostics: diagnostics.some((entry) => entry.diagnostics?.length)
@@ -365,7 +386,12 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
                     .join('; ') || undefined,
               }
             : {}),
-          outcome: result.blockers.length ? 'blocked' : 'succeeded',
+          outcome: result.blockers.length
+            ? 'blocked'
+            : current.orchestrator?.startupGate &&
+                current.orchestrator.activation?.status !== 'delivered'
+              ? 'pending'
+              : 'succeeded',
           observation: current.orchestrator?.observation,
           evidence: current.orchestrator?.evidence,
           reconciliation: current.reconciliation
@@ -396,7 +422,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           status: 'unknown',
           ...(current && config
             ? {
-                inspection: await inspection(current, config.file, !!options.detailed),
+                inspection: await inspection(current, config, !!options.detailed),
                 observation: current.orchestrator?.observation,
                 evidence: current.orchestrator?.evidence,
               }

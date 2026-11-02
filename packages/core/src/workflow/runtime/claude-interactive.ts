@@ -1,4 +1,4 @@
-import { roleInitializationReady } from '../run/role-initialization.js';
+import { refreshStartupAttempt, roleInitializationReady } from '../run/role-initialization.js';
 /** Claude native hooks correlate persistent TUI turns with durable dispatches. */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -134,7 +134,7 @@ export class ClaudeInteractive {
       settings,
       '--strict-mcp-config',
       '--append-system-prompt',
-      `Initialize role ${a.role} using applicable project/role instructions and durable state. Once initialization is complete, emit a separate assistant text line exactly [pc ready role=${a.role} attempt=${a.id}] before continuing the task. Never emit this acknowledgement if initialization is blocked. This is execution readiness, not task acceptance.`,
+      `Initialize role ${a.role} using applicable project/role instructions and durable state. Once initialization is complete, emit a separate assistant text line exactly [pc ready role=${a.role} attempt=${a.id}] ${a.startupGate ? 'then end this turn immediately and await a separate activation message. Do not poll for activation in this turn.' : 'before continuing the task.'} Never emit this acknowledgement if initialization is blocked. This is execution readiness, not task acceptance.`,
       ...[
         a.directory,
         ...(a.predecessor ? [dirname(a.directory)] : []),
@@ -201,6 +201,11 @@ export class ClaudeInteractive {
     );
     if (submissions.length !== 1) return undefined;
     if (!this.ready(a, events, submissions[0].prompt_id!)) return undefined;
+    if (
+      a.startupGate &&
+      !events.some((e) => e.hook_event_name === 'Stop' && e.prompt_id === submissions[0].prompt_id)
+    )
+      return undefined;
     return {
       conversation: a.conversation!,
       address: a.address!,
@@ -256,10 +261,13 @@ export class ClaudeInteractive {
     return false;
   }
   async result(a: ManagedAttempt, id: string): Promise<string | undefined> {
-    if (id !== (a.dispatchId ?? a.id)) return undefined;
+    refreshStartupAttempt(a);
+    if (id !== (a.dispatchId ?? a.id) || (a.startupGate && !a.activation)) return undefined;
     const events = this.events(a);
     const submissions = events.filter(
-      (e) => e.hook_event_name === 'UserPromptSubmit' && e.prompt === a.brief,
+      (e) =>
+        e.hook_event_name === 'UserPromptSubmit' &&
+        e.prompt === (a.startupGate ? a.activation?.brief : a.brief),
     );
     if (submissions.length !== 1 || !submissions[0].prompt_id) return undefined;
     const results = events.filter(
@@ -272,6 +280,14 @@ export class ClaudeInteractive {
           .filter((line) => line.trim() !== marker)
           .join('\n')
           .trim() || undefined
+      : undefined;
+  }
+  async messageReceipt(a: ManagedAttempt, message: { id: string; brief: string }) {
+    return this.events(a).some(
+      (e) =>
+        e.hook_event_name === 'UserPromptSubmit' && !!e.prompt_id && e.prompt === message.brief,
+    )
+      ? 'Native exact Claude activation input'
       : undefined;
   }
   async send(a: ManagedAttempt, message: { id: string; brief: string }) {

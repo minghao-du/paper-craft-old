@@ -1,4 +1,4 @@
-import { roleInitializationReady } from '../run/role-initialization.js';
+import { refreshStartupAttempt, roleInitializationReady } from '../run/role-initialization.js';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 /** Agy native hooks correlate persistent TUI turns with durable dispatches. */
@@ -275,7 +275,9 @@ export class AgyInteractive {
       a.role +
       ' attempt=' +
       a.id +
-      ']. Then perform only the assigned work.';
+      (a.startupGate
+        ? ']. End this turn immediately and await a separate activation message. Do not poll for activation in this turn.'
+        : ']. Then perform only the assigned work.');
     writeFileSync(join(a.directory, 'agy-input.txt'), delivered);
     const args = [
       'agy',
@@ -426,14 +428,18 @@ export class AgyInteractive {
   }
 
   async result(a: ManagedAttempt, id: string): Promise<string | undefined> {
-    if (this.native(a)?.agent_state !== 'idle') return undefined;
+    refreshStartupAttempt(a);
+    if (this.native(a)?.agent_state !== 'idle' || (a.startupGate && !a.activation))
+      return undefined;
     const isDispatch = id === (a.dispatchId ?? a.id);
     const messageFile = join(a.directory, `message-${id}.json`);
     let targetBrief: string;
     if (isDispatch) {
-      targetBrief = existsSync(join(a.directory, 'agy-input.txt'))
-        ? readFileSync(join(a.directory, 'agy-input.txt'), 'utf8')
-        : a.brief;
+      targetBrief = a.startupGate
+        ? a.activation!.brief
+        : existsSync(join(a.directory, 'agy-input.txt'))
+          ? readFileSync(join(a.directory, 'agy-input.txt'), 'utf8')
+          : a.brief;
     } else if (existsSync(messageFile)) {
       try {
         targetBrief = (JSON.parse(readFileSync(messageFile, 'utf8')) as { brief: string }).brief;
@@ -464,6 +470,12 @@ export class AgyInteractive {
     return cleaned.length > 0 ? cleaned : raw;
   }
 
+  async messageReceipt(a: ManagedAttempt, message: { id: string; brief: string }) {
+    this.verifyTerminal(a);
+    return this.steps(a).some((s) => this.input(s, message.brief))
+      ? 'Native exact agy activation input'
+      : undefined;
+  }
   async send(a: ManagedAttempt, message: { id: string; brief: string }) {
     this.verifyTerminal(a);
     const prior = new Set(this.steps(a).map((s) => s.step_index));

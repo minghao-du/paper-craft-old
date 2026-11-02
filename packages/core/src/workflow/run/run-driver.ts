@@ -1,3 +1,4 @@
+import { ensureStartupRecovery, reconcileStartup } from './startup.js';
 import { assertStageRole, assertWorkflowRole } from '../runtime/workflow-role.js';
 import { initializationInstructions, verifyRoleInitialization } from './role-initialization.js';
 /** Run intake and authoritative Fleet relationships; managed execution belongs to one Run. */
@@ -144,7 +145,8 @@ function save(config: FleetConfig, registry: RunRegistry): void {
   writeFileSync(temp, JSON.stringify(registry, null, 2), { mode: 0o600 });
   renameSync(temp, file);
 }
-function verifyRunRequirements(run: WorkflowRun, supplied?: string): void {
+/** Verify immutable Run context and additional requirements before re-entry. */
+export function verifyRunRequirements(run: WorkflowRun, supplied?: string): void {
   const context = readFileSync(run.brief.path, 'utf8');
   if (createHash('sha256').update(context).digest('hex') !== run.brief.hash)
     throw new Error('Immutable Run context hash mismatch; inspect the stored context');
@@ -203,6 +205,7 @@ export async function startRun(
     verifyRunRequirements(reconnect, requirements);
     if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
       throw new Error('Existing Run provider or scope conflict');
+    ensureStartupRecovery(config, runner, reconnect.id);
     return inspectRuns(config).runs.find((r) => r.id === reconnect.id)!;
   }
   mkdirSync(home(config), { recursive: true });
@@ -223,6 +226,7 @@ export async function startRun(
       verifyRunRequirements(owningRun, requirements);
       if (owningRun.provider !== provider)
         throw new Error('Existing child execution provider conflict');
+      ensureStartupRecovery(config, runner, owningRun.id);
       return owningRun;
     }
     if (subject.parent && !subject.blockedBy)
@@ -241,6 +245,7 @@ export async function startRun(
       verifyRunRequirements(existing, requirements);
       if (existing.provider !== provider || existing.subject.kind !== subject.kind)
         throw new Error('Existing Run provider or scope conflict');
+      ensureStartupRecovery(config, runner, existing.id);
       return existing;
     }
     const id = randomUUID();
@@ -289,6 +294,7 @@ export async function startRun(
       throw error;
     }
     save(config, registry);
+    ensureStartupRecovery(config, runner, run.id);
     return run;
   } finally {
     rmSync(lock, { recursive: true });
@@ -508,6 +514,7 @@ export async function dispatchStage(
       ...(run.dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
       dispatchId: id,
       persistent: !!runner.result,
+      ...(runner.automaticStartup ? { startupGate: true } : {}),
       brief: request.brief,
       initialization: runner.result
         ? {
@@ -546,7 +553,10 @@ export async function dispatchStage(
     launch = true;
     return next;
   });
-  if (!launch) return dispatch;
+  if (!launch) {
+    ensureStartupRecovery(config, runner, dispatch.runId);
+    return dispatch;
+  }
   const attempt = dispatch.attempts[0];
   try {
     const ack = await runner.start(attempt);
@@ -559,12 +569,14 @@ export async function dispatchStage(
     attempt.status = 'unknown';
     attempt.error = String(error);
   }
-  return updateRunRegistry(config, (registry) => {
+  const result = updateRunRegistry(config, (registry) => {
     const current = findDispatch(registry, dispatch.id);
     current.attempts[0] = attempt;
     current.lifecycle = attempt.status === 'running' ? 'running' : 'reserved';
     return current;
   });
+  ensureStartupRecovery(config, runner, dispatch.runId);
+  return result;
 }
 /** Publish the immutable claim before the durable completion event. */
 export function publishStageReceipt(
@@ -752,6 +764,9 @@ export async function retryStage(
     const next: ManagedAttempt = {
       ...prior,
       predecessor: prior.id,
+      ...(runner.automaticStartup ? { startupGate: true } : {}),
+      activation: undefined,
+      startupStopped: undefined,
       id,
       directory,
       status: 'starting',
@@ -784,12 +799,14 @@ export async function retryStage(
     attempt.status = 'unknown';
     attempt.error = String(error);
   }
-  return updateRunRegistry(config, (registry) => {
+  const result = updateRunRegistry(config, (registry) => {
     const current = findDispatch(registry, dispatchId);
     current.attempts[current.attempts.length - 1] = attempt;
     current.lifecycle = attempt.status === 'running' ? 'running' : 'reserved';
     return current;
   });
+  ensureStartupRecovery(config, runner, dispatch.runId);
+  return result;
 }
 
 /** Set a bounded repair policy without erasing previously unsuccessful attempts. */
@@ -932,6 +949,9 @@ export async function recoverRun(
         observation: undefined,
         error: undefined,
         startupFailures: undefined,
+        ...(runner.automaticStartup ? { startupGate: true } : {}),
+        activation: undefined,
+        startupStopped: undefined,
         predecessor: orchestrator.id,
         id,
         directory,
@@ -961,7 +981,7 @@ export async function recoverRun(
       );
     }
     if (runner.name === 'agy')
-      replacement.brief += `\nManaged Orchestrator assignment: Run ${runId}, Attempt ${replacement.id}, config ${config.file}. After writing initialization and native ready acknowledgement, wait until pc workflow orchestrator status reports this Run running with this exact Attempt before scheduling. Initialization does not dispatch work.\n`;
+      replacement.brief += `\nManaged Orchestrator assignment: Run ${runId}, Attempt ${replacement.id}, config ${config.file}. After writing initialization and native ready acknowledgement, end this turn and await a separate activation message before scheduling. Initialization does not dispatch work.\n`;
     writeFileSync(join(replacement.directory, 'brief.md'), replacement.brief, {
       mode: 0o400,
       flag: 'wx',
@@ -982,6 +1002,8 @@ export async function recoverRun(
           delete current.orchestrator.error;
         }
         Object.assign(current.orchestrator, ack, { status: 'running' });
+        if (runner.automaticStartup && runner.name === 'agy')
+          current.orchestrator.startupGate = true;
       }
     }
     if (replacement) {
@@ -1077,6 +1099,8 @@ export async function recoverRun(
         blockers.push('Orchestrator startup pending; unknown occupancy remains reserved');
     });
   }
+  await reconcileStartup(config, runner, runId);
+  ensureStartupRecovery(config, runner, runId);
   return { blockers, pendingDispatches };
 }
 

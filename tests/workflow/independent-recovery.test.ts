@@ -117,7 +117,9 @@ test('replacement clears stale startup state, inherits requirements, and binds f
     expect(current.orchestrator?.predecessor).toBe(run.orchestratorId);
     expect(current.orchestrator?.error).toBeUndefined();
     expect(current.orchestrator?.brief).toContain('retain source data');
-    expect(current.orchestrator?.brief).toContain('wait until');
+    expect(current.orchestrator?.brief).toContain(
+      'end this turn and await a separate activation message',
+    );
     expect(current.orchestrator?.initialization?.briefHash).not.toBe(
       run.orchestrator?.initialization?.briefHash,
     );

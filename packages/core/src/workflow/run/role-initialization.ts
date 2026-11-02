@@ -110,3 +110,24 @@ export function roleInitializationReady(attempt: ManagedAttempt): boolean {
     return false;
   }
 }
+
+/** Refresh startup identity and activation committed by the background helper for a held Attempt. */
+export function refreshStartupAttempt(attempt: ManagedAttempt): void {
+  if (!attempt.startupGate || !attempt.initialization) return;
+  const registry = JSON.parse(readFileSync(attempt.initialization.registry, 'utf8'));
+  const run = registry.runs.find((r: { id: string }) => r.id === attempt.run);
+  const current =
+    run?.orchestratorId === attempt.id
+      ? run.orchestrator
+      : registry.dispatches
+          ?.find((d: { id: string }) => d.id === attempt.dispatchId)
+          ?.attempts.at(-1);
+  if (run?.lifecycle === 'running' && current?.id === attempt.id)
+    Object.assign(attempt, {
+      activation: current.activation,
+      conversation: current.conversation,
+      address: current.address,
+      evidence: current.evidence,
+      status: current.status,
+    });
+}

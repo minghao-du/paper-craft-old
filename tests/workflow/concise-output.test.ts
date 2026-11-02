@@ -573,3 +573,24 @@ it('reports already reserved Start state on failure without retrying startup', a
   expect(result.exitCode).toBe(2);
   expect(startRun).toHaveBeenCalledTimes(1);
 });
+
+it('reports pending continuation instead of startup success after readiness is verified', async () => {
+  const registry = structuredClone(fixture);
+  const current = registry.runs[0];
+  Object.assign(current, { lifecycle: 'running' });
+  Object.assign(current.orchestrator, {
+    status: 'running',
+    startupGate: true,
+    activation: undefined,
+  });
+  vi.mocked(inspectRuns).mockReturnValue(registry);
+  vi.mocked(startRun).mockResolvedValue(current);
+  const result = await invoke(['start', '7', '--provider', 'agy', '--type', 'issue']);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    outcome: 'pending',
+    lifecycle: 'running',
+    attemptStatus: 'running',
+    activationStatus: 'pending',
+  });
+  expect(startRun).toHaveBeenCalled();
+});
