@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 import { readDashboardFleet } from '../../packages/core/src/workflow/fleet/dashboard.js';
 import { managedRunner } from '../../packages/core/src/workflow/runtime/runtime.js';
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -87,7 +87,13 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       startRun(config, { ...managedRunner('claude'), interactive: false }, subject, 'claude'),
     ).rejects.toThrow(/interactive/);
     expect(launches).toBe(0);
-    const first = await startRun(config, runner, subject, 'codex');
+    const requirements = 'Keep all source data\nUse TypeScript only';
+    const first = await startRun(config, runner, subject, 'codex', requirements);
+    expect(readFileSync(first.brief.path, 'utf8')).toContain(requirements);
+    await expect(startRun(config, runner, subject, 'codex', 'Discard source data')).rejects.toThrow(
+      /Requirements conflict/,
+    );
+    expect((await startRun(config, runner, subject, 'codex', requirements)).id).toBe(first.id);
     expect(orchestratorForSubject(config, subject.repository, 7).runner).toBe('codex');
     updateRunRegistry(config, (registry) => {
       registry.runs[0].provider = 'unsupported';
@@ -176,6 +182,8 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     expect(launches).toBe(beforeInvalidLaunches);
     expect(JSON.stringify(inspectRuns(config))).toBe(beforeInvalidRole);
     const stage = await dispatchStage(config, runner, request);
+    expect(stage.brief).toContain(requirements);
+    expect(stage.attempts[0].brief).toContain(requirements);
     const registryPath = join(runtime, 'registry.json');
     const validRegistry = JSON.stringify(inspectRuns(config));
     const corruptRegistry = JSON.parse(validRegistry);
@@ -227,6 +235,7 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       async () => true,
     );
     expect(retried.attempts).toHaveLength(2);
+    expect(retried.attempts[1].brief).toContain(requirements);
     expect(retried.attempts[1].brief).not.toContain(request.brief);
     expect(retried.attempts[1].brief).toContain(stage.briefReference.path);
     expect(retried.attempts[1].brief).toContain('Do not replay');
