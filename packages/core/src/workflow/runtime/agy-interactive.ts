@@ -309,7 +309,14 @@ export class AgyInteractive {
     }).trim();
     writeFileSync(
       join(a.directory, 'terminal.json'),
-      JSON.stringify({ address: a.address, conversation: a.conversation, session, run: a.run }),
+      JSON.stringify({
+        address: a.address,
+        conversation: a.conversation,
+        session,
+        run: a.run,
+        paneId: a.paneId,
+        windowId: a.windowId,
+      }),
     );
     execFileSync('tmux', ['set-option', '-p', '-t', this.address(a), 'remain-on-exit', 'on']);
     writeFileSync(join(a.directory, 'agy-launch-ready'), 'ready', { flag: 'wx' });
@@ -335,16 +342,22 @@ export class AgyInteractive {
   }
 
   async recoverReceipt(a: ManagedAttempt) {
-    if (!a.address && existsSync(join(a.directory, 'terminal.json'))) {
-      try {
-        a.address = (
-          JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
-            address?: string;
-          }
-        ).address;
-      } catch {
-        /* ignore read error */
-      }
+    if (existsSync(join(a.directory, 'terminal.json'))) {
+      const terminal = JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
+        address?: string;
+        session?: string;
+        run?: string;
+        paneId?: string;
+        windowId?: string;
+      };
+      if (a.run && (terminal.run !== a.run || terminal.session !== `pc-run-${a.run}`))
+        throw new Error('Durable terminal Run ownership mismatch');
+      if (a.address && terminal.address !== a.address)
+        throw new Error('Durable terminal address mismatch');
+      a.address ??= terminal.address;
+      a.terminalSession ??= terminal.session;
+      a.paneId ??= terminal.paneId;
+      a.windowId ??= terminal.windowId;
     }
     if (a.run && a.terminalSession !== `pc-run-${a.run}`)
       throw new Error('Unsupported legacy agy layout; historical execution will not restart');
