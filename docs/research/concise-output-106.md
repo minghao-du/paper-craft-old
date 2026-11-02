@@ -20,7 +20,22 @@ Frozen completion list: Status, Start with startup diagnostics, Recover, standal
 
 Fixed Registry input is `tests/workflow/fixtures/concise-output/registry.ts`; baseline calls and stdout/stderr/combined bytes are in sibling `baseline.json`. Capture used the registered Commander entry with controlled service results, matching the approved start-type seam. Inspection has no live terminal, so no host dependency. Start returns the first fixture Run; Recover returns the fixed occupancy blocker and pending Dispatch. Inputs include two Runs, 35 pending results, long Briefs/Requirements and handled prior Attempt history. Output includes a trailing newline and compact JSON. Zero stderr is observed, not assumed.
 
-On the frozen commit, run the fixture and baseline-capture test from #107 with `PC_CAPTURE_BASELINE=1 pnpm exec vitest run tests/workflow/concise-output.test.ts`. Do not overwrite baseline after implementation. The capture branch is retained solely to reproduce the original command calls. Byte comparisons measure bytes, not tokens. Later tickets should add their actual error fixtures before changing their audited error boundaries; this baseline establishes normal/blocked command calls, not proof of diagnostic correctness.
+The harness did not exist at the frozen revision. Reproduce in a disposable checkout of the delivered integration branch, retaining its harness and fixtures while replacing only the command adapter. Never run capture flags in the delivery checkout: they overwrite that checkout's baseline files. From a clean delivery checkout, create the scratch worktree, install dependencies and build Core:
+
+```sh
+git worktree add --detach /tmp/pc106-reproduce HEAD
+cd /tmp/pc106-reproduce
+pnpm install --offline --frozen-lockfile
+pnpm --filter @paper-craft/core build
+git show 3092149:packages/cli/src/commands/workflow.ts > packages/cli/src/commands/workflow.ts
+PC_CAPTURE_BASELINE=1 pnpm exec vitest run tests/workflow/concise-output.test.ts -t 'retains every current Run'
+git show b2452f2:packages/cli/src/commands/workflow.ts > packages/cli/src/commands/workflow.ts
+PC_CAPTURE_START_ERROR=1 pnpm exec vitest run tests/workflow/concise-output.test.ts -t 'keeps hidden startup diagnostics'
+git show e5294eb:packages/cli/src/commands/workflow.ts > packages/cli/src/commands/workflow.ts
+PC_CAPTURE_RECOVER_ERROR=1 pnpm exec vitest run tests/workflow/concise-output.test.ts -t 'keeps Recover diagnostic failures'
+```
+
+Compare scratch `tests/workflow/fixtures/concise-output/*baseline.json` byte/exit fields with the delivery checkout's committed records; random diagnostic identities are not baseline inputs. Remove the disposable worktree after comparison. Each capture invocation should be bounded by a 120-second outer process timeout. The three adapter revisions reproduce the before-state of their respective slices; they do not claim the diagnostic fixtures existed at the original freeze. Byte comparisons measure bytes, not tokens.
 
 ## Acceptance evidence
 
@@ -54,3 +69,44 @@ Recover uses Start's existing diagnostic mechanism for current Attempt errors an
 On the identical frozen normal/blocked fixture and call, Recover changes from 460 stdout bytes + 0 stderr (460 total) to 811 + 0 (811 total). The increase carries the previously absent explicit outcome, Reconciliation and occupancy information; this boundary did not contain historical redundancy. The audited error fixture changes from 3,461 + 0 (3,461 total) to 1,094 + 0 (1,094 total), including current execution state and its readable diagnostic reference. No tokenizer was used. `tests/workflow/fixtures/concise-output/recover-error-baseline.json` holds the exact fixed error and original output measurements, captured before replacing the Recover error boundary. Reproduce the old error measurement using the command adapter from `e5294eb` and this harness with `PC_CAPTURE_RECOVER_ERROR=1`; do not overwrite it using the shipped adapter. `PC_MEASURE_RECOVER=1` writes current normal/error measurements to `/tmp/pc-106-context/recover-after.json` and `recover-error-after.json` (create that directory first).
 
 The two CLI regression slices went red on missing recovery outcome/current information and on the raw error boundary before passing. They protect successful/blocked/unknown states, complete detailed output, preserved replacement options and one Recovery per invocation, readable saved diagnostics with command/Run/Attempt attribution, current Registry reuse, hidden blocker diagnostics and successful business work despite actual filesystem save failure. Existing ownership, Evidence, Hash, independent replacement and Recovery checks passed unchanged. Seven suites passed 41 checks, including eight actual CLI help commands; complete process lifecycle was 9.894 seconds under an outer 120-second process-group timeout (Vitest 9.03 seconds). Build, lint, typecheck, actual Recover help and whole-corpus documentation checks passed. These controlled CLI fixtures do not establish ordinary Agy acceptance; that remains #110.
+
+## Integrated acceptance (#110)
+
+Validation host: macOS 14.5, x86_64, Node v24.22.1, pnpm 12.8.1. Final implementation includes review fix `7d06db2`: quoted JSON credentials are redacted, persisted Reconciliation blockers are referenced without creating duplicate diagnostics, pending message Brief bodies are omitted with message/Dispatch selectors retained, and Start failures refresh available reserved Run state without retrying startup. Regression assertions first failed on each defect, then passed. No authoritative schema or Runtime parsing changed.
+
+| Frozen delivery item | Automated evidence | Result |
+| --- | --- | --- |
+| Status | `concise-output.test.ts`: two Runs, 35 pending claims, history growth, uncertain messages, all current resources/blockers/references, detailed result and read errors | Passed |
+| Start and startup diagnostics | Same suite: running/blocked/error outcomes; reserved state on failure; one launch per invocation; readable invocation association; quoted/unquoted secret redaction; existing-record reuse; real write and physical-root failures | Passed |
+| Recover | Same suite: success, blocked/unknown, command errors, detailed effects, current Evidence/Reconciliation, persisted blocker reuse, save failure independent of business success | Passed |
+| Original Evidence and release safety | Existing `run-driver`, `run-ownership`, `evidence-discipline`, `recovery`, `independent-recovery`, `agy-interactive` suites | Passed unchanged |
+| Public help and canonical guidance | Actual Status/Start/Recover `--help`, `help-contract.test.ts`, `skills/pc-orchestrator/managed-lifecycle.md` and its role pointer | Passed; shared rule remains canonical |
+| Ordinary Agy conversation | Native interactive session described below; actual command output and referenced file inspected | Passed with limitations below |
+
+Final fixed-input measurements include the trailing newline. No tokenizer was used; these are byte measurements only.
+
+| Identical fixture/call | Before stdout | Before stderr | Before total | After stdout | After stderr | After total |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Status | 354200 | 0 | 354200 | 32974 | 0 | 32974 |
+| Start blocked | 15560 | 0 | 15560 | 506 | 0 | 506 |
+| Startup probe error | 3280 | 0 | 3280 | 459 | 0 | 459 |
+| Recover blocked | 460 | 0 | 460 | 811 | 0 | 811 |
+| Recover diagnostic error | 3461 | 0 | 3461 | 1094 | 0 | 1094 |
+
+The before-state adapters were rechecked in an isolated worktree with the delivered harness: all three committed baseline records matched their stdout/stderr/total/exit fields. Final after-state values were remeasured with `PC_MEASURE_STATUS=1 PC_MEASURE_START=1 PC_MEASURE_RECOVER=1 pnpm exec vitest run tests/workflow/concise-output.test.ts` (create `/tmp/pc-106-context` first). Recover's normal result grows because it now carries necessary explicit state; historical redundancy cases shrink. Legitimate Run/pending-work growth remains unbounded rather than truncated.
+
+Required checks were `pnpm run build`, `pnpm run lint`, `pnpm run typecheck`, `pnpm docs:check`, and this integration test command:
+
+```sh
+pnpm exec vitest run tests/workflow/concise-output.test.ts tests/workflow/start-type.test.ts tests/workflow/run-driver.test.ts tests/workflow/run-ownership.test.ts tests/workflow/evidence-discipline.test.ts tests/workflow/recovery.test.ts tests/workflow/independent-recovery.test.ts tests/workflow/agy-interactive.test.ts tests/workflow/help-contract.test.ts
+```
+
+All 54 checks in nine suites passed. The complete integration-test subprocess, including fixture setup and teardown, took 11.916 seconds under Python `subprocess.run(..., timeout=120)`; Vitest reported 10.69 seconds. This bounds every changed test's complete execution within that run. Dependency installation and builds were separate. The isolated final measurement rerun passed all eight output-contract tests (Vitest 1.43 seconds). Earlier slice timings above are historical observations; this exact final command is the reproducible integration gate.
+
+### Ordinary Agy observation and limits
+
+Run `pnpm exec tsx tests/workflow/fixtures/concise-output/prepare-smoke.ts <isolated-temporary-directory>` to prepare the synthetic Fleet from the committed fixed fixture. It has two Runs, two pending Dispatches/claims, unknown occupancy, real local path/hash references and a persisted startup error. It creates no executions or resource ownership markers. Build the delivered CLI before invoking it.
+
+In native Agy 1.4.12 with Gemini 3.8 Flash/high, ordinary conversation `2488403f-23d3-43cd-a195-f30110f44735` ran the delivered `pc workflow orchestrator status --config /tmp/pc-106-smoke/.epic-config.json`, then the same call with `--detailed`. The user handled native trust and command authorization. Expanded native terminal tool results were inspected directly, rather than inferring acceptance from fixture tests or the model's final summary. Concise output retained both Runs, `pending-0`/`pending-1`, blocked lifecycle, unknown current Attempt and the existing Registry diagnostic reference. Agy correctly declined resource reuse on unknown occupancy. Detailed output exposed the full fixture bodies. Its native file-reading tool followed the Registry reference and read the current `run-1` / `attempt-current` error successfully. One intermediate native ReadFile byte-offset error was followed by a successful narrower read; this provider read behavior was not modified.
+
+This smoke establishes ordinary-conversation inspection, expansion and diagnostic follow-through. It does not establish real EPIC execution, live startup/replacement, every Provider, or all failure modes; those unchanged business guarantees rely on the automated evidence listed separately. The callback-advertised native transcript path was not readable on disk, so no transcript verification or archive is claimed. Native tool output was observed in the live terminal; no native transcript or runtime log is committed. Diagnostic references remain troubleshooting aids, never original Acceptance Evidence. No remaining approved-scope acceptance item is deferred.
