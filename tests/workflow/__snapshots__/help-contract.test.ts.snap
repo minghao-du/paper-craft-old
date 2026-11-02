@@ -38,13 +38,12 @@ Options:
   -h, --help                        display help for command
 
 Commands:
-  initialize [options] <run>        Activate the prepared current agy
-                                    Orchestrator after role initialization
-  status [options]                  Read Fleet Run and Orchestrator ownership
+  status [options]                  Read Run lifecycle, retained execution state
+                                    and resource ownership
   start [options] <issue>           Create or reconnect a Run from configured
                                     repository context
-  recover [options] <run>           Reconcile durable results and startup
-                                    identity; preserve unknown occupancy
+  recover [options] <run>           Recover late startup evidence without
+                                    relaunch; preserve unknown occupancy
   recover-all [options]             Reconcile each incomplete Run; report
                                     unowned work as blocked
   finalize-epic [options] <number>  Assess EPIC delivery; finalize specialists
@@ -74,7 +73,7 @@ Options:
 exports[`publishes orchestrator recover help 1`] = `
 "Usage: pc workflow orchestrator recover [options] <run>
 
-Reconcile durable results and startup identity; preserve unknown occupancy
+Recover late startup evidence without relaunch; preserve unknown occupancy
 
 Options:
   --replace        Replace Orchestrator only after verified termination
@@ -102,19 +101,21 @@ exports[`publishes orchestrator start help 1`] = `
 Create or reconnect a Run from configured repository context
 
 Options:
-  --provider <provider>  Managed provider: codex, agy, or claude
-  --type <type>          Subject type; must match the title EPIC marker
-                         (choices: "issue", "epic")
-  --config <file>        Authoritative Fleet configuration (default:
-                         ".epic-config.json")
-  -h, --help             display help for command
+  --provider <provider>       Managed provider: codex, agy, or claude
+  --requirements <text>       Immutable additional Run Requirements
+  --requirements-file <file>  Read immutable Run Requirements from a UTF-8 file
+  --type <type>               Subject type; must match the title EPIC marker
+                              (choices: "issue", "epic")
+  --config <file>             Authoritative Fleet configuration (default:
+                              ".epic-config.json")
+  -h, --help                  display help for command
 "
 `;
 
 exports[`publishes orchestrator status help 1`] = `
 "Usage: pc workflow orchestrator status [options]
 
-Read Fleet Run and Orchestrator ownership
+Read Run lifecycle, retained execution state and resource ownership
 
 Options:
   --config <file>  Authoritative Fleet configuration (default:

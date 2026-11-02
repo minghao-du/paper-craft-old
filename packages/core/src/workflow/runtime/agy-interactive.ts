@@ -1,9 +1,9 @@
 import { roleInitializationReady } from '../run/role-initialization.js';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 /** Agy native hooks correlate persistent TUI turns with durable dispatches. */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { quote, type ManagedAttempt, type ExecutionObservation } from './runtime.js';
 
@@ -19,180 +19,6 @@ type NativeStep = {
 
 /** agy native transcript and status callbacks preserve exact conversation attribution. */
 export class AgyInteractive {
-  /** Launch a user conversation with evidence configured before agy starts; no Run is created. */
-  async prepare(): Promise<void> {
-    if (!process.env.TMUX || !process.env.TMUX_PANE)
-      throw new Error('Open a single-pane tmux window, then run pc workflow agy prepare again');
-    await this.preflight();
-    const pane = process.env.TMUX_PANE;
-    this.preparationPane(pane);
-    const root = join(homedir(), '.config', 'pc', 'agy-preparations');
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    const directory = mkdtempSync(join(root, 'conversation-'));
-    const token = randomUUID();
-    writeFileSync(
-      join(directory, 'preparation.json'),
-      JSON.stringify({ address: 'tmux:' + pane, token }),
-      { mode: 0o600 },
-    );
-    const hook = join(directory, 'agy-status.cjs');
-    writeFileSync(
-      hook,
-      `const fs=require('node:fs');let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const p=JSON.parse(s);if(!p.conversation_id||!p.transcript_path)return;const f=${JSON.stringify(join(directory, 'agy-native.json'))};fs.writeFileSync(f+'.tmp',JSON.stringify({...p,pane:process.env.TMUX_PANE,token:${JSON.stringify(token)},at:new Date().toISOString()}),{mode:0o600});fs.renameSync(f+'.tmp',f);});`,
-      { mode: 0o600 },
-    );
-    const settings = join(directory, 'agy-settings.json');
-    writeFileSync(
-      settings,
-      JSON.stringify({
-        statusLine: {
-          type: 'command',
-          command: 'node ' + quote(hook),
-          enabled: true,
-          stack_with_default: true,
-        },
-      }),
-      { mode: 0o600 },
-    );
-    console.log('Prepared evidence directory: ' + directory);
-    const result = spawnSync('agy', ['--settings', settings, '--add-dir', directory], {
-      stdio: 'inherit',
-      env: { ...process.env, PC_AGY_PREPARATION: directory },
-    });
-    if (!result.error && (result.status !== null || result.signal)) {
-      const native = existsSync(join(directory, 'agy-native.json'))
-        ? JSON.parse(readFileSync(join(directory, 'agy-native.json'), 'utf8'))
-        : {};
-      writeFileSync(
-        join(directory, 'process-exit.json'),
-        JSON.stringify({
-          token,
-          address: 'tmux:' + pane,
-          conversation: native.conversation_id,
-          status: result.status,
-          signal: result.signal,
-        }),
-        { mode: 0o600 },
-      );
-    }
-    if (result.error || result.status !== 0)
-      throw new Error(
-        'Prepared agy exited unsuccessfully: ' + String(result.error ?? result.status),
-      );
-  }
-
-  private preparationPane(pane: string): void {
-    if (!/^%[0-9]+$/.test(pane)) throw new Error('Expected exact tmux pane ID');
-    const actual = execFileSync(
-      'tmux',
-      ['display-message', '-p', '-t', pane, '#{pane_id} #{window_panes}'],
-      { encoding: 'utf8' },
-    ).trim();
-    if (actual !== pane + ' 1')
-      throw new Error(
-        'Preparation requires the current independent single-pane tmux window; move this conversation to one and retry',
-      );
-  }
-
-  /** Validate exact callback, transcript and live pane association before a later Run registration. */
-  prepared(
-    directory: string,
-    pane = process.env.TMUX_PANE,
-  ): { conversation: string; address: string; transcript: string; directory: string } {
-    if (!pane) throw new Error('Reopen using pc workflow agy prepare inside tmux');
-    this.preparationPane(pane);
-    try {
-      if (existsSync(join(directory, 'process-exit.json')))
-        throw new Error('Prepared agy has exited');
-      const preparation = JSON.parse(readFileSync(join(directory, 'preparation.json'), 'utf8'));
-      const native = JSON.parse(readFileSync(join(directory, 'agy-native.json'), 'utf8'));
-      if (preparation.address !== 'tmux:' + pane || native.pane !== pane)
-        throw new Error('Prepared pane does not match current pane');
-      if (
-        !preparation.token ||
-        native.token !== preparation.token ||
-        !native.conversation_id ||
-        !native.transcript_path ||
-        !existsSync(native.transcript_path)
-      )
-        throw new Error('Native callback identity or transcript unavailable');
-      readFileSync(native.transcript_path, 'utf8');
-      return {
-        conversation: native.conversation_id,
-        address: preparation.address,
-        transcript: native.transcript_path,
-        directory,
-      };
-    } catch (error) {
-      throw new Error(
-        'Prepared agy callback/pane evidence unavailable; reopen with pc workflow agy prepare: ' +
-          String(error),
-        { cause: error },
-      );
-    }
-  }
-
-  /** Organize the verified current window without starting another execution. */
-  adopt(a: ManagedAttempt): void {
-    const pane = a.address?.slice(5);
-    if (!a.run || !pane) throw new Error('Missing current Run/pane identity');
-    const tmux = (args: string[]) => execFileSync('tmux', args, { encoding: 'utf8' }).trim();
-    const [actual, count, source, window] = tmux([
-      'display-message',
-      '-p',
-      '-t',
-      pane,
-      '#{pane_id} #{window_panes} #{session_name} #{window_id}',
-    ]).split(' ');
-    if (actual !== pane || count !== '1') throw new Error('Expected current single-pane window');
-    const target = `pc-run-${a.run}`;
-    const sessions = tmux(['list-sessions', '-F', '#{session_name} #{@pc_run_id}']).split('\n');
-    const sourceEntry = sessions.find((line) => line.split(' ')[0] === source);
-    if (source.startsWith('pc-run-') && sourceEntry !== `${source} ${source.slice(7)}`)
-      throw new Error('Source Run session ownership missing or conflicting');
-    if (
-      source !== target &&
-      sourceEntry?.split(' ')[1] &&
-      !(a.reconciledRun && sourceEntry === `pc-run-${a.reconciledRun} ${a.reconciledRun}`)
-    )
-      throw new Error('Current pane has unresolved Run ownership');
-    const existing = sessions.find((line) => line.split(' ')[0] === target);
-    if (existing !== undefined && existing !== `${target} ${a.run}`)
-      throw new Error('Run session ownership missing or conflicting');
-    writeFileSync(
-      join(a.directory, 'takeover.json'),
-      JSON.stringify({ pane, source, window, target, run: a.run }),
-    );
-    if (source !== target) {
-      const windows = tmux(['list-windows', '-t', source, '-F', '#{window_id}']).split('\n');
-      if (!existing && windows.length === 1) {
-        tmux(['rename-session', '-t', source, target]);
-        tmux(['set-option', '-t', target, '@pc_run_id', a.run]);
-      } else {
-        if (!existing) {
-          tmux(['new-session', '-d', '-s', target]);
-          tmux(['set-option', '-t', target, '@pc_run_id', a.run]);
-        }
-        tmux([
-          'move-window',
-          ...(!existing ? ['-k'] : []),
-          '-s',
-          window,
-          '-t',
-          target + (!existing ? ':0' : ':'),
-        ]);
-      }
-    }
-    tmux(['rename-window', '-t', window, `orchestrator-${a.id.slice(0, 8)}`]);
-    a.terminalSession = target;
-    a.windowId = window;
-    a.paneId = pane;
-    writeFileSync(
-      join(a.directory, 'terminal.json'),
-      JSON.stringify({ address: a.address, conversation: a.conversation }),
-    );
-  }
-
   /** Rebuild only a missing owned Run terminal after all historical executions exited. */
   async prepareReplacement(prior: ManagedAttempt, attempts: ManagedAttempt[]): Promise<void> {
     if (!prior.run || prior.terminalSession !== `pc-run-${prior.run}`)
@@ -240,9 +66,7 @@ export class AgyInteractive {
 
   private native(a: ManagedAttempt): Record<string, string> | undefined {
     try {
-      const n = JSON.parse(
-        readFileSync(join(a.preparation ?? a.directory, 'agy-native.json'), 'utf8'),
-      );
+      const n = JSON.parse(readFileSync(join(a.directory, 'agy-native.json'), 'utf8'));
       return !a.conversation || n.conversation_id === a.conversation ? n : undefined;
     } catch {
       return undefined;
@@ -347,23 +171,6 @@ export class AgyInteractive {
   }
 
   async stopped(a: ManagedAttempt): Promise<boolean> {
-    if (a.currentExecution && a.preparation) {
-      try {
-        const launch = JSON.parse(readFileSync(join(a.preparation, 'preparation.json'), 'utf8'));
-        const exit = JSON.parse(readFileSync(join(a.preparation, 'process-exit.json'), 'utf8'));
-        if (
-          launch.token &&
-          exit.token === launch.token &&
-          exit.address === launch.address &&
-          exit.address === a.address &&
-          exit.conversation === a.conversation &&
-          (Number.isInteger(exit.status) || typeof exit.signal === 'string')
-        )
-          return true;
-      } catch {
-        /* Missing exit evidence leaves occupancy unknown. */
-      }
-    }
     const panes = this.panes();
     const addr = this.address(a);
     if (panes.has(addr)) this.verifyTerminal(a);
@@ -391,13 +198,43 @@ export class AgyInteractive {
   async start(a: ManagedAttempt) {
     if (!a.run) throw new Error('Agy child requires Run ownership');
     const session = `pc-run-${a.run}`;
-    const sessions = execFileSync(
-      'tmux',
-      ['list-sessions', '-F', '#{session_name} #{@pc_run_id}'],
-      { encoding: 'utf8' },
-    )
-      .trim()
-      .split('\n');
+    let sessions: string[];
+    try {
+      sessions = execFileSync('tmux', ['list-sessions', '-F', '#{session_name} #{@pc_run_id}'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+        .trim()
+        .split('\n');
+    } catch (error) {
+      if (!/no server running|error connecting/.test(String(error))) throw error;
+      sessions = [];
+    }
+    const existing = sessions.find((line) => line.split(' ')[0] === session);
+    const initial = a.role === 'orchestrator' && !a.predecessor;
+    if (initial && existing !== undefined)
+      throw new Error('Run session already exists; ownership cannot be assumed');
+    if (initial) {
+      a.address =
+        'tmux:' +
+        execFileSync(
+          'tmux',
+          [
+            'new-session',
+            '-P',
+            '-F',
+            '#{pane_id}',
+            '-d',
+            '-s',
+            session,
+            '-n',
+            `orchestrator-${a.id.slice(0, 8)}`,
+          ],
+          { encoding: 'utf8' },
+        ).trim();
+      execFileSync('tmux', ['set-option', '-t', session, '@pc_run_id', a.run]);
+      sessions.push(`${session} ${a.run}`);
+    }
     if (!sessions.includes(`${session} ${a.run}`))
       throw new Error(
         'Run session ownership missing or conflicting; reconcile the Orchestrator session before dispatch',
@@ -456,23 +293,30 @@ export class AgyInteractive {
       { mode: 0o700 },
     );
     const tmuxArgs = [
-      'new-window',
-      '-d',
+      ...(initial ? ['respawn-pane', '-k'] : ['new-window', '-d']),
       '-P',
       '-F',
       '#{pane_id}',
       '-t',
-      session + ':',
-      '-n',
-      `${a.role}-${a.id.slice(0, 8)}`,
+      ...(initial ? [this.address(a)] : [session + ':', '-n', `${a.role}-${a.id.slice(0, 8)}`]),
     ];
     a.address =
       'tmux:' +
       execFileSync('tmux', [...tmuxArgs, '-c', a.checkout, script], { encoding: 'utf8' }).trim();
     a.paneId = this.address(a);
+    a.windowId = execFileSync('tmux', ['display-message', '-p', '-t', a.paneId, '#{window_id}'], {
+      encoding: 'utf8',
+    }).trim();
     writeFileSync(
       join(a.directory, 'terminal.json'),
-      JSON.stringify({ address: a.address, conversation: a.conversation, session, run: a.run }),
+      JSON.stringify({
+        address: a.address,
+        conversation: a.conversation,
+        session,
+        run: a.run,
+        paneId: a.paneId,
+        windowId: a.windowId,
+      }),
     );
     execFileSync('tmux', ['set-option', '-p', '-t', this.address(a), 'remain-on-exit', 'on']);
     writeFileSync(join(a.directory, 'agy-launch-ready'), 'ready', { flag: 'wx' });
@@ -498,16 +342,22 @@ export class AgyInteractive {
   }
 
   async recoverReceipt(a: ManagedAttempt) {
-    if (!a.address && existsSync(join(a.directory, 'terminal.json'))) {
-      try {
-        a.address = (
-          JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
-            address?: string;
-          }
-        ).address;
-      } catch {
-        /* ignore read error */
-      }
+    if (existsSync(join(a.directory, 'terminal.json'))) {
+      const terminal = JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
+        address?: string;
+        session?: string;
+        run?: string;
+        paneId?: string;
+        windowId?: string;
+      };
+      if (a.run && (terminal.run !== a.run || terminal.session !== `pc-run-${a.run}`))
+        throw new Error('Durable terminal Run ownership mismatch');
+      if (a.address && terminal.address !== a.address)
+        throw new Error('Durable terminal address mismatch');
+      a.address ??= terminal.address;
+      a.terminalSession ??= terminal.session;
+      a.paneId ??= terminal.paneId;
+      a.windowId ??= terminal.windowId;
     }
     if (a.run && a.terminalSession !== `pc-run-${a.run}`)
       throw new Error('Unsupported legacy agy layout; historical execution will not restart');
@@ -545,6 +395,7 @@ export class AgyInteractive {
           s.step_index > input.step_index &&
           s.type === 'PLANNER_RESPONSE' &&
           s.source === 'MODEL' &&
+          s.status === 'DONE' &&
           s.content?.includes(marker),
       )
     )

@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Command } from 'commander';
 import { afterEach, expect, it, vi } from 'vitest';
 import { registerWorkflowCommands } from '../../packages/cli/src/commands/workflow.js';
@@ -6,16 +9,21 @@ import { readIssue } from '@paper-craft/core/workflow/issue-driver';
 
 vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/run-driver')>()),
-  startRun: vi.fn(async () => ({ status: 'started' })),
+  startRun: vi.fn(async () => ({
+    id: 'run-id',
+    lifecycle: 'running',
+    brief: { path: '/context', hash: 'hash' },
+  })),
 }));
 vi.mock('@paper-craft/core/workflow/issue-driver', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/issue-driver')>()),
   readIssue: vi.fn(),
 }));
 vi.mock('@paper-craft/core/workflow/fleet-config', () => ({
-  loadFleetConfig: () => ({ project: '/project' }),
+  loadFleetConfig: () => ({ project: '/project', file: '/project/.epic-config.json' }),
 }));
-vi.mock('@paper-craft/core/workflow/runtime', () => ({
+vi.mock('@paper-craft/core/workflow/runtime', async (original) => ({
+  ...(await original<typeof import('@paper-craft/core/workflow/runtime')>()),
   managedRunner: vi.fn(() => ({ name: 'codex' })),
 }));
 
@@ -49,6 +57,7 @@ it('starts empty EPICs by title and rejects conflicting explicit types before la
           expect.anything(),
           { repository: 'org/repo', number: 7, title, body: '', kind },
           'codex',
+          undefined,
         );
         expect(process.exitCode).toBe(0);
       } else {
@@ -72,5 +81,44 @@ it('requires a valid explicit type before reading GitHub or launching a Run', as
     ).rejects.toThrow();
     expect(readIssue).not.toHaveBeenCalled();
     expect(startRun).not.toHaveBeenCalled();
+  }
+});
+
+it('captures multiline Requirements and rejects invalid input before tracker or Run mutation', async () => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  const directory = mkdtempSync(join(tmpdir(), 'pc-requirements-'));
+  const file = join(directory, 'requirements.md');
+  const requirements = 'Preserve raw data\nUse TypeScript only\n';
+  writeFileSync(file, requirements);
+  vi.mocked(readIssue).mockReturnValue({
+    repository: 'org/repo',
+    number: 7,
+    title: 'Task',
+    body: '',
+  });
+  const invoke = async (args: string[]) => {
+    const program = new Command();
+    registerWorkflowCommands(program, { human: () => false });
+    await program.parseAsync(
+      ['workflow', 'orchestrator', 'start', '7', '--provider', 'codex', '--type', 'issue', ...args],
+      { from: 'user' },
+    );
+  };
+  try {
+    await invoke(['--requirements-file', file]);
+    expect(vi.mocked(startRun).mock.lastCall?.[4]).toBe(requirements);
+    for (const args of [
+      ['--requirements', 'inline', '--requirements-file', file],
+      ['--requirements-file', join(directory, 'missing')],
+    ]) {
+      vi.mocked(startRun).mockClear();
+      vi.mocked(readIssue).mockClear();
+      await invoke(args);
+      expect(startRun).not.toHaveBeenCalled();
+      expect(readIssue).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(2);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

@@ -1,9 +1,9 @@
 import {
   startRun,
-  initializeCurrentRun,
   inspectRuns,
   recoverRun,
   orchestratorForSubject,
+  type WorkflowRun,
 } from '@paper-craft/core/workflow/run-driver';
 import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
 import { finishEpic } from '../workflow/epic-completion.js';
@@ -14,7 +14,7 @@ import { Command, Option } from 'commander';
 import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import { preserveState } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
-import { AgyInteractive, managedRunner } from '@paper-craft/core/workflow/runtime';
+import { managedRunner, quote } from '@paper-craft/core/workflow/runtime';
 import { inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
@@ -49,6 +49,33 @@ function run(action: () => void): void {
   }
 }
 
+async function inspection(run: WorkflowRun, config: string) {
+  const attempt = run.orchestrator;
+  let usable = false;
+  if (attempt?.address && attempt.terminalSession) {
+    try {
+      const observation = await managedRunner(run.provider).observe?.(attempt);
+      usable = !!observation && ['running', 'idle', 'waiting'].includes(observation.status);
+    } catch {
+      /* Unverified terminals remain inspectable through evidence only. */
+    }
+  }
+  return {
+    run: run.id,
+    lifecycle: run.lifecycle,
+    attempt: attempt?.id,
+    attemptStatus: attempt?.status,
+    cause: attempt?.error,
+    evidenceDirectory: attempt?.directory,
+    context: run.brief,
+    statusCommand: `pc workflow orchestrator status --config ${quote(config)}`,
+    recoverCommand: `pc workflow orchestrator recover ${run.id} --config ${quote(config)}`,
+    ...(usable
+      ? { attachCommand: `tmux attach-session -t ${quote(attempt!.terminalSession!)}` }
+      : {}),
+  };
+}
+
 /** Register workflow file operations and read-only fleet checks, with JSON output by default. */
 export function registerWorkflowCommands(program: Command, opts: { human: () => boolean }): void {
   const workflow = program
@@ -63,55 +90,69 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         else output({ path: config.root }, opts.human());
       }),
     );
-  workflow
-    .command('agy')
-    .description('Prepare a native agy user conversation')
-    .command('prepare')
-    .description(
-      'Start agy in the current single-pane tmux window with registration evidence (no Run)',
-    )
-    .action(async () => {
-      try {
-        await new AgyInteractive().prepare();
-      } catch (error) {
-        console.error(error instanceof Error ? error.message : String(error));
-        process.exitCode = 2;
-      }
-    });
   registerSubagentCommands(workflow, opts);
   const orchestrator = workflow
     .command('orchestrator')
     .description('Create or inspect a subject-scoped managed Run');
   configured(
     orchestrator
-      .command('initialize <run>')
-      .description('Activate the prepared current agy Orchestrator after role initialization'),
-  ).action((id: string, options: Options) =>
-    run(() =>
+      .command('status')
+      .description('Read Run lifecycle, retained execution state and resource ownership'),
+  ).action(async (options: Options) => {
+    try {
+      const config = loadFleetConfig(options.config);
+      const registry = inspectRuns(config);
       output(
-        initializeCurrentRun(loadFleetConfig(options.config), managedRunner('agy'), id),
+        {
+          ...registry,
+          inspection: await Promise.all(
+            registry.runs.map((entry) => inspection(entry, config.file)),
+          ),
+        },
         opts.human(),
-      ),
-    ),
-  );
-  configured(
-    orchestrator.command('status').description('Read Fleet Run and Orchestrator ownership'),
-  ).action((options: Options) =>
-    run(() => output(inspectRuns(loadFleetConfig(options.config)), opts.human())),
-  );
+      );
+    } catch (error) {
+      run(() => {
+        throw error;
+      });
+    }
+  });
   configured(
     orchestrator
       .command('start <issue>')
       .description('Create or reconnect a Run from configured repository context')
       .requiredOption('--provider <provider>', 'Managed provider: codex, agy, or claude')
+      .option('--requirements <text>', 'Immutable additional Run Requirements')
+      .option('--requirements-file <file>', 'Read immutable Run Requirements from a UTF-8 file')
       .addOption(
         new Option('--type <type>', 'Subject type; must match the title EPIC marker')
           .choices(['issue', 'epic'])
           .makeOptionMandatory(),
       ),
   ).action(
-    async (number: string, options: Options & { provider: string; type: 'issue' | 'epic' }) => {
+    async (
+      number: string,
+      options: Options & {
+        provider: string;
+        type: 'issue' | 'epic';
+        requirements?: string;
+        requirementsFile?: string;
+      },
+    ) => {
       try {
+        if (options.requirements !== undefined && options.requirementsFile !== undefined)
+          throw new Error('Use only one of --requirements or --requirements-file');
+        let requirements = options.requirements;
+        if (options.requirementsFile !== undefined) {
+          try {
+            requirements = readFileSync(options.requirementsFile, 'utf8');
+          } catch (error) {
+            throw new Error(
+              `Cannot read Requirements file ${options.requirementsFile}; provide a readable UTF-8 file`,
+              { cause: error },
+            );
+          }
+        }
         const config = loadFleetConfig(options.config);
         const subject = readIssue(config.project, Number(number));
         const kind = /\bEPIC\b/i.test(subject.title) ? 'epic' : 'issue';
@@ -119,15 +160,21 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           throw new Error(
             `Type mismatch: --type ${options.type}, but title ${JSON.stringify(subject.title)} identifies ${kind}; correct the title or --type before retrying`,
           );
+        const result = await startRun(
+          config,
+          managedRunner(options.provider),
+          { ...subject, kind },
+          options.provider,
+          requirements,
+        );
         output(
-          await startRun(
-            config,
-            managedRunner(options.provider),
-            { ...subject, kind },
-            options.provider,
-          ),
+          {
+            ...result,
+            ...(await inspection(result, config.file)),
+          },
           opts.human(),
         );
+        if (result.lifecycle !== 'running') process.exitCode = 2;
       } catch (error) {
         run(() => {
           throw error;
@@ -138,7 +185,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     orchestrator
       .command('recover <run>')
-      .description('Reconcile durable results and startup identity; preserve unknown occupancy')
+      .description('Recover late startup evidence without relaunch; preserve unknown occupancy')
       .option('--replace', 'Replace Orchestrator only after verified termination'),
   ).action(async (id: string, options: Options & { replace?: boolean }) => {
     try {
@@ -150,7 +197,8 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         replaceOrchestrator: options.replace,
         stopped: (attempt) => runner.stopped(attempt),
       });
-      output(result, opts.human());
+      const current = inspectRuns(config).runs.find((entry) => entry.id === id)!;
+      output({ ...result, inspection: await inspection(current, config.file) }, opts.human());
       if (result.blockers.length) process.exitCode = 2;
     } catch (error) {
       run(() => {

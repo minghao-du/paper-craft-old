@@ -3,16 +3,16 @@ import { createHash } from 'node:crypto';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 import { readDashboardFleet } from '../../packages/core/src/workflow/fleet/dashboard.js';
 import { managedRunner } from '../../packages/core/src/workflow/runtime/runtime.js';
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import {
   startRun,
-  initializeCurrentRun,
   sendStageMessage,
   releaseAcceptedExecution,
   releaseRunCheckout,
+  reserveRunCheckout,
   collectBusinessTurn,
   acceptValidatedBusinessTurns,
   orchestratorForSubject,
@@ -87,7 +87,13 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       startRun(config, { ...managedRunner('claude'), interactive: false }, subject, 'claude'),
     ).rejects.toThrow(/interactive/);
     expect(launches).toBe(0);
-    const first = await startRun(config, runner, subject, 'codex');
+    const requirements = 'Keep all source data\nUse TypeScript only';
+    const first = await startRun(config, runner, subject, 'codex', requirements);
+    expect(readFileSync(first.brief.path, 'utf8')).toContain(requirements);
+    await expect(startRun(config, runner, subject, 'codex', 'Discard source data')).rejects.toThrow(
+      /Requirements conflict/,
+    );
+    expect((await startRun(config, runner, subject, 'codex', requirements)).id).toBe(first.id);
     expect(orchestratorForSubject(config, subject.repository, 7).runner).toBe('codex');
     updateRunRegistry(config, (registry) => {
       registry.runs[0].provider = 'unsupported';
@@ -176,6 +182,8 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     expect(launches).toBe(beforeInvalidLaunches);
     expect(JSON.stringify(inspectRuns(config))).toBe(beforeInvalidRole);
     const stage = await dispatchStage(config, runner, request);
+    expect(stage.brief).toContain(requirements);
+    expect(stage.attempts[0].brief).toContain(requirements);
     const registryPath = join(runtime, 'registry.json');
     const validRegistry = JSON.stringify(inspectRuns(config));
     const corruptRegistry = JSON.parse(validRegistry);
@@ -227,6 +235,7 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       async () => true,
     );
     expect(retried.attempts).toHaveLength(2);
+    expect(retried.attempts[1].brief).toContain(requirements);
     expect(retried.attempts[1].brief).not.toContain(request.brief);
     expect(retried.attempts[1].brief).toContain(stage.briefReference.path);
     expect(retried.attempts[1].brief).toContain('Do not replay');
@@ -354,24 +363,9 @@ test.each(['agy', 'claude'])(
       worktrees: true,
       base: 'main',
     };
-    let interrupted = provider === 'agy';
     let launches = 0;
     const runner = {
       name: provider,
-      current() {
-        return {
-          conversation: 'ack',
-          address: 'tmux:actual',
-          directory: project,
-          transcript: join(project, 'native.jsonl'),
-        };
-      },
-      adopt() {
-        if (interrupted) {
-          interrupted = false;
-          throw new Error('interrupted terminal adoption');
-        }
-      },
       interactive: true,
       async stopped() {
         return true;
@@ -383,53 +377,15 @@ test.each(['agy', 'claude'])(
       },
     };
     try {
-      if (provider === 'agy') {
-        await expect(
-          startRun(
-            config,
-            runner,
-            { repository: 'owner/repo', number: 1, kind: 'issue', title: 'task', body: 'task' },
-            provider,
-          ),
-        ).rejects.toThrow(/interrupted/);
-        expect(inspectRuns(config).runs).toHaveLength(1);
-      }
       const run = await startRun(
         config,
         runner,
         { repository: 'owner/repo', number: 1, kind: 'issue', title: 'task', body: 'task' },
         provider,
       );
-      if (provider === 'agy') {
-        expect(launches).toBe(0);
-        expect(inspectRuns(config).runs).toHaveLength(1);
-        expect(run.orchestrator?.status).toBe('starting');
-        await expect(
-          dispatchStage(config, runner, {
-            runId: run.id,
-            authority: run.orchestratorId,
-            subject: 'owner/repo#1',
-            role: 'worker',
-            stage: 'implementation',
-            inputRevision: 'v1',
-            brief: 'task',
-            prerequisites: [],
-          }),
-        ).rejects.toThrow();
-        const a = run.orchestrator!;
-        writeFileSync(
-          join(a.directory, 'initialization.json'),
-          JSON.stringify({ ...a.initialization, conversation: 'wrong' }),
-        );
-        expect(() => initializeCurrentRun(config, runner, run.id)).toThrow(/conversation/);
-        writeFileSync(
-          join(a.directory, 'initialization.json'),
-          JSON.stringify({ ...a.initialization, conversation: a.conversation }),
-        );
-        initializeCurrentRun(config, runner, run.id);
-        const again = await startRun(config, runner, run.subject, provider);
-        expect(again.orchestrator?.id).toBe(a.id);
-      }
+      expect(launches).toBe(1);
+      expect((await startRun(config, runner, run.subject, provider)).id).toBe(run.id);
+      expect(launches).toBe(1);
       const stage = await dispatchStage(config, runner, {
         runId: run.id,
         authority: run.orchestratorId,
@@ -452,49 +408,100 @@ test.each(['agy', 'claude'])(
         ),
       ).rejects.toThrow(/provider/);
       expect(inspectRuns(config).runs[0].provider).toBe(provider);
-      if (provider === 'agy') {
-        updateRunRegistry(config, (registry) => {
-          registry.runs[0].lifecycle = 'completed';
-        });
-        // Completion ends authority while preserving the live user execution.
-        expect(inspectRuns(config).runs[0].orchestrator).toMatchObject({
-          id: run.orchestrator!.id,
-          status: 'running',
-          currentExecution: true,
-        });
-        expect(() => orchestratorForSubject(config, 'owner/repo', 1)).toThrow(/active/);
-        await expect(recoverRun(config, runner, run.id)).rejects.toThrow(/completed/i);
-        await expect(
-          dispatchStage(config, runner, {
-            ...stage,
-            runId: run.id,
-            authority: run.orchestratorId,
-          }),
-        ).rejects.toThrow(/authority/);
-        await expect(
-          releaseRunCheckout(config, run.id, project, async (attempt) => !attempt.currentExecution),
-        ).rejects.toThrow(/occupancy/);
-        await expect(startRun(config, runner, run.subject, provider)).rejects.toThrow(/ownership/);
-        const oldCurrent = runner.current;
-        runner.current = () => ({
-          ...oldCurrent!(),
-          conversation: 'new-conversation',
-          directory: join(project, 'fresh-preparation'),
-          ownedRun: run.id,
-        });
-        runner.stopped = async () => false;
-        await expect(startRun(config, runner, run.subject, provider)).rejects.toThrow(/ownership/);
-        runner.stopped = async () => true;
-        const next = await startRun(config, runner, { ...run.subject, number: 2 }, provider);
-        expect(next.id).not.toBe(run.id);
-        expect(next.orchestrator?.id).not.toBe(run.orchestrator?.id);
-        expect(inspectRuns(config).runs.find((r) => r.id === run.id)?.lifecycle).toBe('completed');
-      }
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
   },
 );
+
+test('completed independent Run retains execution and occupancy while later work gets new authority', async () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-completed-')));
+  mkdirSync(join(project, 'pool'));
+  const config = {
+    file: join(project, '.epic-config.json'),
+    project,
+    root: join(project, 'pool'),
+    slots: [],
+    worktrees: true,
+    base: 'main',
+  };
+  const stopped = new Set<string>();
+  const runner = {
+    name: 'agy',
+    interactive: true,
+    async preflight() {},
+    async start(attempt: { id: string; run?: string }) {
+      return {
+        conversation: attempt.id,
+        address: `tmux:pc-run-${attempt.run}:${attempt.id}`,
+        evidence: 'verified independent identity',
+      };
+    },
+    async stopped(attempt: { id: string }) {
+      return stopped.has(attempt.id);
+    },
+  };
+  try {
+    const run = await startRun(
+      config,
+      runner,
+      {
+        repository: 'owner/repo',
+        number: 1,
+        kind: 'issue',
+        title: 'first',
+        body: 'deliver',
+      },
+      'agy',
+    );
+    reserveRunCheckout(config, run.id, run.orchestratorId, project);
+    const stage = await dispatchStage(config, runner, {
+      runId: run.id,
+      authority: run.orchestratorId,
+      subject: 'owner/repo#1',
+      role: 'worker',
+      stage: 'implementation',
+      inputRevision: 'v1',
+      brief: 'task',
+      prerequisites: [],
+    });
+    stopped.add(stage.attempts[0].id);
+    // Existing delivery/finalization gates commit this transition; this boundary tests its effects.
+    updateRunRegistry(config, (registry) => {
+      registry.runs[0].lifecycle = 'completed';
+    });
+    expect(inspectRuns(config).runs[0]).toMatchObject({
+      lifecycle: 'completed',
+      orchestrator: run.orchestrator,
+    });
+    expect(() => orchestratorForSubject(config, 'owner/repo', 1)).toThrow(/completed.*start 1/i);
+    await expect(
+      dispatchStage(config, runner, {
+        ...stage,
+        runId: run.id,
+        authority: run.orchestratorId,
+      }),
+    ).rejects.toThrow(/authority/);
+    await expect(recoverRun(config, runner, run.id)).rejects.toThrow(/completed/i);
+    const cleanup = vi.fn();
+    await expect(
+      releaseRunCheckout(config, run.id, project, runner.stopped, cleanup),
+    ).rejects.toThrow(/occupancy/);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(inspectRuns(config).resources).toEqual(
+      expect.arrayContaining([expect.objectContaining({ runId: run.id, path: project })]),
+    );
+    const next = await startRun(config, runner, { ...run.subject, number: 2 }, 'agy');
+    expect(next.id).not.toBe(run.id);
+    expect(next.orchestrator?.conversation).not.toBe(run.orchestrator?.conversation);
+    expect(next.orchestrator?.address).not.toBe(run.orchestrator?.address);
+    expect(inspectRuns(config).runs.find((r) => r.id === run.id)?.orchestrator).toEqual(
+      run.orchestrator,
+    );
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
 
 test('managed agy requires native input attribution and refuses stream or interleaved evidence', async () => {
   const runner = managedRunner('agy');
