@@ -86,6 +86,15 @@ it('retains every current Run and pending matter while omitting handled bodies',
     return;
   }
   const result = await invoke(['status']);
+  if (process.env.PC_MEASURE_STATUS)
+    writeFileSync(
+      '/tmp/pc-106-context/status-after.json',
+      JSON.stringify({
+        stdoutBytes: Buffer.byteLength(result.stdout),
+        stderrBytes: Buffer.byteLength(result.stderr),
+        totalBytes: Buffer.byteLength(result.stdout + result.stderr),
+      }),
+    );
   const visible = JSON.parse(result.stdout);
   expect(visible.outcome).toBe('succeeded');
   expect(visible.runs.map((r: { id: string }) => r.id)).toEqual(['run-1', 'run-2']);
