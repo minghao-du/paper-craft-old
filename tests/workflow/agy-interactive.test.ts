@@ -451,156 +451,6 @@ test('AgyRunner.collect polls result until completed or process stopped', async 
 });
 
 // Preparation must bind callback evidence to the launching pane, not a recent transcript.
-test('prepared current conversation requires live exact pane and matching callback evidence', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-prepared-'));
-  const transcript = join(directory, 'transcript.jsonl');
-  const child = await import('node:child_process');
-  vi.mocked(child.execFileSync).mockReturnValue('%42 1\n');
-  writeFileSync(transcript, '{}\n');
-  writeFileSync(
-    join(directory, 'preparation.json'),
-    JSON.stringify({ address: 'tmux:%42', token: 'nonce' }),
-  );
-  writeFileSync(
-    join(directory, 'agy-native.json'),
-    JSON.stringify({
-      conversation_id: 'native-id',
-      transcript_path: transcript,
-      pane: '%42',
-      token: 'nonce',
-      agent_state: 'idle',
-    }),
-  );
-  const adapter = new AgyInteractive();
-  try {
-    expect(adapter.prepared(directory, '%42').conversation).toBe('native-id');
-    const previousPreparation = process.env.PC_AGY_PREPARATION;
-    const previousPane = process.env.TMUX_PANE;
-    process.env.PC_AGY_PREPARATION = directory;
-    process.env.TMUX_PANE = '%42';
-    vi.mocked(child.execFileSync).mockImplementation((_cmd, args) =>
-      args?.at(-1) === '#{session_name} #{@pc_run_id}' ? 'pc-run-prior \n' : '%42 1\n',
-    );
-    try {
-      expect(() => new AgyRunner().current()).toThrow(/ownership/);
-    } finally {
-      if (previousPreparation === undefined) delete process.env.PC_AGY_PREPARATION;
-      else process.env.PC_AGY_PREPARATION = previousPreparation;
-      if (previousPane === undefined) delete process.env.TMUX_PANE;
-      else process.env.TMUX_PANE = previousPane;
-      vi.mocked(child.execFileSync).mockReturnValue('%42 1\n');
-    }
-
-    const attempt = {
-      id: 'user',
-      fleet: 'fleet',
-      role: 'orchestrator' as const,
-      runner: 'agy',
-      brief: '',
-      status: 'running' as const,
-      created: '',
-      directory,
-      checkout: directory,
-      currentExecution: true,
-      preparation: directory,
-      conversation: 'native-id',
-      address: 'tmux:%42',
-    };
-    writeFileSync(
-      join(directory, 'process-exit.json'),
-      JSON.stringify({ token: 'wrong', address: 'tmux:%42', conversation: 'native-id', status: 0 }),
-    );
-    vi.mocked(child.execFileSync).mockReturnValue('%42 0\n');
-    expect(await adapter.stopped(attempt)).toBe(false);
-    writeFileSync(
-      join(directory, 'process-exit.json'),
-      JSON.stringify({ token: 'nonce', address: 'tmux:%42', conversation: 'native-id', status: 1 }),
-    );
-    expect(await adapter.stopped(attempt)).toBe(true);
-    vi.mocked(child.execFileSync).mockReturnValue('%42 1\n');
-    expect(() => adapter.prepared(directory, '%42')).toThrow(/exited/);
-    rmSync(join(directory, 'process-exit.json'));
-
-    expect(() => adapter.prepared(directory, '%43')).toThrow(/pane/);
-    writeFileSync(
-      join(directory, 'agy-native.json'),
-      JSON.stringify({
-        conversation_id: 'other',
-        transcript_path: transcript,
-        pane: '%42',
-        token: 'wrong',
-      }),
-    );
-    expect(() => adapter.prepared(directory, '%42')).toThrow(/callback/);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('preparation refuses a non-tmux conversation before probing or launching agy', async () => {
-  const previous = process.env.TMUX;
-  delete process.env.TMUX;
-  const child = await import('node:child_process');
-  vi.mocked(child.spawnSync).mockClear();
-  try {
-    await expect(new AgyInteractive().prepare()).rejects.toThrow(/single-pane tmux/);
-    expect(child.spawnSync).not.toHaveBeenCalled();
-  } finally {
-    if (previous !== undefined) process.env.TMUX = previous;
-  }
-});
-
-test('current conversation adoption renames a lone window and rejects unmarked target sessions', async () => {
-  const child = await import('node:child_process');
-  const directory = mkdtempSync(join(tmpdir(), 'pc-adopt-'));
-  const attempt = {
-    id: 'abc',
-    run: 'run-id',
-    directory,
-    address: 'tmux:%7',
-    role: 'orchestrator',
-  } as import('../../packages/core/src/workflow/runtime/runtime.js').ManagedAttempt;
-  const calls: string[][] = [];
-  vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
-    const a = args as string[];
-    calls.push(a);
-    if (a[0] === 'display-message') return '%7 1 old @3\n';
-    if (a[0] === 'list-sessions') return 'old \n';
-    if (a[0] === 'list-windows') return '@3\n';
-    return '';
-  });
-  try {
-    new AgyInteractive().adopt(attempt);
-    expect(calls.some((a) => a[0] === 'rename-session' && a.includes('pc-run-run-id'))).toBe(true);
-    expect(
-      calls.some((a) => a[0] === 'set-option' && a.includes('@pc_run_id') && a.includes('run-id')),
-    ).toBe(true);
-    vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
-      if (args?.[0] === 'display-message') return '%7 1 old @3\n';
-      if (args?.[0] === 'list-sessions') return 'pc-run-run-id \n';
-      return '';
-    });
-    expect(() => new AgyInteractive().adopt(attempt)).toThrow(/ownership/);
-    calls.length = 0;
-    vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
-      calls.push(args as string[]);
-      if (args?.[0] === 'display-message') return '%7 1 pc-run-prior @3\n';
-      if (args?.[0] === 'list-sessions') return 'pc-run-prior \n';
-      if (args?.[0] === 'list-windows') return '@3\n';
-      return '';
-    });
-    expect(() => new AgyInteractive().adopt(attempt)).toThrow(/ownership/);
-    expect(
-      calls.some((args) =>
-        ['rename-session', 'new-session', 'move-window', 'set-option'].includes(args[0]),
-      ),
-    ).toBe(false);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-// Reject a wrong Run before launching a child into an unrelated terminal.
 test('child startup refuses missing or conflicting Run session ownership', async () => {
   const child = await import('node:child_process');
   const directory = mkdtempSync(join(tmpdir(), 'pc-agy-child-'));
@@ -720,56 +570,72 @@ test('replacement rebuild requires every old Run execution terminated and reject
   }
 });
 
-test('preparation records native process exit even when agy fails and leaves its shell pane alive', async () => {
+test('independent Orchestrator starts outside tmux and retains exact terminal on failed startup', async () => {
   const child = await import('node:child_process');
-  const previous = { tmux: process.env.TMUX, pane: process.env.TMUX_PANE };
-  process.env.TMUX = 'test';
-  process.env.TMUX_PANE = '%42';
-  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  let directory = '';
-  vi.mocked(child.execFileSync).mockReturnValue('%42 1\n');
-  vi.mocked(child.spawnSync).mockImplementation((_command, args, options) => {
-    if (args?.includes('--help'))
-      return {
-        status: 0,
-        stdout: '--prompt-interactive --conversation --settings --add-dir',
-        stderr: '',
-      } as ReturnType<typeof child.spawnSync>;
-    directory = (options?.env?.PC_AGY_PREPARATION ?? '') as string;
-    const launch = JSON.parse(readFileSync(join(directory, 'preparation.json'), 'utf8'));
-    writeFileSync(
-      join(directory, 'agy-native.json'),
-      JSON.stringify({ conversation_id: 'exited-user', token: launch.token, pane: '%42' }),
-    );
-    return { status: 2, signal: null } as ReturnType<typeof child.spawnSync>;
+  const directory = mkdtempSync(join(tmpdir(), 'pc-independent-'));
+  const prior = { tmux: process.env.TMUX, pane: process.env.TMUX_PANE };
+  delete process.env.TMUX;
+  delete process.env.TMUX_PANE;
+  const calls: string[][] = [];
+  const attempt = {
+    id: 'attempt-independent',
+    run: 'run-independent',
+    directory,
+    checkout: directory,
+    fleet: 'fleet',
+    role: 'orchestrator' as const,
+    runner: 'agy',
+    brief: 'Initialize only',
+    status: 'starting' as const,
+    created: new Date().toISOString(),
+  };
+  vi.mocked(child.execFileSync).mockImplementation((_command, args) => {
+    const a = args as string[];
+    calls.push(a);
+    if (a[0] === 'list-sessions') return 'caller-session unrelated\n';
+    if (a[0] === 'new-session') return '%401';
+    if (a[0] === 'respawn-pane') {
+      expect(
+        JSON.parse(readFileSync(join(directory, 'agy-settings.json'), 'utf8')).statusLine.enabled,
+      ).toBe(true);
+      return '%401';
+    }
+    if (a[0] === 'list-panes') return '%401 1\n%200 0\n';
+    if (a[0] === 'display-message') {
+      return a.at(-1) === '#{window_id}' ? '@91' : 'pc-run-run-independent run-independent %401';
+    }
+    if (a[0] === 'capture-pane') return 'Login required';
+    return '';
   });
   try {
-    const adapter = new AgyInteractive();
-    await expect(adapter.prepare()).rejects.toThrow(/unsuccessfully/);
-    vi.mocked(child.execFileSync).mockReturnValue('%42 0\n');
+    await expect(new AgyInteractive().start(attempt)).rejects.toThrow(/Login required/);
+    expect(attempt).toMatchObject({
+      address: 'tmux:%401',
+      terminalSession: 'pc-run-run-independent',
+      paneId: '%401',
+      windowId: '@91',
+    });
+    expect(calls.find((a) => a[0] === 'new-session')).toEqual([
+      'new-session',
+      '-P',
+      '-F',
+      '#{pane_id}',
+      '-d',
+      '-s',
+      'pc-run-run-independent',
+      '-n',
+      'orchestrator-attempt-',
+    ]);
     expect(
-      await adapter.stopped({
-        id: 'user',
-        fleet: 'fleet',
-        role: 'orchestrator',
-        runner: 'agy',
-        brief: '',
-        status: 'running',
-        created: '',
-        directory,
-        checkout: directory,
-        preparation: directory,
-        currentExecution: true,
-        address: 'tmux:%42',
-        conversation: 'exited-user',
-      }),
-    ).toBe(true);
+      calls.some((a) =>
+        ['move-window', 'rename-session', 'rename-window', 'kill-pane'].includes(a[0]),
+      ),
+    ).toBe(false);
   } finally {
-    if (directory) rmSync(directory, { recursive: true, force: true });
-    log.mockRestore();
-    if (previous.tmux === undefined) delete process.env.TMUX;
-    else process.env.TMUX = previous.tmux;
-    if (previous.pane === undefined) delete process.env.TMUX_PANE;
-    else process.env.TMUX_PANE = previous.pane;
+    if (prior.tmux === undefined) delete process.env.TMUX;
+    else process.env.TMUX = prior.tmux;
+    if (prior.pane === undefined) delete process.env.TMUX_PANE;
+    else process.env.TMUX_PANE = prior.pane;
+    rmSync(directory, { recursive: true, force: true });
   }
 });
