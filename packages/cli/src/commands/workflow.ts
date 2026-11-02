@@ -1,6 +1,5 @@
 import {
   startRun,
-  initializeCurrentRun,
   inspectRuns,
   recoverRun,
   orchestratorForSubject,
@@ -14,7 +13,7 @@ import { Command, Option } from 'commander';
 import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import { preserveState } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
-import { AgyInteractive, managedRunner } from '@paper-craft/core/workflow/runtime';
+import { managedRunner, quote } from '@paper-craft/core/workflow/runtime';
 import { inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
@@ -63,37 +62,10 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         else output({ path: config.root }, opts.human());
       }),
     );
-  workflow
-    .command('agy')
-    .description('Prepare a native agy user conversation')
-    .command('prepare')
-    .description(
-      'Start agy in the current single-pane tmux window with registration evidence (no Run)',
-    )
-    .action(async () => {
-      try {
-        await new AgyInteractive().prepare();
-      } catch (error) {
-        console.error(error instanceof Error ? error.message : String(error));
-        process.exitCode = 2;
-      }
-    });
   registerSubagentCommands(workflow, opts);
   const orchestrator = workflow
     .command('orchestrator')
     .description('Create or inspect a subject-scoped managed Run');
-  configured(
-    orchestrator
-      .command('initialize <run>')
-      .description('Activate the prepared current agy Orchestrator after role initialization'),
-  ).action((id: string, options: Options) =>
-    run(() =>
-      output(
-        initializeCurrentRun(loadFleetConfig(options.config), managedRunner('agy'), id),
-        opts.human(),
-      ),
-    ),
-  );
   configured(
     orchestrator.command('status').description('Read Fleet Run and Orchestrator ownership'),
   ).action((options: Options) =>
@@ -119,15 +91,26 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           throw new Error(
             `Type mismatch: --type ${options.type}, but title ${JSON.stringify(subject.title)} identifies ${kind}; correct the title or --type before retrying`,
           );
+        const result = await startRun(
+          config,
+          managedRunner(options.provider),
+          { ...subject, kind },
+          options.provider,
+        );
         output(
-          await startRun(
-            config,
-            managedRunner(options.provider),
-            { ...subject, kind },
-            options.provider,
-          ),
+          {
+            ...result,
+            statusCommand: `pc workflow orchestrator status --config ${quote(config.file)}`,
+            recoverCommand: `pc workflow orchestrator recover ${result.id} --config ${quote(config.file)}`,
+            ...(result.orchestrator?.address && result.orchestrator.terminalSession
+              ? {
+                  attachCommand: `tmux attach-session -t ${quote(result.orchestrator.terminalSession)}`,
+                }
+              : {}),
+          },
           opts.human(),
         );
+        if (result.lifecycle !== 'running') process.exitCode = 2;
       } catch (error) {
         run(() => {
           throw error;

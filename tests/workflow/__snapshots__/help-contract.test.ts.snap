@@ -38,8 +38,6 @@ Options:
   -h, --help                        display help for command
 
 Commands:
-  initialize [options] <run>        Activate the prepared current agy
-                                    Orchestrator after role initialization
   status [options]                  Read Fleet Run and Orchestrator ownership
   start [options] <issue>           Create or reconnect a Run from configured
                                     repository context

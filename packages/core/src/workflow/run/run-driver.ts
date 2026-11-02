@@ -162,8 +162,6 @@ export async function startRun(
     );
   requireInteractive(runner);
   await runner.preflight();
-  const current = provider === 'agy' ? runner.current?.() : undefined;
-  if (provider === 'agy' && !current) throw new Error('Current agy preparation required');
   const reconnect = inspectRuns(config).runs.find(
     (r) =>
       r.subject.repository === subject.repository &&
@@ -174,22 +172,6 @@ export async function startRun(
   if (reconnect) {
     if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
       throw new Error('Existing Run provider or scope conflict');
-    if (current) {
-      const a = reconnect.orchestrator ?? inspectOrchestrator(config, reconnect.id);
-      if (
-        !a?.currentExecution ||
-        a.conversation !== current.conversation ||
-        a.address !== current.address
-      )
-        throw new Error('Existing active Orchestrator cannot be replaced');
-      return updateRunRegistry(config, (registry) => {
-        const saved = registry.runs.find((r) => r.id === reconnect.id)!;
-        runner.adopt!(a);
-        saved.orchestrator = a;
-        return saved;
-      });
-    }
-    await recoverRun(config, runner, reconnect.id);
     return inspectRuns(config).runs.find((r) => r.id === reconnect.id)!;
   }
   mkdirSync(home(config), { recursive: true });
@@ -222,45 +204,9 @@ export async function startRun(
         r.lifecycle !== 'completed',
     );
     if (existing) {
-      if (
-        current &&
-        (existing.orchestrator?.conversation !== current.conversation ||
-          existing.orchestrator?.address !== current.address)
-      )
-        throw new Error('Existing active Orchestrator cannot be replaced');
       if (existing.provider !== provider || existing.subject.kind !== subject.kind)
         throw new Error('Existing Run provider or scope conflict');
       return existing;
-    }
-    if (current) {
-      const previous = registry.runs.filter(
-        (r) =>
-          r.id === current.ownedRun ||
-          [r.orchestrator, ...(r.priorOrchestrators ?? [])].some(
-            (a) => a?.conversation === current.conversation || a?.address === current.address,
-          ),
-      );
-      if (current.ownedRun && !previous.some((r) => r.id === current.ownedRun))
-        throw new Error('Current pane has unknown prior Run ownership');
-      for (const prior of previous) {
-        const attempts = [
-          prior.orchestrator,
-          ...(prior.priorOrchestrators ?? []),
-          ...(registry.dispatches?.filter((d) => d.runId === prior.id).flatMap((d) => d.attempts) ??
-            []),
-        ].filter((a): a is ManagedAttempt => !!a);
-        if (
-          prior.lifecycle !== 'completed' ||
-          !attempts.length ||
-          attempts.some(
-            (a) => a.conversation === current.conversation || a.preparation === current.directory,
-          ) ||
-          !runner.stopped ||
-          !(await Promise.all(attempts.map((a) => runner.stopped!(a)))).every(Boolean)
-        )
-          throw new Error('Current execution has unresolved prior Run ownership');
-      }
-      if (current.ownedRun) current.reconciledRun = current.ownedRun;
     }
     const id = randomUUID();
     const directory = join(home(config), 'runs', id);
@@ -285,7 +231,7 @@ export async function startRun(
     try {
       run.launchStarted = true;
       save(config, registry);
-      run.orchestrator = await startOrchestrator(config, runner, brief, id, current, {
+      run.orchestrator = await startOrchestrator(config, runner, brief, id, {
         registry: join(home(config), 'registry.json'),
         authority: id,
         run: id,
@@ -303,39 +249,6 @@ export async function startRun(
   } finally {
     rmSync(lock, { recursive: true });
   }
-}
-
-/** Activate only after the current conversation has read and acknowledged its immutable role context. */
-export function initializeCurrentRun(
-  config: FleetConfig,
-  runner: RunnerAdapter,
-  runId: string,
-): WorkflowRun {
-  const identity = runner.current?.();
-  if (!identity) throw new Error('Prepared current agy execution required');
-  return updateRunRegistry(config, (registry) => {
-    const run = registry.runs.find((r) => r.id === runId);
-    const a = run?.orchestrator;
-    if (
-      !run ||
-      run.lifecycle === 'completed' ||
-      !a?.currentExecution ||
-      a.conversation !== identity.conversation ||
-      a.address !== identity.address
-    )
-      throw new Error('Current conversation does not own this Run');
-    runner.adopt!(a);
-    const claim = JSON.parse(readFileSync(join(a.directory, 'initialization.json'), 'utf8'));
-    if (claim.conversation !== a.conversation)
-      throw new Error('Initialization conversation mismatch');
-    verifyRoleInitialization(a);
-    a.status = 'running';
-    a.evidence = 'Current conversation role initialization verified';
-    run.lifecycle = 'running';
-    writeFileSync(join(a.directory, 'attempt.json'), JSON.stringify(a));
-    writeFileSync(join(a.directory, '..', `orchestrator-${run.id}.json`), JSON.stringify(a));
-    return run;
-  });
 }
 
 /** Immutable stage request; only the owning Orchestrator requests top-level work. */
@@ -871,15 +784,6 @@ export async function recoverRun(
   const snapshot = inspectRuns(config);
   const run = snapshot.runs.find((r) => r.id === runId);
   if (!run || run.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
-  if (
-    run.provider === 'agy' &&
-    run.launchStarted === false &&
-    !run.orchestrator &&
-    !inspectOrchestrator(config, runId)
-  )
-    throw new Error(
-      'Agy requires current-conversation registration; use orchestrator start from prepared conversation',
-    );
   if (run.lifecycle === 'completed')
     throw new Error('Completed Run authority has ended; start a new Run after resolving occupancy');
   if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
@@ -893,7 +797,6 @@ export async function recoverRun(
       runner,
       readFileSync(run.brief.path, 'utf8'),
       runId,
-      undefined,
       {
         registry: join(home(config), 'registry.json'),
         authority: run.orchestratorId,
@@ -959,8 +862,6 @@ export async function recoverRun(
       mkdirSync(directory);
       replacement = {
         ...orchestrator,
-        currentExecution: undefined,
-        preparation: undefined,
         paneId: undefined,
         windowId: undefined,
         predecessor: orchestrator.id,
@@ -1144,7 +1045,7 @@ export async function releaseRunCheckout(
   const attempts = [
     ...(snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
     ...[run?.orchestrator, ...(run?.priorOrchestrators ?? [])].filter(
-      (a): a is ManagedAttempt => !!a?.currentExecution,
+      (a): a is ManagedAttempt => !!a,
     ),
   ].filter((a) => a.checkout === physical);
   if (!attempts.length || !(await Promise.all(attempts.map(stopped))).every(Boolean))

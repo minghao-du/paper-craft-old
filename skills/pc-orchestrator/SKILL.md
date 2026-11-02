@@ -8,6 +8,12 @@ description: Coordinate Issue delivery or an EPIC's child deliveries through man
 The Run's active managed Orchestrator attempt schedules persistent work; durable files retain decisions and execution evidence.
 Issue delivery is the shared workflow below; EPIC coordination adds planning and integrated acceptance around it.
 
+## Branch selection
+
+For an explicit managed Run/Attempt assignment, read [agy procedure](agy-interactive.md) and the supplied immutable context. Validate every initialization field and context hash. Invalid or incomplete managed context stops with an error; it never enters Launcher intake. Write assignment-bound initialization and native readiness, then wait for status to show this exact Attempt as the active running Orchestrator before using Shared Issue Delivery. **Done:** committed activation is verified.
+
+Without managed context, use Intake as Launcher. For agy, report the startup result and end this invocation; the independent Orchestrator schedules delivery. **Done:** report actual Run/Attempt state and available inspection commands.
+
 ## Intake
 
 Require an explicit type (`Issue` or `EPIC`) and issue number.
@@ -35,7 +41,7 @@ pc workflow orchestrator status --config /absolute/path/.epic-config.json
 ```
 
 Retain the Run identity and assignment-bound requirements in its durable context; reconnect to existing ownership rather than allocating a second driver.
-For agy, this caller becomes the initial Orchestrator through the current-conversation registration and activation in [agy procedure](agy-interactive.md). Codex and Claude retain controlled startup.
+For agy, follow independent startup in [agy procedure](agy-interactive.md). Codex and Claude retain controlled startup.
 
 The startup, provider and ownership gates in the execution contract determine whether dispatch is available.
 
