@@ -91,7 +91,7 @@ pc workflow stage accept --config "$CONFIG" --run "$RUN" --authority "$ATTEMPT" 
 For EPIC planning, use role `epic`, stage `planning`. Review the collected immutable
 result against the assigned scope; write your acceptance rationale in `decision.md`.
 Acceptance independently verifies current Git HEAD, checkout ownership, evidence
-hashes and prerequisites. Other stages require their domain acceptance operation.
+hashes and prerequisites. Delivery additionally verifies current PR facts and retained preservation/release evidence.
 **Done:** inspection reports `accepted` and the matching Receipt acknowledgement;
 startup or a reported result alone does not meet this criterion.
 
@@ -101,7 +101,26 @@ options. Collect with the same `--message-id` to identify the correction covered
 only after independent prior-execution termination; it retains the existing Dispatch
 and prior Attempts. Unknown occupancy blocks replacement.
 
-For an isolated model-free planning regression, run `pnpm exec tsx scripts/workflow-demo.ts`
+For an isolated model-free delivery regression, run `pnpm exec tsx scripts/workflow-demo.ts`
 after building. Retain the reported temporary evidence directory. This demonstrates
-the controlled CLI/lifecycle chain, including duplicate-dispatch protection; it does
+the controlled CLI/lifecycle chain, including duplicate-dispatch and missing-predecessor protection; it does
 not establish native model execution or scientific validity.
+
+For delivery, select `implementation` / `worker`, `pr-quality` / `landing`,
+`pr-merge` / `landing`, `final-records` / `worker`, then
+`preservation-cleanup` / `landing`. Bind quality and merge to the evaluated Git HEAD.
+If implementation changes the bound revision, collect its evidence, reject the stale
+receipt, stop that execution and issue a current-revision assignment before accepting.
+Supply `--pr <number>` on delivery acceptance so current GitHub facts are verified.
+After collecting a merge assignment, execute only its compare-and-merge effect:
+
+```bash
+pc workflow stage execute --config "$CONFIG" --run "$RUN" --authority "$ATTEMPT" --dispatch "$DISPATCH" --pr "$PR"
+```
+
+Use that same operation for the selected cleanup assignment after final records are
+accepted and all checkout executions have independently terminated. It verifies the
+merged PR, preserves actual records and a Git bundle, and releases the owned worktree.
+Accept its receipt with `--pr` after inspecting the retained archive and release evidence.
+**Done:** all delivery stages are accepted, the archive verifies, and the checkout is
+released; a merge alone leaves final records and cleanup pending.

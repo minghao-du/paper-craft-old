@@ -241,3 +241,14 @@ records remain pending and keep the checkout intact.
 When dispatched inside a Run, publish correlated results through [the shared managed lifecycle](../pc-orchestrator/managed-lifecycle.md). Include immutable evidence and input revision; wait for acceptance or explicit correction feedback. Do not dispatch the next top-level role yourself.
 
 For child-only intake, retain parent constraints and verified open dependencies. Never start siblings or parent finalization. Follow the [shared overlap contract](../pc-orchestrator/managed-lifecycle.md#child-only-intake-and-overlapping-runs): reconnect to an existing execution owner and let consuming EPICs independently accept delivered evidence.
+
+## CLI-dispatched implementation and final records
+
+For an assigned stage, follow the [shared CLI lifecycle](../pc-orchestrator/managed-lifecycle.md#cli-stage-assignments).
+Keep the assignment's immutable requirements, checkout and accepted EPIC plan bound
+to your work. Publish implementation evidence at the current evaluated revision.
+After verified merge, the Orchestrator dispatches `final-records` separately: retain
+an attributed assessment in `.epic-status.json` and final work record in
+`.epic-worklog.md`. Release execution occupancy for independently verified preservation
+and cleanup; do not remove your checkout. Completion means accepted final records,
+with cleanup reported separately by PR-Land.
