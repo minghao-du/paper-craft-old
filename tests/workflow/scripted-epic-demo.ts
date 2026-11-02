@@ -1,4 +1,5 @@
 /** Isolated shared toy EPIC. Scripts execute tasks; the caller chooses the schedule. */
+import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -127,7 +128,15 @@ export async function prepareScriptedEpic() {
     registerStageCommands(
       program,
       { human: () => false },
-      { runner: () => runner, pullRequests: () => pullRequests },
+      {
+        runner: () => runner,
+        pullRequests: () => pullRequests,
+        closure: async () => ({
+          head: git('rev-parse', 'HEAD'),
+          closed: true,
+          evidence: join(directory, 'human-closure.json'),
+        }),
+      },
     );
     await program.parseAsync(
       [
@@ -321,4 +330,142 @@ export async function runDeliveryDemo() {
     implementation: implementation.id,
     cleanup: cleanup.id,
   };
+}
+
+/** Complete the shared seven-role controlled scenario; retain all evidence for inspection. */
+export async function runAllRoleDemo() {
+  const demo = await runDeliveryDemo();
+  demo.git('merge', '--ff-only', 'toy-worker');
+  const head = demo.git('rev-parse', 'HEAD');
+  let previous = demo.cleanup;
+  async function task(
+    stage: string,
+    role: 'epic' | 'pipeline-audit' | 'pipeline-refactor' | 'research-state',
+    body: (a: ManagedAttempt) => string,
+  ) {
+    demo.tasks.set(stage, body);
+    const dispatch = await demo.dispatch({
+      subject: 'toy/epic#1',
+      role,
+      stage,
+      inputRevision: head,
+      brief: `Bounded toy ${stage}; supplied judgments only; no scientific conclusions.`,
+      prerequisites: [previous],
+    });
+    await demo.cli('collect', ['--dispatch', dispatch.id]);
+    const receipt = inspectRuns(demo.config)
+      .receipts!.filter((r) => r.dispatchId === dispatch.id)
+      .at(-1)!;
+    const decision = join(demo.directory, dispatch.id + '-decision.md');
+    writeFileSync(decision, 'Reviewed toy evidence at the integrated revision.');
+    await demo.cli('accept', ['--receipt', receipt.id, '--decision', decision]);
+    if (
+      inspectRuns(demo.config).dispatches!.find((d) => d.id === dispatch.id)!.lifecycle !==
+      'accepted'
+    )
+      throw new Error('Finalization acceptance blocked: ' + demo.directory);
+    previous = dispatch.id;
+    return dispatch;
+  }
+  const before = demo.launched.length;
+  const oldExit = process.exitCode;
+  await demo.dispatch({
+    subject: 'toy/epic#1',
+    role: 'pipeline-audit',
+    stage: 'pipeline-audit',
+    inputRevision: head,
+    brief: 'Must wait for closure',
+    prerequisites: [],
+  });
+  if (process.exitCode !== 2 || demo.launched.length !== before)
+    throw new Error('Premature specialist launched');
+  process.exitCode = oldExit;
+  const acceptance = await task('integrated-acceptance', 'epic', () =>
+    JSON.stringify({
+      satisfied: true,
+      criteria: ['toy.txt delivered with preserved history'],
+      blockers: [],
+    }),
+  );
+  const deliveries = inspectRuns(demo.config).deliveries!.filter((d) => d.runId === demo.run.id);
+  const deliveryVersion = createHash('sha256')
+    .update(JSON.stringify({ head, deliveries }))
+    .digest('hex');
+  const confirmation = join(demo.directory, 'human-closure.json');
+  writeFileSync(
+    confirmation,
+    JSON.stringify({
+      deliveryVersion,
+      source: 'human',
+      evidence: 'Controlled fixture confirmation only; not production human judgment',
+    }),
+  );
+  const validConfirmation = readFileSync(confirmation, 'utf8');
+  writeFileSync(
+    confirmation,
+    JSON.stringify({ deliveryVersion: 'stale', source: 'human', evidence: 'old toy confirmation' }),
+  );
+  await demo.cli('close', ['--dispatch', acceptance.id, '--decision', confirmation]);
+  if (
+    process.exitCode !== 2 ||
+    inspectRuns(demo.config).runs.find((r) => r.id === demo.run.id)!.epicClosure
+  )
+    throw new Error('Stale confirmation accepted');
+  process.exitCode = oldExit;
+  writeFileSync(confirmation, validConfirmation);
+  await demo.cli('close', ['--dispatch', acceptance.id, '--decision', confirmation]);
+  const pipeline = () =>
+    JSON.stringify({
+      head,
+      status: 'completed',
+      evidence: [demo.archive],
+      blockers: [],
+      scope: ['toy structural verification'],
+      checks: ['toy Git history preserved'],
+      artifacts: [demo.archive],
+      limitations: ['Controlled fixture only'],
+      disposition: 'completed_no_changes',
+      inspectedVersions: { toy: head },
+      findings: [],
+      maintenance: [],
+    });
+  await task('pipeline-audit', 'pipeline-audit', pipeline);
+  const refactor = await task('pipeline-refactor', 'pipeline-refactor', pipeline);
+  await demo.cli('pipeline', ['--dispatch', refactor.id]);
+  const report = await task('research-report', 'research-state', (a) => {
+    const artifact = join(a.directory, 'toy-report.md');
+    writeFileSync(
+      artifact,
+      [
+        'Objective',
+        'Accepted delivery versions',
+        'Observed repository versions',
+        'Pipeline disposition',
+        'Verified findings',
+        'Interpretation',
+        'No scientific conclusions',
+        'Missing evidence',
+        'Follow-up Issues',
+        'Limitations',
+      ].join('\n'),
+    );
+    return JSON.stringify({
+      status: 'completed',
+      artifact,
+      artifactHash: createHash('sha256').update(readFileSync(artifact)).digest('hex'),
+    });
+  });
+  const coordinator = join(demo.directory, 'coordinator.json');
+  writeFileSync(
+    coordinator,
+    JSON.stringify({
+      identity: 'Toy coordinator',
+      entry: join(demo.directory, 'TOY-REPORT.md'),
+      brief: 'Supplied toy judgment: infrastructure delivery only; no scientific conclusions.',
+    }),
+  );
+  await demo.cli('publish', ['--dispatch', report.id, '--decision', coordinator]);
+  if (inspectRuns(demo.config).runs.find((r) => r.id === demo.run.id)!.lifecycle !== 'completed')
+    throw new Error('Incomplete toy finalization: ' + demo.directory);
+  return { ...demo, report: join(demo.directory, 'TOY-REPORT.md') };
 }

@@ -126,3 +126,8 @@ Key sections to maintain:
 
 **Do not maintain a clone/slot assignment table in the body**.
 If a dashboard entry needs a delivery pointer, name the Issue rather than the clone.
+
+For explicit managed dispatch, acceptance and finalization commands, follow
+`managed-lifecycle.md` in the installed `/pc-orchestrator` skill directory. Use
+accepted correlated results and the current integrated version before reporting
+completion.

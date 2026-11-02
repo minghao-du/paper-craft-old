@@ -147,3 +147,8 @@ Verification steps:
 Affected-target small-data runs and relevant tests pass, zero standalone step sbatch scripts remain, and the ledger's real path mappings are verified.
 Any production DAG checks required by an identified risk pass; record their results and any production behavior not covered by the verification.
 Local Git working tree is clean and synchronized with upstream.
+
+For explicit managed dispatch, acceptance and finalization commands, follow
+`managed-lifecycle.md` in the installed `/pc-orchestrator` skill directory. Use
+accepted correlated results and the current integrated version before reporting
+completion.

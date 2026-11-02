@@ -124,3 +124,38 @@ merged PR, preserves actual records and a Git bundle, and releases the owned wor
 Accept its receipt with `--pr` after inspecting the retained archive and release evidence.
 **Done:** all delivery stages are accepted, the archive verifies, and the checkout is
 released; a merge alone leaves final records and cleanup pending.
+
+## Explicit EPIC finalization
+
+After all child deliveries are recorded, preserved and released, dispatch an `epic`
+assignment at stage `integrated-acceptance` against the integrated Git HEAD. Collect
+and accept its JSON goal judgment (`satisfied`, nonempty `criteria`, `blockers`).
+
+`workflow stage close` verifies an already closed GitHub EPIC; it does not issue
+human approval. Supply the target-specific human confirmation JSON with
+`source:"human"`, evidence, and `deliveryVersion`: `closureRequest.deliveryVersion` from `stage inspect --dispatch INTEGRATED`. Obtain fresh confirmation whenever this version changes.
+
+```sh
+pc workflow stage close --config .epic-config.json --run RUN --authority ATTEMPT --dispatch INTEGRATED --decision human-confirmation.json
+pc workflow stage pipeline --config .epic-config.json --run RUN --authority ATTEMPT --dispatch PIPELINE
+pc workflow stage publish --config .epic-config.json --run RUN --authority ATTEMPT --dispatch RESEARCH --decision coordinator.json
+```
+
+After verified closure, choose bounded `pipeline-audit` or `pipeline-refactor`
+assignments using those stage names. Collect and accept the result, then commit
+its validated PipelineDisposition with `stage pipeline`. Reporting stays blocked
+until that disposition is accepted. These commands execute requested operations;
+the Orchestrator chooses each assignment and its prerequisites.
+
+Dispatch `research-state` at stage `research-report` with the accepted Pipeline
+prerequisite. Its completed JSON result identifies `artifact` and its SHA-256
+`artifactHash`. After collecting and accepting it, `stage publish` consumes
+coordinator JSON containing `identity`, absolute `entry` and confirmed `brief`.
+Publication verifies the unchanged artifact and uses the normal transactional
+writer, required report sections and provenance receipt. Completion requires a
+published report; inspect resource occupancy separately.
+
+Run `pnpm exec tsx scripts/workflow-demo.ts` for the isolated seven-role scripted
+regression. It retains the temporary evidence directory and makes no model or
+GitHub calls. This proves controlled CLI lifecycle behavior, not native execution
+for every role or scientific validity.
