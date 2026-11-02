@@ -44,8 +44,15 @@ const server = createServer(async (req, res) => {
       if (body.length > 65536) throw new Error('Request too large');
     }
     const input = JSON.parse(body) as { operation: string; args?: string[] };
+    const record = {
+      actor: req.headers['x-demo-actor'] === 'observer' ? 'observer' : 'scheduler',
+      request: input,
+    };
     requests.push(input);
-    appendFileSync(join(demo.directory, 'native-cli-requests.jsonl'), JSON.stringify(input) + '\n');
+    appendFileSync(
+      join(demo.directory, 'native-cli-requests.jsonl'),
+      JSON.stringify(record) + '\n',
+    );
     console.log = (...values) => logs.push(...values);
     process.exitCode = undefined;
     if (input.operation === 'integrate') demo.git('merge', '--ff-only', 'toy-worker');
@@ -115,6 +122,7 @@ try {
     `Public CLI mechanics via POST ${endpoint} JSON {operation,args}. status returns registry; dispatch uses --input absolute JSON file {subject,role,stage,inputRevision,brief,prerequisites,checkout?}. All role init/activation is performed normally. collect --dispatch ID; accept --receipt ID --decision ${decision} [--pr 2]. Inspect evidence yourself. The server never selects a stage. Choose eligible sequencing and assignments.
 Toy task graph: planning/epic for toy/epic#1; then implementation/worker for toy/epic#2 checkout ${checkout}; pr-quality/landing; pr-merge/landing (execute --dispatch ID --pr 2 before accept); final-records/worker; preservation-cleanup/landing (terminate with args [ID], then execute before accept). Non-delivery stages use toy/epic#1 and default checkout. Each stage needs accepted predecessor ID in prerequisites; delivery stages share checkout. Use current Git HEAD for inputRevision. Script implementation commits toy.txt; its pre-edit revision becomes stale, so terminate its first dispatch and re-dispatch current revision with a different brief if necessary. After first implementation result the fixture will return existing artifact rather than repeat commit.
 After delivery invoke integrate mechanic, then integrated-acceptance/epic; confirmation mechanic creates version-bound fixture human input; close --dispatch acceptance-ID --decision ${join(demo.directory, 'human-closure.json')}. Then pipeline-audit and pipeline-refactor respective roles, pipeline --dispatch accepted-refactor-ID. Finally research-report/research-state, publish --dispatch accepted-report-ID --decision ${coordinator}. Report completion must have all seven roles accepted, legitimate closure and pipeline disposition; evidence retained. Registry resources show occupancy separately. No precomputed dispatch IDs supplied.
+The endpoint is already running. Public invocation examples (substitute your chosen IDs and file): POST JSON {"operation":"dispatch","args":["--input","ABSOLUTE_REQUEST_FILE"]}; {"operation":"collect","args":["--dispatch","DISPATCH_ID"]}; {"operation":"accept","args":["--receipt","RECEIPT_ID","--decision","${decision}"]}. Request file is a single JSON object {"subject":"toy/epic#NUMBER","role":"CHOSEN_ROLE","stage":"CHOSEN_STAGE","inputRevision":"GIT_HEAD_SHA","brief":"YOUR_SCOPED_ASSIGNMENT","prerequisites":["ACCEPTED_DISPATCH_ID"],"checkout":"OPTIONAL_DELIVERY_CHECKOUT"}. Omit checkout for project roles and omit optional values rather than sending placeholders. Session binds config/run/authority; do not include those flags. Output {exitCode,output} contains CLI output values; status output[0] is registry. Receipt IDs are in registry.receipts, Dispatch IDs in registry.dispatches; inputRevision comes from git rev-parse HEAD in requested checkout. No implementation-source exploration is needed. You may choose operations directly or write your own local caller; no ready-made schedule is supplied.
 `,
   );
   // Implementation is idempotent in this arrangement; retry simply observes the committed artifact.
