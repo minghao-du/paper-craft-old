@@ -514,7 +514,7 @@ export async function dispatchStage(
       ...(run.dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
       dispatchId: id,
       persistent: !!runner.result,
-      ...(runner.automaticStartup ? { startupGate: true } : {}),
+      ...(runner.automaticStartup || runner.separateActivation ? { startupGate: true } : {}),
       brief: request.brief,
       initialization: runner.result
         ? {
@@ -764,7 +764,7 @@ export async function retryStage(
     const next: ManagedAttempt = {
       ...prior,
       predecessor: prior.id,
-      ...(runner.automaticStartup ? { startupGate: true } : {}),
+      ...(runner.automaticStartup || runner.separateActivation ? { startupGate: true } : {}),
       activation: undefined,
       startupStopped: undefined,
       id,
@@ -949,7 +949,7 @@ export async function recoverRun(
         observation: undefined,
         error: undefined,
         startupFailures: undefined,
-        ...(runner.automaticStartup ? { startupGate: true } : {}),
+        ...(runner.automaticStartup || runner.separateActivation ? { startupGate: true } : {}),
         activation: undefined,
         startupStopped: undefined,
         predecessor: orchestrator.id,
@@ -1285,7 +1285,7 @@ export async function collectBusinessTurn(
   },
   attempt: ManagedAttempt,
   validate?: (result: string) => void,
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; messageIds?: string[] },
 ): Promise<string> {
   let result: string | undefined;
   if (runner.interactive && runner.result && attempt.dispatchId) {
@@ -1321,6 +1321,7 @@ export async function collectBusinessTurn(
       provider: dispatch.provider,
       inputRevision: dispatch.inputRevision,
       outcome: 'completed',
+      messageIds: options?.messageIds,
       evidence: [{ path, hash: createHash('sha256').update(result).digest('hex') }],
     });
     if (!validate) return result;
