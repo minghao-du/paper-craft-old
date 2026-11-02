@@ -473,6 +473,7 @@ test('child startup refuses missing or conflicting Run session ownership', async
     if (a[0] === 'new-window' || a[0] === 'new-session') launches.push(a);
     throw new Error('unexpected launch');
   });
+  const persisted = { ...attempt };
   try {
     await expect(new AgyInteractive().start(attempt)).rejects.toThrow(/ownership/);
     expect(launches).toEqual([]);
@@ -607,9 +608,17 @@ test('independent Orchestrator starts outside tmux and retains exact terminal on
     if (a[0] === 'capture-pane') return 'Login required';
     return '';
   });
+  const persisted = { ...attempt };
   try {
     await expect(new AgyInteractive().start(attempt)).rejects.toThrow(/Login required/);
     expect(attempt).toMatchObject({
+      address: 'tmux:%401',
+      terminalSession: 'pc-run-run-independent',
+      paneId: '%401',
+      windowId: '@91',
+    });
+    await expect(new AgyInteractive().recoverReceipt(persisted)).resolves.toBeUndefined();
+    expect(persisted).toMatchObject({
       address: 'tmux:%401',
       terminalSession: 'pc-run-run-independent',
       paneId: '%401',

@@ -37,6 +37,11 @@ test('managed role startup requires actual role evidence and recovery never rela
     },
     async start(a: ManagedAttempt) {
       launches++;
+      if (a.predecessor) {
+        const durable = inspectRuns(config).runs.find((r) => r.id === a.run)!.orchestrator!;
+        expect(durable.initialization).toEqual(a.initialization);
+        expect(durable.brief).toBe(a.brief);
+      }
       if (initialized) initializeRole(a);
       return { conversation: 'exact', address: 'tmux:known', evidence: 'native acknowledgement' };
     },

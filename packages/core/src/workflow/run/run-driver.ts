@@ -923,6 +923,26 @@ export async function recoverRun(
       };
     }
   }
+  if (replacement) {
+    if (replacement.initialization) {
+      replacement.initialization = {
+        ...replacement.initialization,
+        attempt: replacement.id,
+        authority: replacement.id,
+        briefHash: createHash('sha256').update(replacement.brief).digest('hex'),
+      };
+      replacement.brief += initializationInstructions(
+        replacement.initialization,
+        replacement.directory,
+      );
+    }
+    if (runner.name === 'agy')
+      replacement.brief += `\nManaged Orchestrator assignment: Run ${runId}, Attempt ${replacement.id}, config ${config.file}. After writing initialization and native ready acknowledgement, wait until pc workflow orchestrator status reports this Run running with this exact Attempt before scheduling. Initialization does not dispatch work.\n`;
+    writeFileSync(join(replacement.directory, 'brief.md'), replacement.brief, {
+      mode: 0o400,
+      flag: 'wx',
+    });
+  }
   updateRunRegistry(config, (registry) => {
     if (registry.revision !== snapshot.revision) throw new Error('Recovery inputs changed; retry');
     const current = registry.runs.find((r) => r.id === runId)!;
@@ -1014,24 +1034,6 @@ export async function recoverRun(
     requireInteractive(runner);
     await runner.preflight();
     try {
-      if (replacement.initialization) {
-        replacement.initialization = {
-          ...replacement.initialization,
-          attempt: replacement.id,
-          authority: replacement.id,
-          briefHash: createHash('sha256').update(replacement.brief).digest('hex'),
-        };
-        replacement.brief += initializationInstructions(
-          replacement.initialization,
-          replacement.directory,
-        );
-      }
-      if (runner.name === 'agy')
-        replacement.brief += `\nManaged Orchestrator assignment: Run ${runId}, Attempt ${replacement.id}, config ${config.file}. After writing initialization and native ready acknowledgement, wait until pc workflow orchestrator status reports this Run running with this exact Attempt before scheduling. Initialization does not dispatch work.\n`;
-      writeFileSync(join(replacement.directory, 'brief.md'), replacement.brief, {
-        mode: 0o400,
-        flag: 'wx',
-      });
       const ack = await runner.start(replacement);
       Object.assign(replacement, ack);
       if (replacement.initialization) verifyRoleInitialization(replacement);
