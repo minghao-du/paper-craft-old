@@ -17,6 +17,9 @@ _避免_：将 Project 用作 Fleet 的同义词
 **Run**：
 一次请求的 Issue 或 EPIC 工作流，使用固定提供方并拥有独立的 Orchestrator。
 
+**Launcher（启动器）**：
+为 Run 请求启动独立 Orchestrator 的入口角色。报告启动结果后，其职责结束；调用它的对话仍是普通对话。
+
 **Orchestrator**：
 Run 的唯一调度权限，由恰好一个活跃的受管执行尝试承载。替换前必须验证原尝试已终止，并保留先前尝试作为历史。
 

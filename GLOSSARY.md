@@ -17,6 +17,9 @@ _Avoid_: Project as a synonym for Fleet
 **Run**:
 One requested Issue or EPIC workflow, with a fixed provider and its own Orchestrator.
 
+**Launcher**:
+The entry role that requests an independent Orchestrator for a Run. Its responsibility ends when it reports the startup result; the calling conversation remains an ordinary conversation.
+
 **Orchestrator**:
 The single scheduling authority of a Run, materialized by exactly one active managed attempt. Replacement requires verified termination and retains prior attempts as history.
 
