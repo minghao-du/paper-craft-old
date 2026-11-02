@@ -1,4 +1,5 @@
 import { vi, test, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -514,12 +515,17 @@ test('children use separate exact panes in their Run session and cancellation le
     const attempts = ['r1', 'r1', 'r2'].map((run, i) => {
       const dir = join(directory, String(i));
       mkdirSync(dir);
+      writeFileSync(join(dir, 'brief.md'), 'Original hash-bound task');
       return {
         id: 'child-' + i,
+        ...(i === 1 ? { predecessor: 'prior-child' } : {}),
         run,
         directory: dir,
         checkout: dir,
-        brief: 'work',
+        brief:
+          i === 1
+            ? 'Current retry reconciliation: inspect accepted results; initialize child-1'
+            : 'Original hash-bound task\nAppended role initialization instructions',
         role: 'worker',
         runner: 'agy',
         fleet: 'f',
@@ -529,6 +535,17 @@ test('children use separate exact panes in their Run session and cancellation le
       } as import('../../packages/core/src/workflow/runtime/runtime.js').ManagedAttempt;
     });
     await Promise.all(attempts.map((a) => expect(adapter.start(a)).rejects.toThrow(/exited/)));
+    for (const attempt of attempts) {
+      expect(readFileSync(join(attempt.directory, 'startup.md'), 'utf8')).toBe(attempt.brief);
+      expect(
+        createHash('sha256')
+          .update(readFileSync(join(attempt.directory, 'brief.md')))
+          .digest('hex'),
+      ).toBe(createHash('sha256').update('Original hash-bound task').digest('hex'));
+      expect(readFileSync(join(attempt.directory, 'agy-input.txt'), 'utf8')).not.toContain(
+        attempt.brief,
+      );
+    }
     expect(targets).toEqual(['pc-run-r1:', 'pc-run-r1:', 'pc-run-r2:']);
     expect(new Set(attempts.map((a) => a.address)).size).toBe(3);
     await adapter.cancel(attempts[0]);
@@ -581,6 +598,7 @@ test.each([false, true])(
     delete process.env.TMUX;
     delete process.env.TMUX_PANE;
     const calls: string[][] = [];
+    let live = false;
     const attempt = {
       id: 'attempt-independent',
       dangerouslySkipPermissions,
@@ -590,7 +608,7 @@ test.each([false, true])(
       fleet: 'fleet',
       role: 'orchestrator' as const,
       runner: 'agy',
-      brief: 'Initialize only',
+      brief: 'Task payload '.repeat(3000) + '\nInitialize only',
       status: 'starting' as const,
       created: new Date().toISOString(),
     };
@@ -607,7 +625,7 @@ test.each([false, true])(
         ).toBe(true);
         return ''; // tmux respawn-pane does not print the pane ID
       }
-      if (a[0] === 'list-panes') return '%401 1\n%200 0\n';
+      if (a[0] === 'list-panes') return `%401 ${live ? 0 : 1}\n%200 0\n`;
       if (a[0] === 'display-message') {
         return a.at(-1) === '#{window_id}' ? '@91' : 'pc-run-run-independent run-independent %401';
       }
@@ -617,6 +635,12 @@ test.each([false, true])(
     const persisted = { ...attempt };
     try {
       await expect(new AgyInteractive().start(attempt)).rejects.toThrow(/Login required/);
+      expect(readFileSync(join(directory, 'startup.md'), 'utf8')).toBe(attempt.brief);
+      const submitted = readFileSync(join(directory, 'agy-input.txt'), 'utf8');
+      expect(submitted).toContain(join(directory, 'startup.md'));
+      expect(submitted).toContain(attempt.id);
+      expect(submitted).not.toContain('Task payload');
+      expect(submitted).not.toContain('Initialize only');
       expect(
         readFileSync(join(directory, 'agy-launch.sh'), 'utf8').includes(
           "'--dangerously-skip-permissions'",
@@ -635,6 +659,39 @@ test.each([false, true])(
         paneId: '%401',
         windowId: '@91',
       });
+      live = true;
+      const transcript = join(directory, 'native.jsonl');
+      writeFileSync(
+        join(directory, 'agy-native.json'),
+        JSON.stringify({
+          conversation_id: 'new-native',
+          transcript_path: transcript,
+          agent_state: 'idle',
+        }),
+      );
+      const ready = {
+        step_index: 1,
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        content: '[pc ready role=orchestrator attempt=attempt-independent]',
+      };
+      const input = {
+        step_index: 0,
+        type: 'USER_INPUT',
+        source: 'USER_EXPLICIT',
+        status: 'DONE',
+        content: submitted,
+      };
+      writeFileSync(transcript, [input, ready].map((s) => JSON.stringify(s)).join('\n'));
+      await expect(new AgyInteractive().recoverReceipt(persisted)).resolves.toMatchObject({
+        conversation: 'new-native',
+      });
+      writeFileSync(
+        transcript,
+        [{ ...input, content: attempt.brief }, ready].map((s) => JSON.stringify(s)).join('\n'),
+      );
+      await expect(new AgyInteractive().recoverReceipt(persisted)).resolves.toBeUndefined();
       expect(calls.find((a) => a[0] === 'new-session')).toEqual([
         'new-session',
         '-P',
@@ -656,6 +713,54 @@ test.each([false, true])(
       else process.env.TMUX = prior.tmux;
       if (prior.pane === undefined) delete process.env.TMUX_PANE;
       else process.env.TMUX_PANE = prior.pane;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+// These failures occur after publication but before the release marker, retaining the failed evidence.
+test.each(['missing', 'unreadable', 'mismatched'])(
+  'startup content %s fails before execution release without inline fallback',
+  async (failure) => {
+    const child = await import('node:child_process');
+    const { existsSync, mkdirSync } = await import('node:fs');
+    const directory = mkdtempSync(join(tmpdir(), "pc startup 'quoted'-"));
+    const startup = join(directory, 'startup.md');
+    const attempt = {
+      id: 'new-attempt',
+      run: 'r1',
+      directory,
+      checkout: directory,
+      fleet: 'f',
+      role: 'orchestrator' as const,
+      runner: 'agy',
+      brief: 'Complete initialization payload',
+      status: 'starting' as const,
+      created: '',
+      startupGate: true,
+    };
+    vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
+      const a = args as string[];
+      if (a[0] === 'list-sessions') return '';
+      if (a[0] === 'new-session') return '%1';
+      if (a[0] === 'display-message') return '@1';
+      if (a[0] === 'set-option' && a.includes('remain-on-exit')) {
+        rmSync(startup);
+        if (failure === 'unreadable') mkdirSync(startup);
+        if (failure === 'mismatched') writeFileSync(startup, 'Unrelated prior content');
+      }
+      return '';
+    });
+    try {
+      await expect(new AgyInteractive().start(attempt)).rejects.toThrow(
+        /startup document .*startup\.md/,
+      );
+      expect(existsSync(join(directory, 'agy-launch-ready'))).toBe(false);
+      expect(readFileSync(join(directory, 'brief.md'), 'utf8')).toBe(attempt.brief);
+      expect(readFileSync(join(directory, 'agy-input.txt'), 'utf8')).not.toContain(attempt.brief);
+      if (failure === 'mismatched')
+        expect(readFileSync(startup, 'utf8')).toBe('Unrelated prior content');
+    } finally {
       rmSync(directory, { recursive: true, force: true });
     }
   },
