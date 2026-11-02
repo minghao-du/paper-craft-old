@@ -4,6 +4,7 @@ import {
   recoverRun,
   orchestratorForSubject,
   type WorkflowRun,
+  type RunRegistry,
 } from '@paper-craft/core/workflow/run-driver';
 import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
 import { finishEpic } from '../workflow/epic-completion.js';
@@ -27,6 +28,7 @@ interface Options {
   fetch?: boolean;
   dir?: string;
   reason?: string;
+  detailed?: boolean;
 }
 
 function configured(command: Command): Command {
@@ -76,6 +78,42 @@ async function inspection(run: WorkflowRun, config: string) {
   };
 }
 
+function attemptSummary(attempt: WorkflowRun['orchestrator']) {
+  if (!attempt) return undefined;
+  return { ...attempt, brief: undefined, startupFailures: undefined, initialization: undefined };
+}
+
+function statusSummary(registry: RunRegistry) {
+  return {
+    outcome: 'succeeded',
+    revision: registry.revision,
+    runs: registry.runs.map((run) => {
+      return {
+        ...run,
+        requirements: undefined,
+        priorOrchestrators: undefined,
+        subject: { ...run.subject, body: undefined },
+        orchestrator: attemptSummary(run.orchestrator),
+      };
+    }),
+    dispatches: registry.dispatches?.map((dispatch) => {
+      return {
+        ...dispatch,
+        brief: undefined,
+        attempts: dispatch.attempts.map(attemptSummary),
+        messages: dispatch.messages?.filter((message) => message.status !== 'completed'),
+      };
+    }),
+    receipts: registry.receipts?.filter(
+      (receipt) => !registry.acknowledgements?.some((ack) => ack.receiptId === receipt.id),
+    ),
+    resources: registry.resources,
+    subjects: registry.subjects,
+    pullRequests: registry.pullRequests,
+    deliveries: registry.deliveries,
+  };
+}
+
 /** Register workflow file operations and read-only fleet checks, with JSON output by default. */
 export function registerWorkflowCommands(program: Command, opts: { human: () => boolean }): void {
   const workflow = program
@@ -97,14 +135,18 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     orchestrator
       .command('status')
-      .description('Read Run lifecycle, retained execution state and resource ownership'),
+      .description('Read concise current Runs, pending work and resource ownership')
+      .option(
+        '--detailed',
+        'Return the complete current structured result; logs remain referenced',
+      ),
   ).action(async (options: Options) => {
     try {
       const config = loadFleetConfig(options.config);
       const registry = inspectRuns(config);
       output(
         {
-          ...registry,
+          ...(options.detailed ? registry : statusSummary(registry)),
           inspection: await Promise.all(
             registry.runs.map((entry) => inspection(entry, config.file)),
           ),
@@ -112,9 +154,15 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         opts.human(),
       );
     } catch (error) {
-      run(() => {
-        throw error;
-      });
+      output(
+        {
+          outcome: 'failed',
+          status: 'unknown',
+          error: error instanceof Error ? error.message : String(error),
+        },
+        opts.human(),
+      );
+      process.exitCode = 2;
     }
   });
   configured(
