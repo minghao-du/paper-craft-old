@@ -26,7 +26,7 @@ test('managed role startup requires actual role evidence and recovery never rela
   let initialized = false,
     launches = 0;
   const runner = {
-    name: 'codex',
+    name: 'agy',
     interactive: true,
     async preflight() {},
     async result() {
@@ -45,7 +45,15 @@ test('managed role startup requires actual role evidence and recovery never rela
       if (initialized) initializeRole(a);
       return { conversation: 'exact', address: 'tmux:known', evidence: 'native acknowledgement' };
     },
-    async recoverReceipt() {
+    async observe(a: ManagedAttempt) {
+      return {
+        status: a.terminalSession ? ('idle' as const) : ('unknown' as const),
+        at: new Date().toISOString(),
+        evidence: 'terminal identity inspection',
+      };
+    },
+    async recoverReceipt(a: ManagedAttempt) {
+      a.terminalSession = `pc-run-${a.run}`;
       return { conversation: 'exact', address: 'tmux:known', evidence: 'native acknowledgement' };
     },
   };
@@ -55,14 +63,17 @@ test('managed role startup requires actual role evidence and recovery never rela
       config,
       runner,
       { repository: 'o/r', number: 7, kind: 'epic', title: 'bounded scope', body: 'scope' },
-      'codex',
+      'agy',
     );
     expect(run.lifecycle).toBe('blocked');
     expect(run.orchestrator?.conversation).toBe('exact');
     await recoverRun(config, runner, run.id);
     expect(inspectRuns(config).runs[0].lifecycle).toBe('blocked');
     initializeRole(run.orchestrator!);
-    await recoverRun(config, runner, run.id);
+    updateRunRegistry(config, (state) => {
+      state.runs[0].orchestrator!.terminalSession = undefined;
+    });
+    expect((await recoverRun(config, runner, run.id)).blockers).toEqual([]);
     expect(inspectRuns(config).runs[0].lifecycle).toBe('running');
     expect(launches).toBe(1);
     initialized = true;
