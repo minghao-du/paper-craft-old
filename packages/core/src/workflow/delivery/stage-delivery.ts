@@ -8,6 +8,7 @@ import {
   updateRunRegistry,
   releaseRunCheckout,
   type StageDispatch,
+  type StageReceipt,
 } from '../run/run-driver.js';
 import type { FleetConfig } from '../fleet/fleet-config.js';
 import { GitHubPullRequests, type PullRequestProvider } from './pr-driver.js';
@@ -171,6 +172,7 @@ export async function deliveryFacts(
   dispatch: StageDispatch,
   pr: number | undefined,
   provider: PullRequestProvider,
+  receipt: StageReceipt,
 ) {
   const attempt = dispatch.attempts.at(-1)!;
   if (dispatch.stage === 'preservation-cleanup') {
@@ -215,9 +217,6 @@ export async function deliveryFacts(
   if (['pr-merge', 'final-records'].includes(dispatch.stage) && live.state !== 'MERGED')
     throw new Error('Expected verified merged PR');
   if (dispatch.stage === 'final-records') {
-    const receipt = inspectRuns(config)
-      .receipts?.filter((r) => r.dispatchId === dispatch.id)
-      .at(-1);
     const result = receipt && JSON.parse(readFileSync(receipt.evidence[0].path, 'utf8'));
     if (
       result?.complete !== true ||

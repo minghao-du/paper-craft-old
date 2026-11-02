@@ -308,12 +308,31 @@ export async function runDeliveryDemo() {
   const merge = await task('pr-merge', 'landing', demo.delivery.head);
   await demo.cli('execute', ['--dispatch', merge.id, '--pr', '2']);
   await accept(merge.id);
+  const completeRecords = demo.tasks.get('final-records')!;
+  demo.tasks.set('final-records', (a) => {
+    completeRecords(a);
+    return JSON.stringify({ complete: false, assessment: 'Incomplete first report' });
+  });
   const records = await task('final-records', 'worker', demo.delivery.head);
+  const incompleteReceipt = inspectRuns(demo.config).receipts!.at(-1)!;
+  demo.tasks.set('final-records', completeRecords);
+  await demo.cli('collect', ['--dispatch', records.id]);
+  await demo.cli('accept', [
+    '--receipt',
+    incompleteReceipt.id,
+    '--decision',
+    decision,
+    '--pr',
+    '2',
+  ]);
+  if (process.exitCode !== 2)
+    throw new Error('Incomplete selected receipt accepted using later evidence');
+  process.exitCode = oldExit;
   const statusPath = join(checkout, '.epic-status.json');
   const validStatus = readFileSync(statusPath, 'utf8');
   writeFileSync(statusPath, JSON.stringify({ assessment: 'old incomplete assessment' }));
   const recordReceipt = inspectRuns(demo.config).receipts!.find(
-    (r) => r.dispatchId === records.id,
+    (r) => r.dispatchId === records.id && r.id !== incompleteReceipt.id,
   )!;
   await demo.cli('accept', ['--receipt', recordReceipt.id, '--decision', decision, '--pr', '2']);
   if (process.exitCode !== 2) throw new Error('Incomplete final records accepted');

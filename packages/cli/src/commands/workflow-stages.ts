@@ -269,7 +269,7 @@ export function registerStageCommands(
                 config,
                 o.authority,
                 receipt.id,
-                async (d) => {
+                async (d, selectedReceipt) => {
                   const provider = (boundary.pullRequests ?? stagePullRequests)(config, d);
                   const specialized = [
                     'implementation',
@@ -278,7 +278,13 @@ export function registerStageCommands(
                     'final-records',
                     'preservation-cleanup',
                   ].includes(d.stage)
-                    ? await deliveryFacts(config, d, Number(o.pr) || undefined, provider)
+                    ? await deliveryFacts(
+                        config,
+                        d,
+                        Number(o.pr) || undefined,
+                        provider,
+                        selectedReceipt,
+                      )
                     : undefined;
                   const facts = specialized ?? (await (boundary.facts ?? currentFacts)(config, d));
                   return {
