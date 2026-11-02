@@ -276,6 +276,15 @@ it('keeps hidden startup diagnostics readable without changing failed or success
     expect(saved.invocation).toBeTruthy();
     expect(saved.error).toContain('TERMINAL-DETAIL');
     expect(saved.error).not.toContain('do-not-save');
+    vi.mocked(startRun).mockRejectedValueOnce(
+      new Error(
+        'agy capability probe failed: {"api_key":"JSON-SECRET", "password": "QUOTED SECRET"}',
+      ),
+    );
+    const quoted = JSON.parse((await invoke(args)).stdout);
+    const quotedRecord = readFileSync(quoted.diagnostics[0].path, 'utf8');
+    expect(quotedRecord).not.toContain('JSON-SECRET');
+    expect(quotedRecord).not.toContain('QUOTED SECRET');
     const current = structuredClone(outputRegistry().runs[0]);
     current.lifecycle = 'running';
     current.orchestrator.status = 'running';
@@ -472,6 +481,26 @@ it('keeps Recover diagnostic failures separate from recovery and preserves curre
     ).toBe(blocker);
     expect(blocked.exitCode).toBe(2);
     expect(blocked.stderr).toBe('');
+    current.reconciliation.blockers = [blocker];
+    const storedHome = join(
+      root,
+      '.runtime',
+      createHash('sha256').update(config.file).digest('hex'),
+    );
+    const storedRegistry = join(storedHome, 'registry.json');
+    writeFileSync(storedRegistry, JSON.stringify({ runs: [current] }));
+    const storedCount = readdirSync(storedHome).length;
+    const reused = JSON.parse((await invoke(['recover', 'run-1'])).stdout);
+    expect(reused.diagnostics).toEqual([
+      {
+        path: storedRegistry,
+        run: 'run-1',
+        attempt: 'attempt-current',
+        field: 'reconciliation.blockers',
+        index: 0,
+      },
+    ]);
+    expect(readdirSync(storedHome).length).toBe(storedCount);
     // Successful reconciliation may retain an old diagnostic, without changing its outcome.
     Object.assign(current.orchestrator, { error: message });
     vi.mocked(recoverRun).mockResolvedValue({ blockers: [], pendingDispatches: [] });
@@ -500,4 +529,47 @@ it('keeps Recover diagnostic failures separate from recovery and preserves curre
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+it('keeps pending message identities and references without repeating their Brief bodies', async () => {
+  const registry = structuredClone(outputRegistry());
+  Object.assign(registry.dispatches[0], {
+    messages: [
+      {
+        id: 'followup-1',
+        status: 'uncertain',
+        attemptId: 'worker-0',
+        brief: 'PENDING-FOLLOWUP-BODY'.repeat(100),
+      },
+    ],
+  });
+  vi.mocked(inspectRuns).mockReturnValue(registry as never);
+  const concise = await invoke(['status']);
+  expect(JSON.parse(concise.stdout).dispatches[0].messages[0]).toMatchObject({
+    id: 'followup-1',
+    status: 'uncertain',
+    attemptId: 'worker-0',
+    reference: { dispatch: 'pending-0', message: 'followup-1' },
+  });
+  expect(concise.stdout).not.toContain('PENDING-FOLLOWUP-BODY');
+  const detailed = await invoke(['status', '--detailed']);
+  expect(detailed.stdout).toContain('PENDING-FOLLOWUP-BODY');
+});
+
+it('reports already reserved Start state on failure without retrying startup', async () => {
+  const registry = structuredClone(outputRegistry());
+  vi.mocked(inspectRuns).mockReturnValue(registry as never);
+  vi.mocked(startRun).mockClear();
+  vi.mocked(startRun).mockRejectedValueOnce(new Error('Second startup preflight failed'));
+  const result = await invoke(['start', '7', '--provider', 'agy', '--type', 'issue']);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    outcome: 'failed',
+    run: 'run-1',
+    lifecycle: 'blocked',
+    attempt: 'attempt-current',
+    attemptStatus: 'unknown',
+    blockers: ['Occupancy unknown'],
+  });
+  expect(result.exitCode).toBe(2);
+  expect(startRun).toHaveBeenCalledTimes(1);
 });

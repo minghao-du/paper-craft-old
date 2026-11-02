@@ -40,7 +40,11 @@ export function diagnosticError(
     try {
       if (!lstatSync(registry).isFile()) throw new Error('Expected regular Registry file');
       const saved = JSON.parse(readFileSync(registry, 'utf8')) as {
-        runs?: { id: string; orchestrator?: { id: string; error?: string } }[];
+        runs?: {
+          id: string;
+          orchestrator?: { id: string; error?: string };
+          reconciliation?: { blockers: string[] };
+        }[];
       };
       const run = saved.runs?.find((entry) => entry.id === context.run);
       if (run?.orchestrator?.id === context.attempt && run?.orchestrator?.error === error) {
@@ -49,6 +53,22 @@ export function diagnosticError(
         return {
           error: concise,
           diagnostics: [{ path: registry, run: context.run, attempt: context.attempt }],
+        };
+      }
+      const blockerIndex = run?.reconciliation?.blockers.indexOf(error) ?? -1;
+      if (run && run.orchestrator?.id === context.attempt && blockerIndex >= 0) {
+        stateDirectory(config, '.runtime', hash);
+        return {
+          error: concise,
+          diagnostics: [
+            {
+              path: registry,
+              run: context.run,
+              attempt: context.attempt,
+              field: 'reconciliation.blockers',
+              index: blockerIndex,
+            },
+          ],
         };
       }
     } catch {
@@ -81,7 +101,7 @@ export function diagnosticError(
     const sanitized = error
       .replace(/\b(Bearer\s+)\S+/gi, '$1[redacted]')
       .replace(
-        /\b((?:[a-z0-9_-]*(?:api[_-]?key|token|password|secret))\s*[:=]\s*)[^\s,;]+/gi,
+        /\b((?:[a-z0-9_-]*(?:api[_-]?key|token|password|secret))["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi,
         '$1[redacted]',
       );
     const body = JSON.stringify({ invocation, ...context, error: sanitized });

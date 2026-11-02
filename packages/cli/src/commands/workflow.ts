@@ -111,7 +111,13 @@ function statusSummary(registry: RunRegistry) {
         ...dispatch,
         brief: undefined,
         attempts: dispatch.attempts.map(attemptSummary),
-        messages: dispatch.messages?.filter((message) => message.status !== 'completed'),
+        messages: dispatch.messages
+          ?.filter((message) => message.status !== 'completed')
+          .map((message) => ({
+            ...message,
+            brief: undefined,
+            reference: { dispatch: dispatch.id, message: message.id },
+          })),
       };
     }),
     receipts: registry.receipts?.filter(
@@ -210,6 +216,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     ) => {
       let config: FleetConfig | undefined;
       let subjectReference: string | undefined;
+      let startupInvoked = false;
       try {
         if (options.requirements !== undefined && options.requirementsFile !== undefined)
           throw new Error('Use only one of --requirements or --requirements-file');
@@ -232,6 +239,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           throw new Error(
             `Type mismatch: --type ${options.type}, but title ${JSON.stringify(subject.title)} identifies ${kind}; correct the title or --type before retrying`,
           );
+        startupInvoked = true;
         const result = await startRun(
           config,
           managedRunner(options.provider),
@@ -263,15 +271,38 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         );
         if (result.lifecycle !== 'running') process.exitCode = 2;
       } catch (error) {
+        let current: WorkflowRun | undefined;
+        if (config && startupInvoked && subjectReference) {
+          try {
+            current = inspectRuns(config).runs.find(
+              (entry) =>
+                `${entry.subject.repository}#${entry.subject.number}` === subjectReference &&
+                entry.provider === options.provider &&
+                entry.lifecycle !== 'completed',
+            );
+          } catch {
+            /* No verified state is available; do not repeat startup. */
+          }
+        }
         const message = error instanceof Error ? error.message : String(error);
         const diagnostics = diagnosticError(config, message, {
           command: 'start',
           subject: subjectReference,
+          run: current?.id,
+          attempt: current?.orchestrator?.id,
         });
         output(
           {
             outcome: 'failed',
             status: 'unknown',
+            ...(current && config
+              ? {
+                  ...(await inspection(current, config.file, !!options.detailed)),
+                  blockers: current.reconciliation?.blockers.map(conciseError) ?? [],
+                  observation: current.orchestrator?.observation,
+                  evidence: current.orchestrator?.evidence,
+                }
+              : {}),
             ...diagnostics,
             ...(options.detailed ? { error: message } : {}),
           },
