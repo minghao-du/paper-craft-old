@@ -33,6 +33,24 @@ export async function prepareScriptedEpic() {
   const launched: string[] = [];
   const activated = new Set<string>();
   const terminated = new Set<string>();
+  const tasks = new Map<string, (a: ManagedAttempt) => string>();
+  const delivery = { head: '', state: 'OPEN', conflict: false, mergeCommit: '' };
+  const pullRequests = {
+    async ensure() {
+      return 2;
+    },
+    async read() {
+      return { ...delivery };
+    },
+    async checks() {
+      return 'passed' as const;
+    },
+    async merge(_pr: number, head: string) {
+      if (head !== delivery.head) throw new Error('Head moved');
+      delivery.state = 'MERGED';
+      delivery.mergeCommit = head;
+    },
+  };
   const runner = {
     name: 'codex',
     interactive: true,
@@ -66,6 +84,11 @@ export async function prepareScriptedEpic() {
     },
     async result(a: ManagedAttempt) {
       if (!activated.has(a.id)) return undefined;
+      const dispatch = inspectRuns(config).dispatches?.find((d) =>
+        d.attempts.some((x) => x.id === a.id),
+      );
+      const task = dispatch && tasks.get(dispatch.stage);
+      if (task) return task(a);
       const path = join(a.directory, 'planning.md');
       writeFileSync(path, 'Toy plan: change toy.txt; preserve its Git history.\n');
       return JSON.stringify({ status: 'completed', artifact: path, role: a.role, attempt: a.id });
@@ -101,7 +124,11 @@ export async function prepareScriptedEpic() {
   let requestNumber = 0;
   async function cli(operation: string, args: string[] = []) {
     const program = new Command();
-    registerStageCommands(program, { human: () => false }, { runner: () => runner });
+    registerStageCommands(
+      program,
+      { human: () => false },
+      { runner: () => runner, pullRequests: () => pullRequests },
+    );
     await program.parseAsync(
       [
         'stage',
@@ -124,7 +151,20 @@ export async function prepareScriptedEpic() {
     await reconcileStartup(config, runner, run.id);
     return inspectRuns(config).dispatches!.at(-1)!;
   }
-  return { directory, config, run, runner, launched, activated, terminated, git, cli, dispatch };
+  return {
+    directory,
+    config,
+    run,
+    runner,
+    launched,
+    activated,
+    terminated,
+    git,
+    cli,
+    dispatch,
+    tasks,
+    delivery,
+  };
 }
 
 /** First vertical slice; later slices reuse this prepared context and public CLI calls. */
@@ -158,5 +198,127 @@ export async function runPlanningDemo() {
     planning: dispatch.id,
     evidenceLevel:
       'Controlled lifecycle/CLI evidence; no native subordinate or scientific validity claim.',
+  };
+}
+
+/** The same CLI scenario extended through independently verified local toy delivery. */
+export async function runDeliveryDemo() {
+  const demo = await runPlanningDemo();
+  const checkout = join(demo.directory, 'pool', 'issue-2');
+  demo.git('worktree', 'add', '-b', 'toy-worker', checkout);
+  const localGit = (...args: string[]) =>
+    execFileSync('git', args, { cwd: checkout, encoding: 'utf8' }).trim();
+  demo.tasks.set('implementation', (a) => {
+    writeFileSync(join(checkout, 'toy.txt'), 'Tiny delivered change\n');
+    localGit('add', 'toy.txt');
+    localGit('commit', '-m', 'Deliver tiny change');
+    demo.delivery.head = localGit('rev-parse', 'HEAD');
+    return JSON.stringify({
+      status: 'completed',
+      artifact: join(checkout, 'toy.txt'),
+      attempt: a.id,
+    });
+  });
+  demo.tasks.set('final-records', (a) => {
+    writeFileSync(
+      join(checkout, '.epic-status.json'),
+      JSON.stringify({
+        issue: 2,
+        assessment: 'Toy change delivered at evaluated head',
+        followups: [],
+      }),
+    );
+    writeFileSync(
+      join(checkout, '.epic-worklog.md'),
+      'Worker final records: evaluated head merged; toy.txt delivered.\n',
+    );
+    return JSON.stringify({ complete: true, assessment: 'Toy delivered', attempt: a.id });
+  });
+  for (const stage of ['pr-quality', 'pr-merge', 'preservation-cleanup'])
+    demo.tasks.set(stage, (a) =>
+      JSON.stringify({ passed: true, head: demo.delivery.head, attempt: a.id, stage }),
+    );
+  let previous = demo.planning;
+  async function task(stage: string, role: 'worker' | 'landing', revision: string) {
+    const dispatch = await demo.dispatch({
+      subject: 'toy/epic#2',
+      role,
+      stage,
+      inputRevision: revision,
+      brief: `Execute only toy ${stage}; retain evidence.`,
+      prerequisites: [previous],
+      checkout,
+    });
+    await demo.cli('collect', ['--dispatch', dispatch.id]);
+    return dispatch;
+  }
+  async function accept(id: string) {
+    const receipt = inspectRuns(demo.config)
+      .receipts!.filter((r) => r.dispatchId === id)
+      .at(-1)!;
+    const decision = join(demo.directory, `${id}-decision.md`);
+    writeFileSync(
+      decision,
+      'Reviewed bounded toy artifact and independently checked current delivery facts.',
+    );
+    await demo.cli('accept', ['--receipt', receipt.id, '--decision', decision, '--pr', '2']);
+    if (inspectRuns(demo.config).dispatches!.find((d) => d.id === id)!.lifecycle !== 'accepted')
+      throw new Error(`Acceptance blocked; ${demo.directory}`);
+    previous = id;
+  }
+  const worker = await task('implementation', 'worker', demo.git('rev-parse', 'HEAD'));
+  // The implementation intentionally changes HEAD: dispatch binds the known resulting revision.
+  // Correction uses a new assignment after independently stopped prior execution.
+  demo.terminated.add(worker.attempts.at(-1)!.id);
+  const oldExit = process.exitCode;
+  const launches = demo.launched.length;
+  await demo.dispatch({
+    subject: 'toy/epic#2',
+    role: 'landing',
+    stage: 'pr-merge',
+    inputRevision: demo.delivery.head,
+    brief: 'Premature merge must not launch',
+    prerequisites: [],
+    checkout,
+  });
+  const prematureLaunches = demo.launched.length - launches;
+  if (process.exitCode !== 2 || prematureLaunches)
+    throw new Error('Missing prerequisite was not rejected');
+  process.exitCode = oldExit;
+  // Implementation acceptance verifies the resulting Git revision, not an agent assertion.
+  // Re-dispatch with the final immutable revision and reuse the committed artifact.
+  demo.tasks.set('implementation', (a) =>
+    JSON.stringify({ status: 'completed', artifact: join(checkout, 'toy.txt'), attempt: a.id }),
+  );
+  // Original pre-edit revision cannot be accepted against the changed HEAD. Collect a current revision generation.
+  const rejected = inspectRuns(demo.config).receipts!.find((r) => r.dispatchId === worker.id)!;
+  const decision = join(demo.directory, 'stale-implementation.md');
+  writeFileSync(decision, 'Reject stale pre-edit revision.');
+  await demo.cli('accept', ['--receipt', rejected.id, '--decision', decision]);
+  process.exitCode = oldExit;
+  const implementation = await task('implementation', 'worker', demo.delivery.head);
+  await accept(implementation.id);
+  const quality = await task('pr-quality', 'landing', demo.delivery.head);
+  await accept(quality.id);
+  const merge = await task('pr-merge', 'landing', demo.delivery.head);
+  await demo.cli('execute', ['--dispatch', merge.id, '--pr', '2']);
+  await accept(merge.id);
+  const records = await task('final-records', 'worker', demo.delivery.head);
+  await accept(records.id);
+  const cleanup = await task('preservation-cleanup', 'landing', demo.delivery.head);
+  // The controlled script has returned and independently reports terminated before releasing its checkout.
+  demo.terminated.add(cleanup.attempts.at(-1)!.id);
+  await demo.cli('execute', ['--dispatch', cleanup.id, '--pr', '2']);
+  await accept(cleanup.id);
+  const archive = JSON.parse(
+    readFileSync(join(cleanup.attempts.at(-1)!.directory, 'cleanup.json'), 'utf8'),
+  ).archive as string;
+  return {
+    ...demo,
+    checkout,
+    archive,
+    prematureLaunches,
+    implementation: implementation.id,
+    cleanup: cleanup.id,
   };
 }

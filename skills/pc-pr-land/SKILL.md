@@ -113,3 +113,10 @@ EPIC closure remains a separate user decision.
 For Run-owned work, use [the shared managed lifecycle](../pc-orchestrator/managed-lifecycle.md) for correlated results and acceptance. Receipt publication is not delivery acceptance and does not authorize another top-level dispatch or checkout reuse.
 
 Post-merge completion follows the [shared lifecycle](../pc-orchestrator/managed-lifecycle.md#post-merge-delivery): accept Worker final records and independently verified termination before preservation/cleanup. A merged PR remains pending delivery until the archive and actual resource release are verified.
+
+For CLI-dispatched assignments, use the [supported stage operations](../pc-orchestrator/managed-lifecycle.md#cli-stage-assignments).
+The Orchestrator selects the merge or cleanup Dispatch, collects your result, executes
+that stage with `stage execute --dispatch <id> --pr <number>`, then independently
+accepts its Receipt. Cleanup requires accepted Worker final records and verified
+termination of every execution using the checkout. Completion retains the verified
+archive and resource-release evidence.

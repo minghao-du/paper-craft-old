@@ -16,16 +16,27 @@ import {
   type StageDispatch,
   type StageFacts,
 } from '@paper-craft/core/workflow/run-driver';
+import {
+  executeDeliveryStage,
+  deliveryFacts,
+  stagePullRequests,
+  type StagePullRequests,
+} from './workflow-delivery-stage.js';
 import { output } from '../utils/output.js';
 
 /** Controlled runners and external facts can be supplied by isolated CLI scenarios only. */
 export interface StageBoundary {
   runner?: (provider: string) => ReturnType<typeof managedRunner>;
+  pullRequests?: StagePullRequests;
   facts?: (config: FleetConfig, dispatch: StageDispatch) => Promise<StageFacts>;
 }
 
 async function currentFacts(config: FleetConfig, dispatch: StageDispatch): Promise<StageFacts> {
-  if (dispatch.role !== 'epic' || dispatch.stage !== 'planning')
+  if (
+    !['planning', 'implementation', 'pr-quality', 'pr-merge', 'final-records'].includes(
+      dispatch.stage,
+    )
+  )
     throw new Error('Stage requires a domain-specific authoritative acceptance operation');
   const attempt = dispatch.attempts.at(-1)!;
   const checkout = realpathSync(attempt.checkout);
@@ -55,7 +66,15 @@ export function registerStageCommands(
   const group = workflow
     .command('stage')
     .description('Orchestrator-selected stage assignments and correlated results');
-  for (const operation of ['dispatch', 'inspect', 'collect', 'accept', 'retry', 'message']) {
+  for (const operation of [
+    'dispatch',
+    'inspect',
+    'collect',
+    'accept',
+    'retry',
+    'message',
+    'execute',
+  ]) {
     group
       .command(operation)
       .option('--config <file>', 'Authoritative Fleet configuration', '.epic-config.json')
@@ -65,6 +84,7 @@ export function registerStageCommands(
         '--input <file>',
         'JSON assignment: subject, role, stage, inputRevision (Git HEAD), brief, prerequisites, checkout',
       )
+      .option('--pr <number>', 'PR whose current external facts must match the assignment')
       .option('--dispatch <id>', 'Dispatch identity')
       .option('--receipt <id>', 'Receipt selected after reviewing collected evidence')
       .option(
@@ -94,6 +114,21 @@ export function registerStageCommands(
           if (operation === 'dispatch') {
             if (!o.input) throw new Error('Expected --input assignment JSON');
             const input = JSON.parse(readFileSync(o.input, 'utf8')) as StageRequest;
+            if (
+              input.stage === 'implementation' &&
+              run.subject.kind === 'epic' &&
+              !registry.dispatches?.some(
+                (d) =>
+                  d.runId === run.id &&
+                  d.role === 'epic' &&
+                  d.stage === 'planning' &&
+                  d.lifecycle === 'accepted' &&
+                  input.prerequisites?.includes(d.id),
+              )
+            )
+              throw new Error(
+                'EPIC Worker implementation requires its accepted planning prerequisite',
+              );
             result = await dispatchStage(config, runner, {
               ...input,
               runId: run.id,
@@ -106,6 +141,17 @@ export function registerStageCommands(
             );
             if (!dispatch) throw new Error('Expected Dispatch belonging to this Run');
             const attempt = dispatch.attempts.at(-1)!;
+            if (operation === 'execute') {
+              const pr = Number(o.pr);
+              if (!Number.isSafeInteger(pr) || pr <= 0) throw new Error('Expected positive --pr');
+              result = await executeDeliveryStage(
+                config,
+                dispatch,
+                runner,
+                pr,
+                (boundary.pullRequests ?? stagePullRequests)(config, dispatch),
+              );
+            }
             if (operation === 'inspect')
               result = {
                 dispatch,
@@ -136,7 +182,17 @@ export function registerStageCommands(
                 o.authority,
                 receipt.id,
                 async (d) => {
-                  const facts = await (boundary.facts ?? currentFacts)(config, d);
+                  const provider = (boundary.pullRequests ?? stagePullRequests)(config, d);
+                  const specialized = [
+                    'implementation',
+                    'pr-quality',
+                    'pr-merge',
+                    'final-records',
+                    'preservation-cleanup',
+                  ].includes(d.stage)
+                    ? await deliveryFacts(config, d, Number(o.pr) || undefined, provider)
+                    : undefined;
+                  const facts = specialized ?? (await (boundary.facts ?? currentFacts)(config, d));
                   return {
                     ...facts,
                     evidence: `${facts.evidence}\nOrchestrator decision: ${decision}`,
