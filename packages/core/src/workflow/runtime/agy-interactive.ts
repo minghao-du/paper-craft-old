@@ -382,6 +382,7 @@ export class AgyInteractive {
           s.step_index > input.step_index &&
           s.type === 'PLANNER_RESPONSE' &&
           s.source === 'MODEL' &&
+          s.status === 'DONE' &&
           s.content?.includes(marker),
       )
     )

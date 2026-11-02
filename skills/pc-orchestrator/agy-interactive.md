@@ -6,7 +6,7 @@ The Launcher runs `pc workflow orchestrator start <issue> --type <issue|epic> --
 
 The managed instance reads its supplied Run/Attempt assignment and immutable context, writes the exact `initialization.json` fields and native ready marker, then waits for committed activation via `pc workflow orchestrator status --config <config>`. Scheduling begins only when that Run is running with this exact active Attempt. A visible prompt or callback alone is insufficient. Invalid managed context stops with an error. Launcher completion is reporting actual startup state and inspection guidance; it has no monitoring duty.
 
-Repeat start returns the unfinished Run without retrying or replacing execution. Inspect retained evidence and use explicit recovery through [Managed Run lifecycle](managed-lifecycle.md). Trust/login/authorization prompts require explicit user handling in the recorded terminal.
+Repeat start returns the unfinished Run without retrying or replacing execution. Status and recovery report Run lifecycle separately from Attempt status, with cause, evidence directory and commands; attach is offered only for a verified usable terminal. Inspect retained evidence and use explicit recovery through [Managed Run lifecycle](managed-lifecycle.md). Trust/login/authorization prompts require explicit user handling in the recorded terminal.
 
 Use the managed agy adapter for named persistent roles; follow [Managed Run lifecycle](managed-lifecycle.md) for authority, acceptance, recovery and release.
 

@@ -861,14 +861,24 @@ export async function recoverRun(
         blockers.push(`${attempt.id}: ${attempt.observation.evidence}; occupancy unresolved`);
       }
     }
-    if (attempt.status !== 'running' && runner.recoverReceipt) {
-      const ack = await runner.recoverReceipt(attempt);
+    if (
+      (attempt.status !== 'running' || (attempt === orchestrator && run.lifecycle !== 'running')) &&
+      runner.recoverReceipt
+    ) {
+      let ack;
+      try {
+        ack = await runner.recoverReceipt(attempt);
+      } catch (error) {
+        blockers.push(`${attempt.id}: ${String(error)}; inspect ${attempt.directory}`);
+        continue;
+      }
       if (ack?.conversation && ack.address && ack.evidence) {
         try {
           if (attempt.initialization) verifyRoleInitialization(attempt);
+          else if (runner.name === 'agy') throw new Error('Missing initialization context');
           recovered.set(attempt.id, ack);
-        } catch {
-          /* Missing role evidence remains pending without relaunch. */
+        } catch (error) {
+          blockers.push(`${attempt.id}: ${String(error)}; inspect ${attempt.directory}`);
         }
       }
     }
@@ -890,11 +900,14 @@ export async function recoverRun(
       ]);
       const id = randomUUID();
       const directory = join(home(config), 'runs', runId, id);
-      mkdirSync(directory);
+      mkdirSync(directory, { recursive: true });
       replacement = {
         ...orchestrator,
         paneId: undefined,
         windowId: undefined,
+        observation: undefined,
+        error: undefined,
+        startupFailures: undefined,
         predecessor: orchestrator.id,
         id,
         directory,
@@ -932,8 +945,15 @@ export async function recoverRun(
       current.orchestrator = replacement;
       current.orchestratorId = replacement.id; // revoke old mutation authority before launch
       current.lifecycle = 'blocked';
-    } else if (current.orchestrator?.status === 'running') current.lifecycle = 'running';
-    else blockers.push('Orchestrator startup pending; unknown occupancy remains reserved');
+    } else if (
+      current.orchestrator?.status === 'running' &&
+      (run.lifecycle === 'running' || recovered.has(current.orchestrator.id))
+    )
+      current.lifecycle = 'running';
+    else {
+      current.lifecycle = 'blocked';
+      blockers.push('Orchestrator startup pending; unknown occupancy remains reserved');
+    }
     for (const dispatch of registry.dispatches?.filter((d) => d.runId === runId) ?? []) {
       // Immutable files precede registry/event publication, so scan them on normal re-entry.
       const directory = join(home(config), 'dispatches', dispatch.id);
@@ -999,12 +1019,19 @@ export async function recoverRun(
           ...replacement.initialization,
           attempt: replacement.id,
           authority: replacement.id,
+          briefHash: createHash('sha256').update(replacement.brief).digest('hex'),
         };
         replacement.brief += initializationInstructions(
           replacement.initialization,
           replacement.directory,
         );
       }
+      if (runner.name === 'agy')
+        replacement.brief += `\nManaged Orchestrator assignment: Run ${runId}, Attempt ${replacement.id}, config ${config.file}. After writing initialization and native ready acknowledgement, wait until pc workflow orchestrator status reports this Run running with this exact Attempt before scheduling. Initialization does not dispatch work.\n`;
+      writeFileSync(join(replacement.directory, 'brief.md'), replacement.brief, {
+        mode: 0o400,
+        flag: 'wx',
+      });
       const ack = await runner.start(replacement);
       Object.assign(replacement, ack);
       if (replacement.initialization) verifyRoleInitialization(replacement);

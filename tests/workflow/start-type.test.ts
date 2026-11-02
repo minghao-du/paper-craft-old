@@ -9,16 +9,21 @@ import { readIssue } from '@paper-craft/core/workflow/issue-driver';
 
 vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/run-driver')>()),
-  startRun: vi.fn(async () => ({ status: 'started' })),
+  startRun: vi.fn(async () => ({
+    id: 'run-id',
+    lifecycle: 'running',
+    brief: { path: '/context', hash: 'hash' },
+  })),
 }));
 vi.mock('@paper-craft/core/workflow/issue-driver', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/issue-driver')>()),
   readIssue: vi.fn(),
 }));
 vi.mock('@paper-craft/core/workflow/fleet-config', () => ({
-  loadFleetConfig: () => ({ project: '/project' }),
+  loadFleetConfig: () => ({ project: '/project', file: '/project/.epic-config.json' }),
 }));
-vi.mock('@paper-craft/core/workflow/runtime', () => ({
+vi.mock('@paper-craft/core/workflow/runtime', async (original) => ({
+  ...(await original<typeof import('@paper-craft/core/workflow/runtime')>()),
   managedRunner: vi.fn(() => ({ name: 'codex' })),
 }));
 
