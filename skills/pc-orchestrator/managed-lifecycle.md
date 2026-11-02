@@ -70,4 +70,6 @@ only its candidate writing directory; failed validation retains the prior public
 Registry report identity includes path, hash, revision, accepted and observed versions;
 only successful publication completes the Run. Unknown writer ownership blocks reuse.
 
-Run completion ends scheduling authority independently of execution exit. Resource release still requires verified termination of every execution occupying the checkout, including a registered current Orchestrator. For provider-specific conversation retention and later Run entry, follow the selected provider guide.
+Run completion ends scheduling authority independently of execution exit. Resource release still requires verified termination of every execution occupying the checkout, including the independent Orchestrator.
+
+**Completion is verified when** existing Issue delivery or EPIC finalization gates record `completed`, supported dispatch and recovery reject its authority, and inspection still exposes retained Attempts and unresolved execution/resource occupancy. For agy, retain the Orchestrator conversation and window for inspection. The Launcher has no cleanup or monitoring duty. Later work uses a new Run and independent Orchestrator; resolve existing resource conflicts through the normal verified release gates.
