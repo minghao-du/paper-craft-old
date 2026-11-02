@@ -2,16 +2,16 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { preserveState } from '@paper-craft/core/workflow/handoff';
+import { preserveState } from '../handoff.js';
 import {
   inspectRuns,
   updateRunRegistry,
   releaseRunCheckout,
   type StageDispatch,
-} from '@paper-craft/core/workflow/run-driver';
-import type { FleetConfig } from '@paper-craft/core/workflow/fleet-config';
-import { GitHubPullRequests, type PullRequestProvider } from '@paper-craft/core/workflow/pr-driver';
-import type { RunnerAdapter } from '@paper-craft/core/workflow/runtime';
+} from '../run/run-driver.js';
+import type { FleetConfig } from '../fleet/fleet-config.js';
+import { GitHubPullRequests, type PullRequestProvider } from './pr-driver.js';
+import type { RunnerAdapter } from '../runtime/runtime.js';
 
 /** Boundary for isolated external PR facts; production always reads GitHub. */
 export type StagePullRequests = (
@@ -73,7 +73,37 @@ export async function executeDeliveryStage(
     throw new Error('Expected cleanup assignment after accepted final records');
   if (checkout === config.project || !config.worktrees)
     throw new Error('Cleanup requires an owned local worktree');
-  if ((await provider.read(pr)).state !== 'MERGED') throw new Error('Expected verified merged PR');
+  const live = await provider.read(pr);
+  if (live.state !== 'MERGED' || live.head !== dispatch.inputRevision)
+    throw new Error('Expected verified evaluated-head merged PR');
+  const retained = registry.deliveries?.find(
+    (d) => d.runId === dispatch.runId && d.dispatches.includes(dispatch.id),
+  );
+  if (retained && (retained.pr !== pr || retained.checkedHead !== live.head))
+    throw new Error('Delivery identity changed');
+  if (!existsSync(checkout)) {
+    if (!retained?.releasePrepared || !retained.archive)
+      throw new Error('Missing prepared release evidence');
+    git(config.project, 'bundle', 'verify', join(retained.archive, 'repository.bundle'));
+    if (
+      git(config.project, 'worktree', 'list', '--porcelain')
+        .split('\n')
+        .includes(`worktree ${checkout}`)
+    )
+      throw new Error('Checkout still registered');
+    updateRunRegistry(config, (r) => {
+      r.resources = r.resources?.filter((x) => x.path !== checkout);
+      r.deliveries!.find((d) => d.dispatches.includes(dispatch.id))!.released = true;
+    });
+    const result = { archive: retained.archive, released: true, checkout, pr };
+    writeFileSync(
+      join(dispatch.attempts.at(-1)!.directory, 'cleanup.json'),
+      JSON.stringify(result),
+    );
+    return result;
+  }
+  if (git(checkout, 'rev-parse', 'HEAD') !== dispatch.inputRevision)
+    throw new Error('Checkout head changed');
   const attempts =
     registry.dispatches
       ?.filter((d) => d.runId === dispatch.runId)
@@ -92,10 +122,33 @@ export async function executeDeliveryStage(
     )
   )
     throw new Error('Unaccounted checkout files; retain checkout');
-  const archive = preserveState(config, checkout, 'merged delivery final records').path;
+  const archive =
+    retained?.archive ?? preserveState(config, checkout, 'merged delivery final records').path;
   const bundle = join(archive, 'repository.bundle');
   if (!existsSync(bundle)) git(checkout, 'bundle', 'create', bundle, '--all');
   git(config.project, 'bundle', 'verify', bundle);
+  const result = { archive, released: true, checkout, pr };
+  const evidence = join(dispatch.attempts.at(-1)!.directory, 'cleanup.json');
+  updateRunRegistry(config, (registry) => {
+    registry.deliveries ??= [];
+    if (!registry.deliveries.some((d) => d.dispatches.includes(dispatch.id)))
+      registry.deliveries.push({
+        runId: dispatch.runId,
+        repository: dispatch.subject.split('#')[0],
+        issue: Number(dispatch.subject.split('#')[1]),
+        pr,
+        status: 'done',
+        recorded: true,
+        archive,
+        released: false,
+        releasePrepared: true,
+        checkedHead: dispatch.inputRevision,
+        evidence,
+        dispatches: registry
+          .dispatches!.filter((d) => d.runId === dispatch.runId && d.subject === dispatch.subject)
+          .map((d) => d.id),
+      });
+  });
   await releaseRunCheckout(
     config,
     dispatch.runId,
@@ -105,26 +158,10 @@ export async function executeDeliveryStage(
       git(config.project, 'worktree', 'remove', '--force', checkout);
     },
   );
-  const result = { archive, released: true, checkout, pr };
-  const evidence = join(dispatch.attempts.at(-1)!.directory, 'cleanup.json');
-  writeFileSync(evidence, JSON.stringify(result));
-  updateRunRegistry(config, (registry) => {
-    registry.deliveries ??= [];
-    registry.deliveries.push({
-      runId: dispatch.runId,
-      repository: dispatch.subject.split('#')[0],
-      issue: Number(dispatch.subject.split('#')[1]),
-      pr,
-      status: 'done',
-      recorded: true,
-      archive,
-      released: true,
-      evidence,
-      dispatches: registry
-        .dispatches!.filter((d) => d.runId === dispatch.runId && d.subject === dispatch.subject)
-        .map((d) => d.id),
-    });
+  updateRunRegistry(config, (r) => {
+    r.deliveries!.find((d) => d.dispatches.includes(dispatch.id))!.released = true;
   });
+  writeFileSync(evidence, JSON.stringify(result));
   return result;
 }
 
@@ -178,9 +215,31 @@ export async function deliveryFacts(
   if (['pr-merge', 'final-records'].includes(dispatch.stage) && live.state !== 'MERGED')
     throw new Error('Expected verified merged PR');
   if (dispatch.stage === 'final-records') {
+    const receipt = inspectRuns(config)
+      .receipts?.filter((r) => r.dispatchId === dispatch.id)
+      .at(-1);
+    const result = receipt && JSON.parse(readFileSync(receipt.evidence[0].path, 'utf8'));
+    if (
+      result?.complete !== true ||
+      typeof result.assessment !== 'string' ||
+      !result.assessment.trim() ||
+      typeof result.worklog !== 'string' ||
+      !result.worklog.trim() ||
+      !Array.isArray(result.followups) ||
+      typeof result.releaseEvidence !== 'string' ||
+      !result.releaseEvidence.trim()
+    )
+      throw new Error('Worker final records incomplete');
     const status = JSON.parse(readFileSync(join(attempt.checkout, '.epic-status.json'), 'utf8'));
     if (
-      !status.assessment ||
+      status.issue !== Number(dispatch.subject.split('#')[1]) ||
+      status.repository !== dispatch.subject.split('#')[0] ||
+      status.pr !== pr ||
+      !Array.isArray(status.followups) ||
+      typeof status.releaseEvidence !== 'string' ||
+      !status.releaseEvidence.trim() ||
+      typeof status.assessment !== 'string' ||
+      !status.assessment.trim() ||
       !readFileSync(join(attempt.checkout, '.epic-worklog.md'), 'utf8').trim()
     )
       throw new Error('Expected attributed final assessment and worklog');

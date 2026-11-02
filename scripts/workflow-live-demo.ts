@@ -9,6 +9,7 @@ import { reconcileStartup } from '../packages/core/src/workflow/run/startup.js';
 import {
   prepareScriptedEpic,
   prepareDeliveryTasks,
+  prepareFinalizationTasks,
   verifyAllRoleOutcome,
 } from '../tests/workflow/scripted-epic-demo.js';
 
@@ -94,63 +95,7 @@ try {
   demo = await prepareScriptedEpic(native, brief);
   const checkout = prepareDeliveryTasks(demo);
   // Fixed tasks produce artifacts only. The native Orchestrator chooses every dispatch and disposition.
-  const archive = () => {
-    const dispatch = inspectRuns(demo!.config).dispatches!.find(
-      (d) => d.stage === 'preservation-cleanup' && d.lifecycle === 'accepted',
-    );
-    if (!dispatch) throw new Error('Missing accepted cleanup');
-    return JSON.parse(
-      readFileSync(join(dispatch.attempts.at(-1)!.directory, 'cleanup.json'), 'utf8'),
-    ).archive as string;
-  };
-  demo.tasks.set('integrated-acceptance', () =>
-    JSON.stringify({
-      satisfied: true,
-      criteria: ['toy.txt delivered with preserved history'],
-      blockers: [],
-    }),
-  );
-  for (const stage of ['pipeline-audit', 'pipeline-refactor'])
-    demo.tasks.set(stage, () => {
-      const head = demo!.git('rev-parse', 'HEAD');
-      return JSON.stringify({
-        head,
-        status: 'completed',
-        evidence: [archive()],
-        blockers: [],
-        scope: ['toy structural verification'],
-        checks: ['toy Git history preserved'],
-        artifacts: [archive()],
-        limitations: ['Controlled fixture only'],
-        disposition: 'completed_no_changes',
-        inspectedVersions: { toy: head },
-        findings: [],
-        maintenance: [],
-      });
-    });
-  demo.tasks.set('research-report', (a) => {
-    const artifact = join(a.directory, 'toy-report.md');
-    writeFileSync(
-      artifact,
-      [
-        'Objective',
-        'Accepted delivery versions',
-        'Observed repository versions',
-        'Pipeline disposition',
-        'Verified findings',
-        'Interpretation',
-        'No scientific conclusions',
-        'Missing evidence',
-        'Follow-up Issues',
-        'Limitations',
-      ].join('\n'),
-    );
-    return JSON.stringify({
-      status: 'completed',
-      artifact,
-      artifactHash: createHash('sha256').update(readFileSync(artifact)).digest('hex'),
-    });
-  });
+  prepareFinalizationTasks(demo);
   const decision = join(demo.directory, 'review.md');
   writeFileSync(
     decision,

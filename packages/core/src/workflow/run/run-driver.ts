@@ -67,6 +67,8 @@ export interface RunRegistry {
     pr: number;
     status: string;
     recorded?: boolean;
+    releasePrepared?: boolean;
+    checkedHead?: string;
     archive?: string;
     released?: boolean;
     evidence: string;
