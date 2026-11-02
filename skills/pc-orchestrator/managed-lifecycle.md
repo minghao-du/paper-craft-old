@@ -101,7 +101,7 @@ options. Collect with the same `--message-id` to identify the correction covered
 only after independent prior-execution termination; it retains the existing Dispatch
 and prior Attempts. Unknown occupancy blocks replacement.
 
-For an isolated model-free delivery regression, run `pnpm exec tsx scripts/workflow-demo.ts`
+For an isolated model-free delivery regression, run `pnpm exec tsx scripts/demos/workflow-demo.ts`
 after building. Retain the reported temporary evidence directory. This demonstrates
 the controlled CLI/lifecycle chain, including duplicate-dispatch and missing-predecessor protection; it does
 not establish native model execution or scientific validity.
@@ -155,16 +155,16 @@ Publication verifies the unchanged artifact and uses the normal transactional
 writer, required report sections and provenance receipt. Completion requires a
 published report; inspect resource occupancy separately.
 
-Run `pnpm exec tsx scripts/workflow-demo.ts` for the isolated seven-role scripted
+Run `pnpm exec tsx scripts/demos/workflow-demo.ts` for the isolated seven-role scripted
 regression. It retains the temporary evidence directory and makes no model or
 GitHub calls. This proves controlled CLI lifecycle behavior, not native execution
 for every role or scientific validity.
 
 ## Opt-in native scheduler demonstration
 
-Run `pnpm exec tsx scripts/workflow-live-demo.ts <codex|claude|agy>` explicitly to
+Run `pnpm exec tsx scripts/demos/workflow-live-demo.ts <codex|claude|agy>` explicitly to
 replace only the toy scheduler with a real managed Orchestrator. The default
-`pnpm exec tsx scripts/workflow-demo.ts` remains model-free. The native demo
+`pnpm exec tsx scripts/demos/workflow-demo.ts` remains model-free. The native demo
 creates an isolated checkout and loopback command endpoint; the Orchestrator
 reads `DEMO-TASKS.md` there and selects assignments and CLI operations itself.
 Subordinates execute the same fixed toy scripts. Helpers prepare artifacts,

@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test, expect } from 'vitest';
 
-const script = resolve('scripts/docs-i18n.ts');
+const script = resolve('scripts/docs/docs-i18n.ts');
 const tsx = resolve('node_modules/tsx/dist/cli.mjs');
 test('reviewed pairs detect stale content, preserve unrelated sections and only record named pairs', () => {
   const root = mkdtempSync(join(tmpdir(), 'pc-docs-'));

@@ -1,4 +1,4 @@
-import { runtimeRoot } from './pc-runtime-paths.mjs';
+import { runtimeRoot } from '../shared/pc-runtime-paths.mjs';
 /** Dispatch lookup and immutable crash publication for worker wait. */
 import process from 'node:process';
 import console from 'node:console';

@@ -12,7 +12,7 @@ test('the second migration batch is active under the aggregate documentation gat
   expect(result.status, result.stdout + result.stderr).toBe(0);
   const list = spawnSync(
     process.execPath,
-    [resolve('node_modules/tsx/dist/cli.mjs'), resolve('scripts/docs-i18n.ts'), 'list'],
+    [resolve('node_modules/tsx/dist/cli.mjs'), resolve('scripts/docs/docs-i18n.ts'), 'list'],
     { encoding: 'utf8', timeout: 10000 },
   );
   for (const file of ['CONSTITUTION.md', 'DESIGN.md', 'GLOSSARY.md']) {

@@ -314,7 +314,7 @@ describe('installed shared resources', () => {
   it('installs linked skills and their shared reference for a custom harness, idempotently', () => {
     const dest = join(temp, 'arbitrary-harness', 'skills');
     const install = () =>
-      execFileSync('bash', [join(repo, 'scripts/link-skills.sh'), '--dest', dest], {
+      execFileSync('bash', [join(repo, 'scripts/setup/link-skills.sh'), '--dest', dest], {
         encoding: 'utf8',
       });
     mkdirSync(dest, { recursive: true });
@@ -343,7 +343,7 @@ describe('installed shared resources', () => {
     mkdirSync(foreign);
     writeFileSync(join(foreign, 'precious.md'), 'keep');
     symlinkSync(foreign, join(dest, 'lib'));
-    const result = spawnSync('bash', [join(repo, 'scripts/link-skills.sh'), '--dest', dest], {
+    const result = spawnSync('bash', [join(repo, 'scripts/setup/link-skills.sh'), '--dest', dest], {
       encoding: 'utf8',
     });
     expect(result.status).toBe(1);

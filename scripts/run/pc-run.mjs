@@ -1,4 +1,4 @@
-import { runtimeRoot } from './pc-runtime-paths.mjs';
+import { runtimeRoot } from '../shared/pc-runtime-paths.mjs';
 /** Lightweight Run intake: JSON state only; scheduling belongs to the agent. */
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';

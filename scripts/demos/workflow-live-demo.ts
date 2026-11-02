@@ -3,26 +3,26 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { writeFileSync, readFileSync, appendFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { managedRunner } from '../packages/core/src/workflow/runtime/runtime.js';
-import { inspectRuns } from '../packages/core/src/workflow/run/run-driver.js';
-import { reconcileStartup } from '../packages/core/src/workflow/run/startup.js';
+import { managedRunner } from '../../packages/core/src/workflow/runtime/runtime.js';
+import { inspectRuns } from '../../packages/core/src/workflow/run/run-driver.js';
+import { reconcileStartup } from '../../packages/core/src/workflow/run/startup.js';
 import {
   prepareScriptedEpic,
   prepareDeliveryTasks,
   prepareFinalizationTasks,
   verifyAllRoleOutcome,
-} from '../tests/workflow/scripted-epic-demo.js';
+} from '../../tests/workflow/scripted-epic-demo.js';
 
 if (process.argv.includes('--help')) {
   console.log(
-    'Usage: pnpm exec tsx scripts/workflow-live-demo.ts <codex|claude|agy>\nExplicit opt-in native scheduler; controlled subordinate scripts; retained toy evidence. PC_LIVE_DEMO_TIMEOUT_MS bounds observation.',
+    'Usage: pnpm exec tsx scripts/demos/workflow-live-demo.ts <codex|claude|agy>\nExplicit opt-in native scheduler; controlled subordinate scripts; retained toy evidence. PC_LIVE_DEMO_TIMEOUT_MS bounds observation.',
   );
   process.exit(0);
 }
 const provider = process.argv[2];
 if (!['codex', 'claude', 'agy'].includes(provider))
   throw new Error(
-    'Explicit provider required: pnpm exec tsx scripts/workflow-live-demo.ts <codex|claude|agy>',
+    'Explicit provider required: pnpm exec tsx scripts/demos/workflow-live-demo.ts <codex|claude|agy>',
   );
 const native = managedRunner(provider);
 let demo: Awaited<ReturnType<typeof prepareScriptedEpic>> | undefined;

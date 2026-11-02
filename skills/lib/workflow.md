@@ -46,8 +46,8 @@ Invoke skills by reading their text when the harness has no native skill tool.
 
 ## Installation
 
-Run `scripts/link-skills.sh` from this repository to install the default skill locations.
-For another harness, use `scripts/link-skills.sh --dest /path/to/its/skills` after identifying its actual skill directory.
+Run `scripts/setup/link-skills.sh` from this repository to install the default skill locations.
+For another harness, use `scripts/setup/link-skills.sh --dest /path/to/its/skills` after identifying its actual skill directory.
 This links each skill and the shared `lib/` references; conflicts are reported without deleting existing directories.
 Install the repository dependencies with `pnpm install`, then expose the repository's `pc` launcher on PATH separately.
 The launcher preserves the caller's working directory and can be reached through a symlink.

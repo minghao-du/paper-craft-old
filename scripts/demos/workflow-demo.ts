@@ -1,6 +1,6 @@
 /** Run the shared isolated controlled workflow scenario; retain all toy evidence. */
-import { runAllRoleDemo } from '../tests/workflow/scripted-epic-demo.js';
-import { inspectRuns } from '../packages/core/src/workflow/run/run-driver.js';
+import { runAllRoleDemo } from '../../tests/workflow/scripted-epic-demo.js';
+import { inspectRuns } from '../../packages/core/src/workflow/run/run-driver.js';
 const result = await runAllRoleDemo();
 const registry = inspectRuns(result.config);
 console.log(

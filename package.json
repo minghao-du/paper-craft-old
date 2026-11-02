@@ -8,16 +8,16 @@
   },
   "scripts": {
     "build": "pnpm -r run build",
-    "lint": "eslint packages/ scripts/docs-*.ts",
+    "lint": "eslint packages/ \"scripts/docs/**/*.ts\"",
     "format": "prettier --write 'packages/*/src/**/*.ts' 'tests/**/*.ts'",
     "format:check": "prettier --check 'packages/*/src/**/*.ts' 'tests/**/*.ts'",
     "typecheck": "tsc --noEmit",
     "test": "pnpm run build && vitest run",
     "test:watch": "pnpm run build && vitest",
-    "docs:i18n:list": "tsx scripts/docs-i18n.ts list",
-    "docs:i18n:check": "tsx scripts/docs-i18n.ts check",
-    "docs:i18n:record": "tsx scripts/docs-i18n.ts record",
-    "docs:check": "tsx scripts/docs-i18n.ts check"
+    "docs:i18n:list": "tsx scripts/docs/docs-i18n.ts list",
+    "docs:i18n:check": "tsx scripts/docs/docs-i18n.ts check",
+    "docs:i18n:record": "tsx scripts/docs/docs-i18n.ts record",
+    "docs:check": "tsx scripts/docs/docs-i18n.ts check"
   },
   "keywords": [],
   "author": "",

@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test, expect } from 'vitest';
 
-const script = resolve('scripts/docs-i18n.ts');
+const script = resolve('scripts/docs/docs-i18n.ts');
 const tsx = resolve('node_modules/tsx/dist/cli.mjs');
 
 test('record and check reject structural drift before accepting confirmations', () => {

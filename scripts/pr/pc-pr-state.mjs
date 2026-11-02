@@ -1,4 +1,4 @@
-import { runtimeRoot } from './pc-runtime-paths.mjs';
+import { runtimeRoot } from '../shared/pc-runtime-paths.mjs';
 /** Validate landing evidence and preserve durable completion metadata. */
 import {
   cpSync,

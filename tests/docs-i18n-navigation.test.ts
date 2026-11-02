@@ -11,7 +11,7 @@ test('recording and checking require reciprocal switches and corresponding local
   const run = (...args: string[]) =>
     spawnSync(
       process.execPath,
-      [resolve('node_modules/tsx/dist/cli.mjs'), resolve('scripts/docs-i18n.ts'), ...args],
+      [resolve('node_modules/tsx/dist/cli.mjs'), resolve('scripts/docs/docs-i18n.ts'), ...args],
       { cwd: root, encoding: 'utf8', timeout: 10000 },
     );
   const en = '# Guide\n\n[中文](Guide.zh.md)\n\n';
@@ -56,7 +56,7 @@ test('complete pair renames and deletes require updated inbound references', () 
   const run = (...args: string[]) =>
     spawnSync(
       process.execPath,
-      [resolve('node_modules/tsx/dist/cli.mjs'), resolve('scripts/docs-i18n.ts'), ...args],
+      [resolve('node_modules/tsx/dist/cli.mjs'), resolve('scripts/docs/docs-i18n.ts'), ...args],
       { cwd: root, encoding: 'utf8', timeout: 10000 },
     );
   const pair = (name: string, link = '') => {
