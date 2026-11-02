@@ -148,7 +148,7 @@ The endpoint is already running. Public invocation examples (substitute your cho
       endpoint,
     }),
   );
-  const deadline = Date.now() + Number(process.env.PC_LIVE_DEMO_TIMEOUT_MS ?? 180000);
+  const deadline = Date.now() + Number(process.env.PC_LIVE_DEMO_TIMEOUT_MS ?? 600000);
   while (Date.now() < deadline) {
     await reconcileStartup(demo.config, demo.runner, demo.run.id);
     const registry = inspectRuns(demo.config);

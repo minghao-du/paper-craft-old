@@ -174,7 +174,7 @@ Inspect the printed evidence directory, `native-cli-requests.jsonl`, native
 startup receipts and `live-outcome.json`. Completion requires the same seven-role
 outcome check as the scripted scenario. A provider prerequisite failure or deadline
 is a blocked demonstration, never a substituted scripted success. The default
-native observation deadline is three minutes; `PC_LIVE_DEMO_TIMEOUT_MS` changes it.
+native observation deadline is ten minutes; `PC_LIVE_DEMO_TIMEOUT_MS` changes it.
 Retained resources are reported separately from business completion. This demonstrates
 native Orchestrator interface use only when completed; it does not establish native
 execution of subordinate roles, scientific validity or a numerical token guarantee.
