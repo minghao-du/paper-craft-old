@@ -1127,6 +1127,8 @@ export function orchestratorForSubject(
   if (!run) throw new Error(`No Run owns ${repository}#${number}; run ${next}`);
   if (!['codex', 'agy', 'claude'].includes(run.provider))
     throw new Error(`Unsupported Run provider: ${String(run.provider)}`);
+  if (run.lifecycle === 'completed')
+    throw new Error(`Completed Run ${run.id} authority has ended; start later work with ${next}`);
   if (run.lifecycle !== 'running' || !run.orchestrator || run.orchestrator.status !== 'running')
     throw new Error(
       `No active Orchestrator for Run ${run.id}; run pc workflow orchestrator recover ${run.id} --config ${config.file}`,
