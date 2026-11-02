@@ -67,7 +67,9 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     .command('orchestrator')
     .description('Create or inspect a subject-scoped managed Run');
   configured(
-    orchestrator.command('status').description('Read Fleet Run and Orchestrator ownership'),
+    orchestrator
+      .command('status')
+      .description('Read Run lifecycle, retained execution state and resource ownership'),
   ).action((options: Options) =>
     run(() => output(inspectRuns(loadFleetConfig(options.config)), opts.human())),
   );

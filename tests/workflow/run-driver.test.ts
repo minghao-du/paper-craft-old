@@ -12,6 +12,7 @@ import {
   sendStageMessage,
   releaseAcceptedExecution,
   releaseRunCheckout,
+  reserveRunCheckout,
   collectBusinessTurn,
   acceptValidatedBusinessTurns,
   orchestratorForSubject,
@@ -412,6 +413,95 @@ test.each(['agy', 'claude'])(
     }
   },
 );
+
+test('completed independent Run retains execution and occupancy while later work gets new authority', async () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-completed-')));
+  mkdirSync(join(project, 'pool'));
+  const config = {
+    file: join(project, '.epic-config.json'),
+    project,
+    root: join(project, 'pool'),
+    slots: [],
+    worktrees: true,
+    base: 'main',
+  };
+  const stopped = new Set<string>();
+  const runner = {
+    name: 'agy',
+    interactive: true,
+    async preflight() {},
+    async start(attempt: { id: string; run?: string }) {
+      return {
+        conversation: attempt.id,
+        address: `tmux:pc-run-${attempt.run}:${attempt.id}`,
+        evidence: 'verified independent identity',
+      };
+    },
+    async stopped(attempt: { id: string }) {
+      return stopped.has(attempt.id);
+    },
+  };
+  try {
+    const run = await startRun(
+      config,
+      runner,
+      {
+        repository: 'owner/repo',
+        number: 1,
+        kind: 'issue',
+        title: 'first',
+        body: 'deliver',
+      },
+      'agy',
+    );
+    reserveRunCheckout(config, run.id, run.orchestratorId, project);
+    const stage = await dispatchStage(config, runner, {
+      runId: run.id,
+      authority: run.orchestratorId,
+      subject: 'owner/repo#1',
+      role: 'worker',
+      stage: 'implementation',
+      inputRevision: 'v1',
+      brief: 'task',
+      prerequisites: [],
+    });
+    stopped.add(stage.attempts[0].id);
+    // Existing delivery/finalization gates commit this transition; this boundary tests its effects.
+    updateRunRegistry(config, (registry) => {
+      registry.runs[0].lifecycle = 'completed';
+    });
+    expect(inspectRuns(config).runs[0]).toMatchObject({
+      lifecycle: 'completed',
+      orchestrator: run.orchestrator,
+    });
+    expect(() => orchestratorForSubject(config, 'owner/repo', 1)).toThrow(/completed.*start 1/i);
+    await expect(
+      dispatchStage(config, runner, {
+        ...stage,
+        runId: run.id,
+        authority: run.orchestratorId,
+      }),
+    ).rejects.toThrow(/authority/);
+    await expect(recoverRun(config, runner, run.id)).rejects.toThrow(/completed/i);
+    const cleanup = vi.fn();
+    await expect(
+      releaseRunCheckout(config, run.id, project, runner.stopped, cleanup),
+    ).rejects.toThrow(/occupancy/);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(inspectRuns(config).resources).toEqual(
+      expect.arrayContaining([expect.objectContaining({ runId: run.id, path: project })]),
+    );
+    const next = await startRun(config, runner, { ...run.subject, number: 2 }, 'agy');
+    expect(next.id).not.toBe(run.id);
+    expect(next.orchestrator?.conversation).not.toBe(run.orchestrator?.conversation);
+    expect(next.orchestrator?.address).not.toBe(run.orchestrator?.address);
+    expect(inspectRuns(config).runs.find((r) => r.id === run.id)?.orchestrator).toEqual(
+      run.orchestrator,
+    );
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
 
 test('managed agy requires native input attribution and refuses stream or interleaved evidence', async () => {
   const runner = managedRunner('agy');
