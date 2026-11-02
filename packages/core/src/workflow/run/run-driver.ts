@@ -858,7 +858,6 @@ export async function recoverRun(
       attempt.observation = await runner.observe(attempt);
       if (runner.name === 'agy' && attempt.observation.status === 'unknown') {
         attempt.status = 'unknown';
-        blockers.push(`${attempt.id}: ${attempt.observation.evidence}; occupancy unresolved`);
       }
     }
     if (
@@ -877,11 +876,14 @@ export async function recoverRun(
           if (attempt.initialization) verifyRoleInitialization(attempt);
           else if (runner.name === 'agy') throw new Error('Missing initialization context');
           recovered.set(attempt.id, ack);
+          if (runner.observe) attempt.observation = await runner.observe(attempt);
         } catch (error) {
           blockers.push(`${attempt.id}: ${String(error)}; inspect ${attempt.directory}`);
         }
       }
     }
+    if (runner.name === 'agy' && attempt.observation?.status === 'unknown')
+      blockers.push(`${attempt.id}: ${attempt.observation.evidence}; occupancy unresolved`);
   }
   let replacement: ManagedAttempt | undefined;
   if (options.replaceOrchestrator) {
