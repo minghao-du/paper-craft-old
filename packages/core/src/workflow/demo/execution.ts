@@ -50,12 +50,14 @@ export function nativeDemoExecution(): DemoExecution {
           { encoding: 'utf8' },
         ),
       );
+      const demoConfigPath = join(round.root, 'demo-config.json');
+      writeFileSync(demoConfigPath, JSON.stringify(round.config));
       const run = await startRun(
         config,
         managedRunner('agy'),
         { repository, number: round.parent, title: issue.title, body: issue.body, kind: 'epic' },
         'agy',
-        `Diagnostic demo round ${round.id}. Agy only. Exactly two native dependent child tasks and two PRs. Never retry failures or repair defects. Preserve every failed stage. Coordinator ${round.config.coordinator}; report entry ${round.entry}. ${round.config.brief}`,
+        `Diagnostic demo round ${round.id}. Read skills/pc-demo/SKILL.md from the paper-craft installation. Use pc demo --config ${demoConfigPath} gate ${round.id} worker1 before Worker1 and gate ${round.id} worker2 before Worker2 dispatch; failed gate stops the round. Exactly two native child Issues, second natively blocked by first. Workers deliver Python stdlib generator+test+TSV then reader+changed-input test+JSON. Complete Quality, merge, Final Records, preservation, cleanup and verified handover for each. Run independent boundary verification. After accepted integrated acceptance invoke closure-request ${round.id}, wait without polling for explicit human confirm, then close ${round.id} with your authority and accepted Dispatch. Never invent consent. Agy only. Exactly two native dependent child tasks and two PRs. Never retry failures or repair defects. Preserve every failed stage. Coordinator ${round.config.coordinator}; report entry ${round.entry}. ${round.config.brief}`,
       );
       return run.id;
     },
