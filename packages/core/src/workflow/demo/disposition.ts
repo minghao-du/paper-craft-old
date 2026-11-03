@@ -8,7 +8,7 @@ export interface DemoDisposalAdapter {
   verify(round: DemoRound): Promise<DemoVerification>;
   released(round: DemoRound): Promise<boolean>;
   repository(round: DemoRound): Promise<DemoRepository | null>;
-  removeRepository(round: DemoRound): Promise<void>;
+  removeRepository(round: DemoRound, beforeDelete?: () => void): Promise<void>;
   removeLocal(round: DemoRound): Promise<void>;
   display(result: DemoVerification): void;
 }
@@ -99,7 +99,12 @@ export class DemoDisposition {
         throw new Error('Remote repository identity changed');
       if (identity) {
         try {
-          await this.adapter.removeRepository(round);
+          const beforeDelete = () => {
+            if (journal() !== observedJournal || (!authorized && !observations()))
+              throw new Error('Late observation prevents repository deletion');
+          };
+          beforeDelete();
+          await this.adapter.removeRepository(round, beforeDelete);
         } catch (error) {
           // Reconcile before another mutation; even an absent repository preserves the failure diagnosis.
           const remaining = await this.adapter.repository(round);

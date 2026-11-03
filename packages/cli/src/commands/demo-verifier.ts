@@ -13,6 +13,11 @@ export function registerDemoVerifier(demo: Command) {
     .description(
       'Inspect independent evidence; final check releases and auto-disposes clean scenes',
     )
+    .option(
+      '--resolves <round>',
+      'Delete this retained scene using this fresh validation before auto-disposal',
+    )
+    .option('--confirm-resolved', 'Explicitly authorize resolved retained-scene deletion')
     .option('--boundary <stage>', 'Stage boundary label', 'final')
     .action(async (id, options) => {
       const config = JSON.parse(readFileSync(demo.opts().config, 'utf8'));
@@ -22,6 +27,14 @@ export function registerDemoVerifier(demo: Command) {
         const disposition = new DemoDisposition(
           nativeDemoDisposal(verifier, (result) => console.log(JSON.stringify(result, null, 2))),
         );
+        if (options.resolves) {
+          if (!options.confirmResolved)
+            throw new Error('Expected --confirm-resolved for retained-scene deletion');
+          const old = new DemoRounds(config, nativeDemoAdapter()).status(options.resolves);
+          const result = await disposition.finish(old, { fresh: round, confirmed: true });
+          console.log(JSON.stringify(result));
+          if (result.cleanup !== 'completed') return;
+        }
         console.log(JSON.stringify(await disposition.finish(round)));
         return;
       }

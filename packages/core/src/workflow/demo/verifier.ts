@@ -111,7 +111,7 @@ export interface DemoBoundaryReaders {
   /** External process observation; controlled values cannot establish live acceptance. */
   termination?(attempt: ManagedAttempt): Promise<boolean>;
   chronology?(round: DemoRound): Promise<DemoCheck[]>;
-  artifacts?(round: DemoRound, revision?: string): Promise<DemoCheck[]>;
+  artifacts?(round: DemoRound, revision?: string, stage?: 'first' | 'final'): Promise<DemoCheck[]>;
 }
 /** Read actual GitHub metadata, immutable Git objects and public managed-runtime state. */
 export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvidenceReader {
@@ -313,14 +313,16 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           last,
         );
       }
-      if (boundary !== 'structure' && readers.artifacts)
+      if (boundary !== 'structure' && readers.artifacts) {
+        if (merged.length === 2)
+          checks.push(...(await readers.artifacts(round, merged[0].merge_commit_sha, 'first')));
         checks.push(
           ...(await readers.artifacts(
             round,
             merged.length === 2 ? merged[1].merge_commit_sha : undefined,
           )),
         );
-      else
+      } else
         check(
           'artifacts',
           'Isolated script re-execution and changed-input computation',

@@ -130,3 +130,16 @@ waits do not consume active execution budget. Successful detection cannot prove
 absence of all defects. Deletion excludes provider history and external copies.
 
 Use `resolve-observation <round> <observation> <reason>` only to record a supported false alarm with its reason. An unresolved observation blocks clean disposal.
+
+For an observed native Agy permission prompt, the operator runs
+`./pc demo --config <file> permission-wait <round> <evidence> --confirm` and,
+after resolving that prompt, `permission-resume <round> --confirm`.
+These reconnectable controls exclude the recorded permission wait from active time;
+they require operator observation and do not claim automatic native prompt detection.
+They cannot resume a human closure pause.
+
+When validating a fix for an old retained scene, use the fresh round's final command
+`./pc demo --config <file> verify <fresh> --resolves <old> --confirm-resolved`.
+It verifies and deletes the authorized old scene while fresh evidence still exists,
+then performs normal fresh-round disposal. If old-scene disposal fails, both remaining
+scenes are retained. Do this before plain final verification auto-deletes the fresh round.

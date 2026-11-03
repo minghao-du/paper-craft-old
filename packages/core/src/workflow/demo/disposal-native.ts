@@ -51,8 +51,9 @@ export function nativeDemoDisposal(
         throw error;
       }
     },
-    async removeRepository(round) {
+    async removeRepository(round, beforeDelete) {
       await setTimeout(1100);
+      beforeDelete?.();
       gh([
         'api',
         '--method',

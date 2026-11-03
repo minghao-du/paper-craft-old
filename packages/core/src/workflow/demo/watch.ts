@@ -10,7 +10,7 @@ if (round.root !== root) throw new Error('Watch round ownership mismatch');
 const control = new DemoControl(round, nativeDemoExecution());
 try {
   while (!control.status().stopped && !control.status().releasing) {
-    await control.checkpoint(control.status().wait);
+    await control.checkpoint(undefined, Date.now(), true);
     await new Promise((r) => setTimeout(r, 1000));
   }
 } catch (e) {

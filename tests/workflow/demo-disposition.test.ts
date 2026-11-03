@@ -80,6 +80,17 @@ test('disposition retains uncertainty and late observations, deletes only verifi
     expect((await d.finish(round, authorization)).cleanup).toBe('failed');
     expect(existsSync(dir)).toBe(true);
     adapter.removeRepository = remove;
+    adapter.repository = async () => {
+      writeFileSync(
+        join(dir, 'control.json'),
+        JSON.stringify({ observations: [{ text: 'reported during identity lookup' }] }),
+      );
+      return round.repository!;
+    };
+    expect((await d.finish(round, authorization)).cleanup).toBe('failed');
+    expect(deleted).toBe(false);
+    rmSync(join(dir, 'control.json'));
+    adapter.repository = repository;
     expect((await d.finish(round, authorization)).cleanup).toBe('completed');
     expect(existsSync(dir)).toBe(false);
   } finally {

@@ -65,6 +65,23 @@ export function registerDemoCommands(program: Command) {
     .description('Record a reasoned false-alarm disposition')
     .action((id, observation, reason) => print(control(id).resolve(observation, reason)));
   demo
+    .command('permission-wait <round> <evidence>')
+    .description('Operator records an observed Agy permission prompt; pause active budget')
+    .option('--confirm', 'Confirm observed native permission wait and evidence')
+    .action(async (id, evidence, o) => {
+      if (!o.confirm || !evidence.trim())
+        throw new Error('Expected confirmed observed permission prompt and evidence');
+      print(await control(id).permissionWait(evidence));
+    });
+  demo
+    .command('permission-resume <round>')
+    .description('Operator confirms permission prompt resolved; resume permission budget pause')
+    .option('--confirm', 'Confirm native permission prompt resolved')
+    .action(async (id, o) => {
+      if (!o.confirm) throw new Error('Expected explicit permission resolution');
+      print(await control(id).permissionResume());
+    });
+  demo
     .command('stop <round>')
     .description('Revoke dispatch and request verified termination; retain evidence')
     .action(async (id) => print(await control(id).stop()));
