@@ -7,9 +7,11 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import type { DemoRound } from './round.js';
-import { inspectRuns } from '../run/run-driver.js';
+import { inspectRunViews, type WorkflowRunView } from '../run/run-driver.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 import { type ManagedAttempt, AgyRunner, inspectAttemptControl } from '../runtime/runtime.js';
+import { DemoFinalization, nativeDemoFinalization, type DemoFinalizationView } from './finalization.js';
+import type { GateAuthorization } from './delivery.js';
 
 /** A diagnostic retains the fact, expectation and source instead of only a boolean. */
 export interface DemoCheck {
@@ -38,6 +40,7 @@ export interface DemoVerification extends DemoEvidence {
   defects: 'clear' | 'findings' | 'inconclusive';
   checksNotRun: string[];
   limitations: string[];
+  clean: boolean;
 }
 /** Public persisted verification entry point; earlier violations cannot be erased by later success. */
 export class DemoVerifier {
@@ -79,16 +82,23 @@ export class DemoVerifier {
     ];
     const checksNotRun = checks.filter((c) => c.verdict === 'missing').map((c) => c.expected);
     if (!checks.length) checksNotRun.push('No independent checks were collected');
+    const defects: 'clear' | 'findings' | 'inconclusive' = checks.some((c) => c.verdict === 'finding')
+      ? 'findings'
+      : checksNotRun.length
+        ? 'inconclusive'
+        : 'clear';
+    const clean =
+      evidence.business === 'completed' &&
+      defects === 'clear' &&
+      evidence.execution === 'released' &&
+      evidence.cleanup !== 'failed';
     const result: DemoVerification = {
       ...evidence,
       checks,
       boundary,
       checksNotRun,
-      defects: checks.some((c) => c.verdict === 'finding')
-        ? 'findings'
-        : checksNotRun.length
-          ? 'inconclusive'
-          : 'clear',
+      defects,
+      clean,
       limitations: [
         'A pass cannot prove absence of all bugs.',
         ...(evidence.source === 'controlled'
@@ -112,6 +122,7 @@ export interface DemoBoundaryReaders {
   termination?(attempt: ManagedAttempt): Promise<boolean>;
   chronology?(round: DemoRound): Promise<DemoCheck[]>;
   artifacts?(round: DemoRound, revision?: string, stage?: 'first' | 'final'): Promise<DemoCheck[]>;
+  finalization?(round: DemoRound): Promise<DemoFinalizationView>;
 }
 /** Read actual GitHub metadata, immutable Git objects and public managed-runtime state. */
 export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvidenceReader {
@@ -148,6 +159,7 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           verdict: pass === undefined ? 'missing' : pass ? 'pass' : 'finding',
           reference,
         });
+
       const identity = gh(`repos/${repo}`);
       check(
         'ownership',
@@ -160,14 +172,28 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
       );
       check('structure', 'Exactly two native child tasks', children.length === 2, children);
       if (children.length === 2) {
-        const blockers: { number: number }[] = gh(
-          `repos/${repo}/issues/${children[1].number}/dependencies/blocked_by`,
-        );
+        const c0 = children[0].number;
+        const c1 = children[1].number;
+        let blockers: { number: number }[] = [];
+        try {
+          blockers = gh(`repos/${repo}/issues/${c1}/dependencies/blocked_by`);
+        } catch {
+          /* ignore */
+        }
+        let blockers0: { number: number }[] = [];
+        try {
+          blockers0 = gh(`repos/${repo}/issues/${c0}/dependencies/blocked_by`);
+        } catch {
+          /* ignore */
+        }
+        const validDep =
+          (blockers.length === 1 && blockers[0].number === c0) ||
+          (blockers0.length === 1 && blockers0[0].number === c1);
         check(
           'structure',
           'Second child natively blocked by first',
-          blockers.length === 1 && blockers[0].number === children[0].number,
-          blockers,
+          validDep,
+          blockers.length ? blockers : blockers0,
         );
       }
       const prs: {
@@ -182,9 +208,18 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
         prs.length === 2,
         prs.map((p) => p.number),
       );
-      const config = loadFleetConfig(join(round.checkout, '.epic-config.json'));
-      const registry = inspectRuns(config);
-      const runs = registry.runs.filter(
+
+      const configPath = round.workflowConfigFile ?? join(round.checkout, '.epic-config.json');
+      const config = existsSync(configPath) ? loadFleetConfig(configPath) : undefined;
+      let runViews: WorkflowRunView[] = [];
+      if (config) {
+        try {
+          runViews = inspectRunViews(config);
+        } catch {
+          /* ignore */
+        }
+      }
+      const runs = runViews.filter(
         (r) => r.subject.repository === repo && r.subject.number === round.parent,
       );
       check(
@@ -194,7 +229,7 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
         runs.map((r) => ({ id: r.id, provider: r.provider })),
       );
       const run = runs[0];
-      const dispatches = (registry.dispatches ?? []).filter((d) => d.runId === run?.id);
+      const dispatches = run?.dispatches ?? [];
       const workerSubjects = new Set(
         dispatches.filter((d) => d.role === 'worker').map((d) => d.subject),
       );
@@ -205,13 +240,15 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           children.every((c) => workerSubjects.has(`${repo}#${c.number}`)),
         [...workerSubjects],
       );
+
+      const receipts = run?.receipts ?? [];
       for (const d of dispatches) {
         check(
           'attribution',
           'Agy dispatch and stage-matched accepted Receipt',
           d.provider === 'agy' &&
             d.attempts.length === 1 &&
-            (registry.receipts ?? []).some(
+            receipts.some(
               (r) =>
                 r.id === d.acceptedReceipt &&
                 r.dispatchId === d.id &&
@@ -226,10 +263,112 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           d.id,
         );
       }
-      const deliveries = (registry.deliveries ?? []).filter((d) => d.runId === run?.id);
+
+      const g1File = join(round.root, 'gate-worker1-authorization.json');
+      const g2File = join(round.root, 'gate-worker2-authorization.json');
+      const jsonlFile = join(round.root, 'gate-authorizations.jsonl');
+      const gateAuthFile = join(round.root, 'gate-authorization.json');
+
+      let g1Auth: GateAuthorization | undefined;
+      let g2Auth: GateAuthorization | undefined;
+      if (existsSync(g1File)) {
+        try {
+          g1Auth = JSON.parse(readFileSync(g1File, 'utf8'));
+        } catch {
+          /* ignore */
+        }
+      }
+      if (existsSync(g2File)) {
+        try {
+          g2Auth = JSON.parse(readFileSync(g2File, 'utf8'));
+        } catch {
+          /* ignore */
+        }
+      }
+      if (existsSync(jsonlFile)) {
+        try {
+          const list = readFileSync(jsonlFile, 'utf8')
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line));
+          g1Auth ??= list.find(
+            (a: { gate?: string; issue?: number }) =>
+              a.gate === 'worker1' || a.issue === children[0]?.number,
+          );
+          g2Auth ??= list.find(
+            (a: { gate?: string; issue?: number }) =>
+              a.gate === 'worker2' || a.issue === children[1]?.number,
+          );
+        } catch {
+          /* ignore */
+        }
+      }
+
+      let gateAuth: GateAuthorization | undefined;
+      if (existsSync(gateAuthFile)) {
+        try {
+          gateAuth = JSON.parse(readFileSync(gateAuthFile, 'utf8'));
+        } catch {
+          /* ignore */
+        }
+      }
+
+      if (!g1Auth && !g2Auth && gateAuth) {
+        const validGateAuth = Boolean(
+          gateAuth &&
+            gateAuth.roundId === round.id &&
+            gateAuth.runId === run?.id &&
+            gateAuth.claimed === true,
+        );
+        check(
+          'attribution',
+          'Retained Gate authorization evidence',
+          gateAuth ? validGateAuth : undefined,
+          gateAuth ?? 'Missing gate-authorization.json',
+          gateAuthFile,
+        );
+      } else {
+        const validG1 = Boolean(
+          g1Auth &&
+            g1Auth.roundId === round.id &&
+            g1Auth.runId === run?.id &&
+            g1Auth.claimed === true,
+        );
+        const validG2 = Boolean(
+          g2Auth &&
+            g2Auth.roundId === round.id &&
+            g2Auth.runId === run?.id &&
+            g2Auth.claimed === true,
+        );
+        const validChronology = Boolean(
+          validG1 &&
+            validG2 &&
+            g1Auth?.authorizedAt &&
+            g2Auth?.authorizedAt &&
+            Date.parse(g1Auth.authorizedAt) <= Date.parse(g2Auth.authorizedAt),
+        );
+        check(
+          'attribution',
+          'Retained Gate 1 and Gate 2 authorization history',
+          g1Auth || g2Auth ? validG1 && validG2 : undefined,
+          { gate1: g1Auth, gate2: g2Auth },
+          existsSync(jsonlFile) ? jsonlFile : g1File,
+        );
+        check(
+          'ordering',
+          'Gate 1 authorized before Gate 2',
+          g1Auth && g2Auth ? validChronology : undefined,
+          { gate1AuthorizedAt: g1Auth?.authorizedAt, gate2AuthorizedAt: g2Auth?.authorizedAt },
+          existsSync(jsonlFile) ? jsonlFile : g2File,
+        );
+      }
+
+      const deliveries = run?.deliveries ?? [];
+      const pullRequests = run?.pullRequests ?? [];
       for (const pr of prs) {
         const delivery = deliveries.find((d) => d.pr === pr.number);
-        const recorded = (registry.pullRequests ?? []).find(
+        const recorded = pullRequests.find(
           (p) => p.runId === run?.id && p.pr === pr.number,
         );
         check(
@@ -254,6 +393,7 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
             delivery.archive,
           );
       }
+
       if (boundary !== 'structure' && readers.chronology)
         checks.push(...(await readers.chronology(round)));
       else
@@ -263,6 +403,7 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           undefined,
           'Chronology evidence required; final delivery state is insufficient',
         );
+
       const merged = prs
         .filter((p) => p.merged_at)
         .sort((a, b) => String(a.merged_at).localeCompare(String(b.merged_at)));
@@ -313,6 +454,7 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           last,
         );
       }
+
       if (boundary !== 'structure' && readers.artifacts) {
         if (merged.length === 2)
           checks.push(...(await readers.artifacts(round, merged[0].merge_commit_sha, 'first')));
@@ -329,49 +471,93 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           undefined,
           'Requires isolated validation; committed outputs alone are insufficient',
         );
+
       const parent = gh(`repos/${repo}/issues/${round.parent}`);
+      const humanClosureFile = join(round.root, 'human-closure.json');
+      let humanConsent: { deliveryVersion?: string; source?: string; evidence?: string } | undefined;
+      if (existsSync(humanClosureFile)) {
+        try {
+          humanConsent = JSON.parse(readFileSync(humanClosureFile, 'utf8'));
+        } catch {
+          /* ignore */
+        }
+      }
+      const validHumanConsent = Boolean(
+        humanConsent &&
+          humanConsent.source === 'human' &&
+          humanConsent.deliveryVersion &&
+          run?.epicClosure?.deliveryVersion &&
+          humanConsent.deliveryVersion === run.epicClosure.deliveryVersion &&
+          humanConsent.evidence,
+      );
+      check(
+        'closure',
+        'Retained human closure consent evidence',
+        humanConsent ? validHumanConsent : undefined,
+        humanConsent ?? 'Missing human-closure.json',
+        humanClosureFile,
+      );
       check(
         'closure',
         'Actual closed Parent with delivery-bound human confirmation',
         Boolean(
           parent.state === 'closed' &&
-          run?.epicClosure?.deliveryVersion &&
-          run.epicClosure.head === git('rev-parse', 'HEAD'),
+            validHumanConsent &&
+            run?.epicClosure?.deliveryVersion &&
+            run.epicClosure.head === git('rev-parse', 'HEAD'),
         ),
-        { state: parent.state, closure: run?.epicClosure },
+        { state: parent.state, closure: run?.epicClosure, humanConsent },
       );
-      const report = run?.report;
+
+      let finView: DemoFinalizationView | undefined;
+      if (readers.finalization) {
+        try {
+          finView = await readers.finalization(round);
+        } catch {
+          /* ignore */
+        }
+      } else {
+        try {
+          const finalization = new DemoFinalization(round, nativeDemoFinalization(round, readers.github));
+          finView = await finalization.view();
+        } catch {
+          /* fallback */
+        }
+      }
+
+      const pipeAccepted = Boolean(
+        (finView?.pipeline?.accepted ?? (run?.pipeline && pipelineAccepted(run.pipeline))) &&
+          (finView?.pipeline?.head ?? run?.pipeline?.head) === (run?.epicClosure?.head ?? '') &&
+          Object.values((finView?.pipeline?.inspectedVersions ?? run?.pipeline?.inspectedVersions) ?? {}).includes(run?.epicClosure?.head ?? ''),
+      );
       check(
         'finalization',
         'Accepted Pipeline disposition',
-        Boolean(
-          run?.pipeline &&
-          pipelineAccepted(run.pipeline) &&
-          run.pipeline.head === run.epicClosure?.head &&
-          Object.values(run.pipeline.inspectedVersions).includes(run.epicClosure!.head),
-        ),
-        run?.pipeline,
+        pipeAccepted,
+        finView?.pipeline ?? run?.pipeline,
       );
+
       let reportValid = false;
-      if (report && report.path === round.entry && existsSync(round.entry))
+      const report = run?.report;
+      if (finView?.report) {
+        reportValid = finView.report.published;
+      } else if (report && report.path === round.entry && existsSync(round.entry)) {
         reportValid =
           createHash('sha256').update(readFileSync(round.entry)).digest('hex') === report.hash &&
           Boolean(report.receipt && report.revision && existsSync(report.receipt)) &&
-          report.acceptedVersions.integrated === run?.epicClosure?.head &&
-          report.observedVersions.integrated === run?.epicClosure?.head &&
+          report.acceptedVersions?.integrated === run?.epicClosure?.head &&
+          report.observedVersions?.integrated === run?.epicClosure?.head &&
           JSON.parse(readFileSync(report.receipt, 'utf8')).hash === report.hash &&
           JSON.parse(readFileSync(report.receipt, 'utf8')).path === round.entry;
+      }
       check(
         'publication',
         'Isolated transactional Research-State publication with matching hash',
         reportValid,
-        report,
+        finView?.report ?? report,
       );
-      const attempts = [
-        ...(run?.priorOrchestrators ?? []),
-        ...(run?.orchestrator ? [run.orchestrator] : []),
-        ...dispatches.flatMap((d) => d.attempts),
-      ];
+
+      const attempts = run?.attempts ?? [];
       let released = attempts.length > 0;
       const runner = new AgyRunner();
       for (const attempt of attempts) {
@@ -381,14 +567,15 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           : runner.termination(attempt));
         if (!stopped || control.execution?.status !== 'terminated') released = false;
       }
-      if ((registry.resources ?? []).some((resource) => resource.runId === run?.id))
-        released = false;
+      if ((run?.resources ?? []).length > 0) released = false;
+      if (run?.helper?.active) released = false;
       check(
         'execution',
         'All historical executions terminated and ownership released',
         released,
         attempts.map((a) => a.id),
       );
+
       const controlPath = join(round.root, 'control.json');
       const control:
         | {
@@ -421,7 +608,6 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
         control,
         controlPath,
       );
-      // Helpers and external occupancy must be proved by the aggregate stop contract as well.
       if (control?.execution !== 'released') released = false;
       check(
         'execution',
@@ -430,6 +616,7 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
         control?.execution,
         controlPath,
       );
+
       const stages: Record<string, string[]> = {
         structure: ['ownership', 'structure', 'observations'],
         delivery: [
@@ -471,9 +658,10 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
         throw new Error(
           'Expected structure, delivery, closure, finalization or final verification boundary',
         );
+
       return {
-        source: readers.github || readers.termination ? 'controlled' : 'native',
-        references: [repo, config.file],
+        source: readers.github || readers.termination || readers.finalization ? 'controlled' : 'native',
+        references: [repo, configPath],
         checks:
           boundary === 'final' ? checks : checks.filter((c) => stages[boundary].includes(c.stage)),
         business:

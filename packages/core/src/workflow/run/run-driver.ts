@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { writeResearchReport } from '../delivery/research-report.js';
-import { ensureStartupRecovery, reconcileStartup } from './startup.js';
+import { ensureStartupRecovery, reconcileStartup, stopStartupRecovery, startupRecoveryStatus } from './startup.js';
 import { assertStageRole, assertWorkflowRole } from '../runtime/workflow-role.js';
 import { initializationInstructions, verifyRoleInitialization } from './role-initialization.js';
 /** Run intake and authoritative Fleet relationships; managed execution belongs to one Run. */
@@ -15,7 +15,7 @@ import {
   readdirSync,
   realpathSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { claimDriver } from './driver-lock.js';
 import { stateDirectory } from '../handoff.js';
 import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
@@ -23,10 +23,13 @@ import {
   inspectOrchestrator,
   requireInteractive,
   cancelAttempt,
+  reconcileAttempt,
+  inspectAttemptControl,
   managedRunner,
   startOrchestrator,
   type ManagedAttempt,
   type RunnerAdapter,
+  type AttemptControl,
 } from '../runtime/runtime.js';
 import { pipelineAccepted, type PipelineDisposition } from '../delivery/epic-finalization.js';
 import type { IssueInput } from '../delivery/issue-driver.js';
@@ -35,6 +38,14 @@ import type { IssueInput } from '../delivery/issue-driver.js';
 export interface RunSubject extends IssueInput {
   kind: 'issue' | 'epic';
 }
+/** Minimal per-Run constraint contract; fixed at intake and immutable across reconnects. */
+export interface RunConstraints {
+  kind: 'demo';
+  roundId: string;
+  demoConfigPath?: string;
+  boundAt?: string;
+}
+
 /** One requested workflow with a fixed provider and dedicated execution identity. */
 export interface WorkflowRun {
   id: string;
@@ -45,11 +56,12 @@ export interface WorkflowRun {
   policy: { name: string; revision: number };
   lifecycle: 'reserved' | 'running' | 'blocked' | 'completed';
   phase?: 'post_closure_finalization' | 'completed';
+  constraints?: RunConstraints;
   pipeline?: PipelineDisposition;
   pipelineApprovals?: Record<string, { source: 'human'; ledger: string; evidence: string }>;
   pipelineMaintenance?: import('../delivery/epic-finalization.js').EpicFinalization['maintenanceDeliveries'];
   report?: import('../delivery/research-report.js').ResearchReport;
-  epicClosure?: { deliveryVersion: string; head: string; evidence: string; confirmed: string };
+  epicClosure?: { deliveryVersion: string; head: string; evidence: string; confirmed: string; status?: 'closed' };
   orchestratorId: string;
   launchStarted?: boolean;
   orchestrator?: ManagedAttempt;
@@ -176,6 +188,7 @@ export async function startRun(
   provider: string,
   requirements?: string,
   dangerouslySkipPermissions?: boolean,
+  constraints?: RunConstraints,
 ): Promise<WorkflowRun> {
   if (
     !/^[\w.-]+\/[\w.-]+$/.test(subject.repository) ||
@@ -191,9 +204,25 @@ export async function startRun(
     );
   if (dangerouslySkipPermissions && provider !== 'agy')
     throw new Error('--dangerously-skip-permissions requires --provider agy');
+  if (!constraints && config.demo?.round) {
+    constraints = {
+      kind: 'demo',
+      roundId: config.demo.round,
+      demoConfigPath: config.demo.config,
+    };
+  }
   const verifyPermissions = (run: WorkflowRun) => {
     if (dangerouslySkipPermissions && !run.dangerouslySkipPermissions)
       throw new Error('Permission mode conflicts with the existing Run; reuse its stored mode');
+  };
+  const verifyConstraints = (run: WorkflowRun) => {
+    if (run.constraints && constraints) {
+      if (
+        run.constraints.kind !== constraints.kind ||
+        run.constraints.roundId !== constraints.roundId
+      )
+        throw new Error('Constraints conflict with existing Run; reuse stored constraints');
+    }
   };
   requireInteractive(runner);
   await runner.preflight();
@@ -207,6 +236,7 @@ export async function startRun(
   if (reconnect) {
     verifyPermissions(reconnect);
     verifyRunRequirements(reconnect, requirements);
+    verifyConstraints(reconnect);
     if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
       throw new Error('Existing Run provider or scope conflict');
     ensureStartupRecovery(config, runner, reconnect.id);
@@ -228,6 +258,7 @@ export async function startRun(
     if (owningRun && owningRun.subject.number !== subject.number) {
       verifyPermissions(owningRun);
       verifyRunRequirements(owningRun, requirements);
+      verifyConstraints(owningRun);
       if (owningRun.provider !== provider)
         throw new Error('Existing child execution provider conflict');
       ensureStartupRecovery(config, runner, owningRun.id);
@@ -247,11 +278,59 @@ export async function startRun(
     if (existing) {
       verifyPermissions(existing);
       verifyRunRequirements(existing, requirements);
+      verifyConstraints(existing);
       if (existing.provider !== provider || existing.subject.kind !== subject.kind)
         throw new Error('Existing Run provider or scope conflict');
       ensureStartupRecovery(config, runner, existing.id);
       return existing;
     }
+
+    if (constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const roundFile = join(roundRoot, 'round.json');
+      if (!existsSync(roundFile)) {
+        throw new Error(`Demo round ${constraints.roundId} manifest not found`);
+      }
+      const round = JSON.parse(readFileSync(roundFile, 'utf8'));
+      if (round.id !== constraints.roundId) {
+        throw new Error(`Demo round ID mismatch: expected ${constraints.roundId}, found ${round.id}`);
+      }
+      const expectedRepo = `${round.repository?.owner}/${round.repository?.name}`;
+      if (subject.repository !== expectedRepo) {
+        throw new Error(
+          `Repository mismatch for demo round: expected ${expectedRepo}, received ${subject.repository}`,
+        );
+      }
+      if (subject.number !== round.parent) {
+        throw new Error(
+          `Parent mismatch for demo round: expected ${round.parent}, received ${subject.number}`,
+        );
+      }
+      if (provider !== 'agy') {
+        throw new Error(`Provider mismatch for demo round: expected agy, received ${provider}`);
+      }
+      if (config.project !== round.checkout || config.root !== round.worktrees) {
+        throw new Error('Configuration path mismatch for demo round');
+      }
+      const controlFile = join(roundRoot, 'control.json');
+      if (!existsSync(controlFile)) {
+        throw new Error(`Demo round ${round.id} is not armed; run pc demo arm first`);
+      }
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      if (!control.armed) {
+        throw new Error(`Demo round ${round.id} is not armed; run pc demo arm first`);
+      }
+      if (control.stopped) {
+        throw new Error(`Demo round ${round.id} is stopped; cannot start Run`);
+      }
+      if (control.activeMs >= control.budgetMs) {
+        throw new Error(`Demo round ${round.id} budget expired; cannot start Run`);
+      }
+      if (control.runId) {
+        throw new Error(`Demo round ${round.id} already bound to Run ${control.runId}`);
+      }
+    }
+
     const id = randomUUID();
     const directory = join(home(config), 'runs', id);
     mkdirSync(directory, { recursive: true });
@@ -266,6 +345,9 @@ export async function startRun(
       policy: { name: 'managed-run', revision: 1 },
       lifecycle: 'reserved',
       ...(requirements === undefined ? {} : { requirements }),
+      ...(constraints === undefined
+        ? {}
+        : { constraints: { ...constraints, boundAt: new Date().toISOString() } }),
       orchestratorId: id,
       launchStarted: false,
       brief: { path, hash: createHash('sha256').update(brief).digest('hex') },
@@ -273,6 +355,16 @@ export async function startRun(
     registry.runs.push(run);
     reserveSubject(registry, run.id, `${subject.repository}#${subject.number}`);
     save(config, registry);
+
+    if (constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      control.runId = id;
+      control.execution = 'running';
+      writeFileSync(controlFile, JSON.stringify(control, null, 2));
+    }
+
     // The durable reservation survives a crash or failed launch and blocks replacement.
     try {
       run.launchStarted = true;
@@ -389,6 +481,35 @@ function authorize(registry: RunRegistry, runId: string, authority: string): Wor
     throw new Error('Inactive or wrong Orchestrator authority');
   return run;
 }
+function resolveGateAuthFile(roundRoot: string, subject?: string): string {
+  const defaultFile = join(roundRoot, 'gate-authorization.json');
+  if (existsSync(defaultFile)) {
+    if (!subject) return defaultFile;
+    try {
+      const defaultAuth = JSON.parse(readFileSync(defaultFile, 'utf8'));
+      if (subject.endsWith('#' + defaultAuth.issue)) return defaultFile;
+      for (const specific of ['gate-worker1-authorization.json', 'gate-worker2-authorization.json']) {
+        const specPath = join(roundRoot, specific);
+        if (existsSync(specPath)) {
+          try {
+            const specAuth = JSON.parse(readFileSync(specPath, 'utf8'));
+            if (subject.endsWith('#' + specAuth.issue)) return specPath;
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return defaultFile;
+  }
+  for (const specific of ['gate-worker1-authorization.json', 'gate-worker2-authorization.json']) {
+    const specPath = join(roundRoot, specific);
+    if (existsSync(specPath)) return specPath;
+  }
+  return defaultFile;
+}
 /** Reserve before launch; replay returns the same generation and never launches twice. */
 export async function dispatchStage(
   config: FleetConfig,
@@ -399,6 +520,93 @@ export async function dispatchStage(
   await runner.preflight();
   const snapshot = inspectRuns(config);
   const owningRun = authorize(snapshot, request.runId, request.authority);
+  if (owningRun.constraints?.kind === 'demo') {
+    const roundRoot = dirname(config.project);
+    const controlFile = join(roundRoot, 'control.json');
+    if (existsSync(controlFile)) {
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      if (control.stopped || control.releasing || control.activeMs >= control.budgetMs) {
+        throw new Error(
+          `Demo round ${owningRun.constraints.roundId} is stopped or expired; cannot dispatch stage`,
+        );
+      }
+    }
+    if (request.role === 'pipeline-audit' || request.role === 'research-state') {
+      if (!owningRun.epicClosure || owningRun.epicClosure.status !== 'closed') {
+        throw new Error('Verified actual Parent closure required before specialist dispatch');
+      }
+      if (owningRun.provider !== 'agy') {
+        throw new Error('Agy specialist dispatch required');
+      }
+    }
+    if (request.role === 'worker') {
+      const authFile = resolveGateAuthFile(roundRoot, request.subject);
+      if (!existsSync(authFile)) {
+        throw new Error(
+          `Worker dispatch denied: matching Gate authorization required for demo round ${owningRun.constraints.roundId}`,
+        );
+      }
+      const auth = JSON.parse(readFileSync(authFile, 'utf8'));
+      if (auth.roundId !== owningRun.constraints.roundId) {
+        throw new Error(
+          `Worker dispatch denied: Gate authorization round mismatch: expected ${owningRun.constraints.roundId}, received ${auth.roundId}`,
+        );
+      }
+      if (auth.runId !== owningRun.id) {
+        throw new Error(
+          `Worker dispatch denied: Gate authorization Run mismatch: expected ${owningRun.id}, received ${auth.runId}`,
+        );
+      }
+      if (request.stage === 'final-records') {
+        if (!request.subject.endsWith('#' + auth.issue)) {
+          throw new Error(
+            `Worker continuation denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
+          );
+        }
+      } else {
+        if (!request.subject.endsWith('#' + auth.issue)) {
+          throw new Error(
+            `Worker dispatch denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
+          );
+        }
+        if (auth.claimed) {
+          throw new Error('Worker dispatch denied: Gate authorization already claimed');
+        }
+        if (auth.inputRevision && auth.inputRevision !== request.inputRevision) {
+          throw new Error(
+            `Worker dispatch denied: input revision ${request.inputRevision} does not match authorized revision ${auth.inputRevision}`,
+          );
+        }
+        if (auth.stage && auth.stage !== request.stage) {
+          throw new Error(
+            `Worker dispatch denied: authorized for stage ${auth.stage}, cannot launch ${request.stage}`,
+          );
+        }
+        if (auth.briefHash) {
+          const rawHash = createHash('sha256').update(request.brief).digest('hex');
+          if (rawHash !== auth.briefHash) {
+            throw new Error('Worker dispatch denied: brief does not match authorized brief');
+          }
+        }
+        if (auth.requiredAncestorSha) {
+          const targetRev = request.inputRevision;
+          const checkoutDir = request.checkout ? workflowSource(config, request.checkout) : config.project;
+          const gitCwd = existsSync(checkoutDir) ? checkoutDir : config.project;
+          try {
+            execFileSync('git', ['merge-base', '--is-ancestor', auth.requiredAncestorSha, targetRev], {
+              cwd: gitCwd,
+              encoding: 'utf8',
+              stdio: 'pipe',
+            });
+          } catch {
+            throw new Error(
+              `Worker dispatch denied: task 2 revision ${targetRev} does not contain Task 1 merge ${auth.requiredAncestorSha} as an ancestor`,
+            );
+          }
+        }
+      }
+    }
+  }
   if (!request.brief.trim()) throw new Error('Incomplete stage inputs');
   request = { ...request, brief: assignmentWithRequirements(owningRun, request.brief) };
   const checkout = workflowSource(config, request.checkout ?? config.project);
@@ -431,7 +639,83 @@ export async function dispatchStage(
     if (registry.revision !== snapshot.revision)
       throw new Error('Execution ownership changed during termination verification; retry');
     const run = authorize(registry, request.runId, request.authority);
-    if (runner.name !== run.provider) throw new Error('Run provider mismatch');
+    if (run.constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      if (existsSync(controlFile)) {
+        const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+        if (control.stopped || control.releasing || control.activeMs >= control.budgetMs) {
+          throw new Error(
+            `Demo round ${run.constraints.roundId} is stopped or expired; cannot dispatch stage`,
+          );
+        }
+      }
+      if (request.role === 'worker') {
+        const authFile = resolveGateAuthFile(roundRoot, request.subject);
+        if (!existsSync(authFile)) {
+          throw new Error(
+            `Worker dispatch denied: matching Gate authorization required for demo round ${run.constraints.roundId}`,
+          );
+        }
+        const auth = JSON.parse(readFileSync(authFile, 'utf8'));
+        if (auth.roundId !== run.constraints.roundId) {
+          throw new Error(
+            `Worker dispatch denied: Gate authorization round mismatch: expected ${run.constraints.roundId}, received ${auth.roundId}`,
+          );
+        }
+        if (auth.runId !== run.id) {
+          throw new Error(
+            `Worker dispatch denied: Gate authorization Run mismatch: expected ${run.id}, received ${auth.runId}`,
+          );
+        }
+        if (request.stage === 'final-records') {
+          if (!request.subject.endsWith('#' + auth.issue)) {
+            throw new Error(
+              `Worker continuation denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
+            );
+          }
+        } else {
+          if (!request.subject.endsWith('#' + auth.issue)) {
+            throw new Error(
+              `Worker dispatch denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
+            );
+          }
+          if (auth.claimed) {
+            throw new Error('Worker dispatch denied: Gate authorization already claimed');
+          }
+          if (auth.inputRevision && auth.inputRevision !== request.inputRevision) {
+            throw new Error(
+              `Worker dispatch denied: input revision ${request.inputRevision} does not match authorized revision ${auth.inputRevision}`,
+            );
+          }
+          if (auth.stage && auth.stage !== request.stage) {
+            throw new Error(
+              `Worker dispatch denied: authorized for stage ${auth.stage}, cannot launch ${request.stage}`,
+            );
+          }
+          if (auth.requiredAncestorSha) {
+            const targetRev = request.inputRevision;
+            const checkoutDir = request.checkout ? workflowSource(config, request.checkout) : config.project;
+            const gitCwd = existsSync(checkoutDir) ? checkoutDir : config.project;
+            try {
+              execFileSync('git', ['merge-base', '--is-ancestor', auth.requiredAncestorSha, targetRev], {
+                cwd: gitCwd,
+                encoding: 'utf8',
+                stdio: 'pipe',
+              });
+            } catch {
+              throw new Error(
+                `Worker dispatch denied: task 2 revision ${targetRev} does not contain Task 1 merge ${auth.requiredAncestorSha} as an ancestor`,
+              );
+            }
+          }
+        }
+      }
+    }
+    if (runner.name !== run.provider)
+      throw new Error(
+        `Run provider mismatch: expected provider ${run.provider}, but received ${runner.name}`,
+      );
     assertStageRole(request.stage, request.role, `Run ${request.runId}`);
     if (!request.brief.trim() || !request.inputRevision || !request.stage || !request.subject)
       throw new Error('Incomplete stage inputs');
@@ -469,12 +753,15 @@ export async function dispatchStage(
       throw new Error('Missing mandatory accepted Worker implementation');
     if (
       (request.role === 'pipeline-audit' || request.role === 'pipeline-refactor') &&
-      !run.epicClosure
+      (!run.epicClosure || (run.epicClosure.status !== undefined && run.epicClosure.status !== 'closed'))
     )
       throw new Error('Pipeline requires verified EPIC closure');
     if (
       request.role === 'research-state' &&
-      (!run.epicClosure || !run.pipeline || !pipelineAccepted(run.pipeline))
+      (!run.epicClosure ||
+        (run.epicClosure.status !== undefined && run.epicClosure.status !== 'closed') ||
+        !run.pipeline ||
+        !pipelineAccepted(run.pipeline))
     )
       throw new Error('Report requires accepted Pipeline disposition');
     const predecessor = mandatory[request.stage];
@@ -563,6 +850,48 @@ export async function dispatchStage(
     return dispatch;
   }
   const attempt = dispatch.attempts[0];
+  if (
+    owningRun.constraints?.kind === 'demo' &&
+    request.role === 'worker' &&
+    request.stage !== 'final-records'
+  ) {
+    const roundRoot = dirname(config.project);
+    const authFile = resolveGateAuthFile(roundRoot, request.subject);
+    if (existsSync(authFile)) {
+      const auth = JSON.parse(readFileSync(authFile, 'utf8'));
+      auth.claimed = true;
+      auth.claimedAt = new Date().toISOString();
+      auth.claimedLaunchId = dispatch.id;
+      auth.claimedAttemptId = attempt.id;
+      writeFileSync(authFile, JSON.stringify(auth, null, 2));
+
+      // Also ensure default and stage-specific authorization files with matching id/issue are marked claimed
+      const filesToUpdate = new Set([
+        join(roundRoot, 'gate-authorization.json'),
+        join(roundRoot, 'gate-worker1-authorization.json'),
+        join(roundRoot, 'gate-worker2-authorization.json'),
+      ]);
+      filesToUpdate.delete(authFile);
+      for (const otherPath of filesToUpdate) {
+        if (existsSync(otherPath)) {
+          try {
+            const other = JSON.parse(readFileSync(otherPath, 'utf8'));
+            if (other.id === auth.id || other.issue === auth.issue) {
+              Object.assign(other, {
+                claimed: true,
+                claimedAt: auth.claimedAt,
+                claimedLaunchId: auth.claimedLaunchId,
+                claimedAttemptId: auth.claimedAttemptId,
+              });
+              writeFileSync(otherPath, JSON.stringify(other, null, 2));
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }
+  }
   try {
     const ack = await runner.start(attempt);
     if (!ack.conversation || !ack.address || !ack.evidence)
@@ -747,7 +1076,13 @@ export async function retryStage(
   const snapshot = inspectRuns(config);
   const dispatch = findDispatch(snapshot, dispatchId);
   const run = authorize(snapshot, dispatch.runId, authority);
-  if (runner.name !== run.provider) throw new Error('Run provider mismatch');
+  if (runner.name !== run.provider)
+    throw new Error(
+      `Run provider mismatch: expected provider ${run.provider}, but received ${runner.name}`,
+    );
+  if (run.constraints?.kind === 'demo') {
+    throw new Error('Stage retries prohibited for demo-constrained Runs');
+  }
   requireInteractive(runner);
   await runner.preflight();
   if (dispatch.remediation?.exhausted)
@@ -757,6 +1092,33 @@ export async function retryStage(
   const attempt = updateRunRegistry(config, (registry) => {
     const current = findDispatch(registry, dispatchId);
     authorize(registry, dispatch.runId, authority);
+    if (run.constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      if (existsSync(controlFile)) {
+        const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+        if (control.stopped || control.releasing || control.activeMs >= control.budgetMs) {
+          throw new Error(
+            `Demo round ${run.constraints.roundId} is stopped or expired; cannot retry stage`,
+          );
+        }
+      }
+      if (current.role === 'worker') {
+        const boundaryFile = join(roundRoot, 'delivery-boundaries.jsonl');
+        const boundaries = existsSync(boundaryFile)
+          ? readFileSync(boundaryFile, 'utf8')
+              .trim()
+              .split('\n')
+              .filter(Boolean)
+              .map((line) => JSON.parse(line))
+          : [];
+        if (!boundaries.some((b: { pass?: boolean }) => b.pass === true)) {
+          throw new Error(
+            `Worker dispatch denied: matching Gate authorization required for demo round ${run.constraints.roundId}`,
+          );
+        }
+      }
+    }
     if (
       registry.revision !== snapshot.revision ||
       current.acceptedReceipt ||
@@ -857,10 +1219,37 @@ export async function recoverRun(
   if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
   const snapshot = inspectRuns(config);
   const run = snapshot.runs.find((r) => r.id === runId);
-  if (!run || run.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
+  if (!run) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
+  if (run.provider !== runner.name)
+    throw new Error(
+      `Run provider mismatch: expected provider ${run.provider}, but received ${runner.name}`,
+    );
   verifyRunRequirements(run);
+  if (run.constraints?.kind === 'demo') {
+    if (options.replaceOrchestrator) {
+      throw new Error(`Replacement Orchestrator not authorized for demo-constrained Run ${run.id}`);
+    }
+  }
   if (run.lifecycle === 'completed')
     throw new Error('Completed Run authority has ended; start a new Run after resolving occupancy');
+  const blockers: string[] = [];
+  if (run.constraints?.kind === 'demo') {
+    const roundRoot = dirname(config.project);
+    const controlFile = join(roundRoot, 'control.json');
+    if (existsSync(controlFile)) {
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      if (control.stopped || control.activeMs >= control.budgetMs) {
+        blockers.push(`Demo round ${run.constraints.roundId} is stopped or expired`);
+        updateRunRegistry(config, (registry) => {
+          const r = registry.runs.find((x) => x.id === runId);
+          if (r) r.lifecycle = 'blocked';
+        });
+        if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
+          return { blockers, pendingDispatches: [] };
+        }
+      }
+    }
+  }
   if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
     updateRunRegistry(config, (registry) => {
       if (registry.revision !== snapshot.revision)
@@ -888,7 +1277,6 @@ export async function recoverRun(
     });
     return recoverRun(config, runner, runId);
   }
-  const blockers: string[] = [];
   const pendingDispatches: string[] = [];
   const recovered = new Map<
     string,
@@ -1217,14 +1605,15 @@ export function orchestratorForSubject(
     );
   if (run.orchestrator.runner !== run.provider)
     throw new Error(
-      `Run provider mismatch: expected ${run.provider}, received ${run.orchestrator.runner}`,
+      `Run provider mismatch: expected provider ${run.provider}, but received ${run.orchestrator.runner}`,
     );
   return run.orchestrator;
 }
 /** Record a consuming Run reference without granting another execution owner. */
 export function referenceRunSubject(config: FleetConfig, runId: string, subject: string): string {
   return updateRunRegistry(config, (registry) => {
-    if (!registry.runs.some((r) => r.id === runId)) throw new Error('Unknown Run');
+    if (!registry.runs.some((r) => r.id === runId))
+      throw new Error(`Unknown Run: expected existing run with id ${runId}`);
     registry.subjects ??= [];
     const owner = registry.subjects.find((s) => s.subject === subject);
     if (!owner) return reserveSubject(registry, runId, subject);
@@ -1261,7 +1650,10 @@ export async function startBusinessTurn(
     throw new Error(
       `No Run owns ${repository}#${number}; run pc workflow orchestrator start ${number} --type <issue|epic> --provider <provider> --config ${config.file}`,
     );
-  if (owner.runner !== runner.name) throw new Error('Run provider mismatch');
+  if (owner.runner !== runner.name)
+    throw new Error(
+      `Run provider mismatch: expected provider ${owner.runner}, but received ${runner.name}`,
+    );
   const dispatch = await dispatchStage(config, runner, {
     runId: owner.run,
     authority: owner.id,
@@ -1412,7 +1804,10 @@ export async function sendStageMessage(
   const attempt = updateRunRegistry(config, (registry) => {
     const dispatch = findDispatch(registry, dispatchId);
     authorize(registry, dispatch.runId, authority);
-    if (dispatch.provider !== runner.name) throw new Error('Run provider mismatch');
+    if (dispatch.provider !== runner.name)
+      throw new Error(
+        `Run provider mismatch: expected provider ${dispatch.provider}, but received ${runner.name}`,
+      );
     if (dispatch.lifecycle === 'accepted')
       throw new Error('Accepted task requires a new Dispatch for follow-up assignment');
     const existing = dispatch.messages?.find((m) => m.id === message.id);
@@ -1457,7 +1852,10 @@ export async function stopAcceptedExecution(
   const registry = inspectRuns(config);
   const dispatch = findDispatch(registry, dispatchId);
   authorize(registry, dispatch.runId, authority);
-  if (runner.name !== dispatch.provider) throw new Error('Run provider mismatch');
+  if (runner.name !== dispatch.provider)
+    throw new Error(
+      `Run provider mismatch: expected provider ${dispatch.provider}, but received ${runner.name}`,
+    );
   if (dispatch.lifecycle !== 'accepted' || dispatch.messages?.some((m) => m.status !== 'completed'))
     throw new Error('Acceptance and reconciled input required before release');
   const attempt = dispatch.attempts.at(-1)!;
@@ -1498,6 +1896,23 @@ export async function releaseAcceptedExecution(
   );
 }
 
+/** Actions seam for actual native EPIC closure, verification and head resolution. */
+export interface EpicClosureActions {
+  /** Resolve current Git HEAD */
+  head?: () => Promise<string> | string;
+  /** Check current GitHub issue state without modifying it */
+  view?: () => Promise<{ state: string; number?: number }>;
+  /** Execute actual close on GitHub */
+  close?: () => Promise<void>;
+}
+
+/** Canonical accepted delivery fingerprint for closure request, human consent, native close, and recorded closure. */
+export function canonicalDeliveryFingerprint(head: string, deliveries: unknown[]): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ head, deliveries }))
+    .digest('hex');
+}
+
 /** Commit externally verified closure after accepted integrated goal judgment and delivery. */
 export async function closeStageEpic(
   config: FleetConfig,
@@ -1505,34 +1920,28 @@ export async function closeStageEpic(
   authority: string,
   dispatchId: string,
   confirmation: { deliveryVersion: string; source: 'human'; evidence: string },
-  observe: () => Promise<{ head: string; closed: boolean; evidence: string }>,
+  observeOrActions?: (() => Promise<{ head: string; closed: boolean; evidence: string }>) | EpicClosureActions,
 ) {
   const snapshot = inspectRuns(config);
   const run = authorize(snapshot, runId, authority);
   const dispatch = findDispatch(snapshot, dispatchId);
   const deliveries = snapshot.deliveries?.filter((d) => d.runId === runId) ?? [];
-  const facts = await observe();
-  const version = createHash('sha256')
-    .update(JSON.stringify({ head: facts.head, deliveries }))
-    .digest('hex');
+
+  if (run.subject.kind !== 'epic') {
+    throw new Error('Issue-only Run cannot close or finalize parent EPIC');
+  }
+
   if (
-    run.subject.kind !== 'epic' ||
     dispatch.runId !== runId ||
     dispatch.role !== 'epic' ||
     dispatch.stage !== 'integrated-acceptance' ||
-    dispatch.lifecycle !== 'accepted' ||
-    dispatch.inputRevision !== facts.head ||
-    !deliveries.length ||
-    deliveries.some((d) => d.status !== 'done' || !d.recorded || !d.released || !d.archive) ||
-    confirmation.source !== 'human' ||
-    !confirmation.evidence.trim() ||
-    confirmation.deliveryVersion !== version ||
-    !facts.closed ||
-    !facts.evidence.trim()
-  )
+    dispatch.lifecycle !== 'accepted'
+  ) {
     throw new Error(
-      'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+      'Active Orchestrator and accepted integrated Dispatch required before GitHub close',
     );
+  }
+
   const receipt = snapshot.receipts!.find((r) => r.id === dispatch.acceptedReceipt)!;
   verifyRetainedStageEvidence(receipt);
   const judgment = JSON.parse(readFileSync(receipt.evidence[0].path, 'utf8'));
@@ -1541,21 +1950,140 @@ export async function closeStageEpic(
     !judgment.criteria?.length ||
     !Array.isArray(judgment.blockers) ||
     judgment.blockers.length
-  )
+  ) {
     throw new Error('Integrated goal remains unaccepted');
+  }
+
+  if (
+    !deliveries.length ||
+    deliveries.some((d) => d.status !== 'done' || !d.recorded || !d.released || !d.archive)
+  ) {
+    throw new Error(
+      'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+    );
+  }
+
+  if (typeof observeOrActions === 'function') {
+    const facts = await observeOrActions();
+    const version = canonicalDeliveryFingerprint(facts.head, deliveries);
+    if (
+      dispatch.inputRevision !== facts.head ||
+      !confirmation ||
+      confirmation.source !== 'human' ||
+      !confirmation.evidence?.trim() ||
+      confirmation.deliveryVersion !== version ||
+      !facts.closed ||
+      !facts.evidence?.trim()
+    ) {
+      throw new Error(
+        'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+      );
+    }
+
+    updateRunRegistry(config, (registry) => {
+      const current = authorize(registry, runId, authority);
+      if (registry.revision !== snapshot.revision)
+        throw new Error('Registry changed during closure verification');
+      current.epicClosure = {
+        deliveryVersion: version,
+        head: facts.head,
+        evidence: facts.evidence,
+        confirmed: confirmation.evidence,
+        status: 'closed',
+      };
+      current.phase = 'post_closure_finalization';
+    });
+    return { deliveryVersion: version, head: facts.head };
+  }
+
+  const actions = observeOrActions ?? {};
+  const projectCwd = config.project;
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: projectCwd, encoding: 'utf8', timeout: 10000 }).trim();
+
+  const head = await (actions.head ? actions.head() : git('rev-parse', 'HEAD'));
+  if (dispatch.inputRevision !== head) {
+    throw new Error('Delivery changed after acceptance; obtain renewed acceptance and confirmation');
+  }
+
+  const version = canonicalDeliveryFingerprint(head, deliveries);
+
+  if (
+    !confirmation ||
+    confirmation.source !== 'human' ||
+    !confirmation.evidence?.trim() ||
+    confirmation.deliveryVersion !== version
+  ) {
+    throw new Error(
+      'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+    );
+  }
+
+  const viewState = async (): Promise<{ state: string }> => {
+    if (actions.view) return actions.view();
+    const out = execFileSync(
+      'gh',
+      ['issue', 'view', String(run.subject.number), '--repo', run.subject.repository, '--json', 'state'],
+      { cwd: projectCwd, encoding: 'utf8', timeout: 30000 },
+    );
+    return JSON.parse(out);
+  };
+
+  const closeIssue = async (): Promise<void> => {
+    if (actions.close) return actions.close();
+    execFileSync('gh', ['issue', 'close', String(run.subject.number), '--repo', run.subject.repository], {
+      cwd: projectCwd,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+  };
+
+  // Check if Parent was already closed BEFORE actual closure
+  const before = await viewState();
+  if (before && before.state?.toLowerCase() === 'closed') {
+    throw new Error('Registration that merely observes an already-closed Parent is not a substitute for actual closure');
+  }
+
+  // Perform actual close with reconciliation of uncertain results
+  let closeError: unknown;
+  try {
+    await closeIssue();
+  } catch (err) {
+    closeError = err;
+  }
+
+  if (closeError) {
+    // Reconcile uncertain close result: check external state
+    const reconciled = await viewState();
+    if (reconciled && reconciled.state?.toLowerCase() === 'closed') {
+      // Reconciled! Closed despite uncertainty
+    } else {
+      throw closeError;
+    }
+  }
+
+  // Independently verify closed state
+  const after = await viewState();
+  if (!after || after.state?.toLowerCase() !== 'closed') {
+    throw new Error('Expected verified actual closure; Parent remains open');
+  }
+
+  const evidence = `GitHub ${run.subject.repository}#${run.subject.number} actual closure`;
+
   updateRunRegistry(config, (registry) => {
     const current = authorize(registry, runId, authority);
     if (registry.revision !== snapshot.revision)
       throw new Error('Registry changed during closure verification');
     current.epicClosure = {
       deliveryVersion: version,
-      head: facts.head,
-      evidence: facts.evidence,
+      head,
+      evidence,
       confirmed: confirmation.evidence,
+      status: 'closed',
     };
     current.phase = 'post_closure_finalization';
   });
-  return { deliveryVersion: version, head: facts.head };
+  return { deliveryVersion: version, head };
 }
 
 /** Retain a validated accepted Pipeline result; receipt acceptance alone is insufficient. */
@@ -1570,6 +2098,7 @@ export function dispositionStagePipeline(
     const dispatch = findDispatch(registry, dispatchId);
     if (
       !run.epicClosure ||
+      (run.epicClosure.status !== undefined && run.epicClosure.status !== 'closed') ||
       dispatch.runId !== runId ||
       !['pipeline-audit', 'pipeline-refactor'].includes(dispatch.role) ||
       dispatch.lifecycle !== 'accepted'
@@ -1580,6 +2109,35 @@ export function dispositionStagePipeline(
     const result = JSON.parse(
       readFileSync(receipt.evidence[0].path, 'utf8'),
     ) as PipelineDisposition;
+
+    if (run.constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      const isCleanNoChanges =
+        ['not_applicable', 'completed_no_changes'].includes(result.disposition) &&
+        pipelineAccepted(result) &&
+        result.head === run.epicClosure.head &&
+        Object.values(result.inspectedVersions ?? {}).includes(run.epicClosure.head) &&
+        (receipt.evidence?.length ?? 0) > 0;
+
+      if (!isCleanNoChanges) {
+        if (existsSync(controlFile)) {
+          const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+          control.stopped = true;
+          control.stoppedReason =
+            result.disposition === 'changes_needed'
+              ? 'Pipeline changes require retention; no repair or third delivery'
+              : 'Pipeline disposition invalidates acceptance; retaining diagnostic round';
+          writeFileSync(controlFile, JSON.stringify(control, null, 2));
+        }
+        throw new Error(
+          result.disposition === 'changes_needed'
+            ? 'Pipeline changes require retention; no repair or third delivery'
+            : 'Pipeline disposition blocks reporting',
+        );
+      }
+    }
+
     if (result.head !== run.epicClosure.head || !pipelineAccepted(result))
       throw new Error('Pipeline disposition blocks reporting');
     run.pipeline = result;
@@ -1599,6 +2157,7 @@ export async function publishStageReport(
   const dispatch = findDispatch(snapshot, dispatchId);
   if (
     !run.epicClosure ||
+    (run.epicClosure.status !== undefined && run.epicClosure.status !== 'closed') ||
     !pipelineAccepted(run.pipeline) ||
     dispatch.runId !== runId ||
     dispatch.role !== 'research-state' ||
@@ -1620,6 +2179,36 @@ export async function publishStageReport(
     createHash('sha256').update(readFileSync(result.artifact)).digest('hex') !== result.artifactHash
   )
     throw new Error('Report artifact changed since accepted result');
+
+  if (run.constraints?.kind === 'demo') {
+    const roundRoot = dirname(config.project);
+    const roundFile = join(roundRoot, 'round.json');
+    if (existsSync(roundFile)) {
+      const round = JSON.parse(readFileSync(roundFile, 'utf8'));
+      if (
+        coordinator.identity !== round.config.coordinator ||
+        coordinator.brief !== round.config.brief ||
+        coordinator.entry !== round.entry ||
+        realpathSync(round.research) !== round.research ||
+        dirname(round.entry) !== round.research ||
+        round.entry !== join(round.research, 'report.md')
+      ) {
+        throw new Error('Isolated physical report destination and operator coordinator configuration required');
+      }
+    }
+
+    const artifactContent = readFileSync(result.artifact, 'utf8');
+    const hasSummaryValues =
+      /\b10\b/.test(artifactContent) &&
+      /\b55\b/.test(artifactContent) &&
+      /\b100\b/.test(artifactContent);
+    const hasReferences = /#\d+|PR\s*\d+|Issue\s*\d+/i.test(artifactContent);
+    const hasPipelineConclusion = /(not_applicable|completed_no_changes|pipeline)/i.test(artifactContent);
+
+    if (!hasSummaryValues || !hasReferences || !hasPipelineConclusion) {
+      throw new Error('Demo report does not satisfy required checks, baseline values, or sections');
+    }
+  }
   const observedHead = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: config.project,
     encoding: 'utf8',
@@ -1648,6 +2237,15 @@ export async function publishStageReport(
     current.report = report;
     current.phase = 'completed';
     current.lifecycle = 'completed';
+    if (current.constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      if (existsSync(controlFile)) {
+        const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+        control.completed = true;
+        writeFileSync(controlFile, JSON.stringify(control, null, 2));
+      }
+    }
   });
   return report;
 }
@@ -1661,3 +2259,520 @@ function verifyRetainedStageEvidence(receipt: StageReceipt) {
   )
     throw new Error('Accepted stage evidence changed');
 }
+
+/** Stable, narrow public view of Run identity, attempts, helpers, execution state, and resource ownership. */
+export interface WorkflowRunView {
+  id: string;
+  provider: string;
+  lifecycle: WorkflowRun['lifecycle'];
+  phase?: WorkflowRun['phase'];
+  constraints?: RunConstraints;
+  subject: RunSubject;
+  orchestratorId: string;
+  orchestrator?: ManagedAttempt;
+  priorOrchestrators?: ManagedAttempt[];
+  attempts: ManagedAttempt[];
+  dispatches: StageDispatch[];
+  receipts: NonNullable<RunRegistry['receipts']>;
+  deliveries: NonNullable<RunRegistry['deliveries']>;
+  pullRequests: NonNullable<RunRegistry['pullRequests']>;
+  resources: NonNullable<RunRegistry['resources']>;
+  helper: {
+    active: boolean;
+    pending?: boolean;
+    evidenceDirectory?: string;
+    error?: string;
+  };
+  reconciliation?: WorkflowRun['reconciliation'];
+  execution: 'running' | 'reserved' | 'blocked' | 'completed' | 'unknown' | 'terminated';
+  terminated: boolean;
+  released: boolean;
+  epicClosure?: WorkflowRun['epicClosure'];
+  pipeline?: PipelineDisposition;
+  report?: import('../delivery/research-report.js').ResearchReport;
+}
+
+/** Result of a verified stopRun operation. */
+export interface StopRunResult {
+  runId: string;
+  lifecycle: WorkflowRun['lifecycle'];
+  terminated: boolean;
+  released: boolean;
+  attempts: {
+    id: string;
+    role: ManagedAttempt['role'];
+    status: ManagedAttempt['status'];
+    terminated: boolean;
+    cancellation?: AttemptControl['cancellation'];
+    error?: string;
+  }[];
+  helper: {
+    active: boolean;
+    pending?: boolean;
+    stopped: boolean;
+  };
+  resources: { path: string; runId: string }[];
+  blockers: string[];
+}
+
+/** Result of a completed releaseRun operation. */
+export interface ReleaseRunResult {
+  runId: string;
+  lifecycle: WorkflowRun['lifecycle'];
+  terminated: boolean;
+  released: boolean;
+  attempts: {
+    id: string;
+    role: ManagedAttempt['role'];
+    status: ManagedAttempt['status'];
+    terminated: boolean;
+    cancellation?: AttemptControl['cancellation'];
+    error?: string;
+  }[];
+  helper: {
+    active: boolean;
+    pending?: boolean;
+    stopped: boolean;
+  };
+  resources: { path: string; runId: string }[];
+  blockers: string[];
+}
+
+/** Read a stable, narrow public view of a single Run and its owned resources without exposing registry serialization. */
+export function inspectRun(config: FleetConfig, runId: string): WorkflowRunView {
+  if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
+  const registry = inspectRuns(config);
+  const run = registry.runs.find((r) => r.id === runId);
+  if (!run) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
+
+  const dispatches = (registry.dispatches ?? []).filter((d) => d.runId === run.id);
+  const receipts = (registry.receipts ?? []).filter((r) => r.runId === run.id);
+  const attempts = [
+    ...(run.priorOrchestrators ?? []),
+    ...(run.orchestrator ? [run.orchestrator] : []),
+    ...dispatches.flatMap((d) => d.attempts),
+  ];
+  const resources = (registry.resources ?? []).filter((r) => r.runId === run.id);
+  const deliveries = (registry.deliveries ?? []).filter((d) => d.runId === run.id);
+  const pullRequests = (registry.pullRequests ?? []).filter((p) => p.runId === run.id);
+  const helper = startupRecoveryStatus(config, run.id, registry);
+
+  const isAttemptTerminated = (a: ManagedAttempt): boolean => {
+    const control = inspectAttemptControl(a);
+    return (
+      control.execution?.status === 'terminated' ||
+      (a.startupStopped === true && a.status !== 'running' && !a.address)
+    );
+  };
+
+  const terminated = attempts.length > 0 && attempts.every(isAttemptTerminated);
+  const released =
+    (attempts.length === 0 || attempts.every(isAttemptTerminated)) &&
+    !helper.active &&
+    resources.length === 0;
+
+  let execution: WorkflowRunView['execution'];
+  if (
+    attempts.some(
+      (a) => a.status === 'running' || inspectAttemptControl(a).execution?.status === 'running',
+    )
+  ) {
+    execution = 'running';
+  } else if (
+    attempts.some(
+      (a) => a.status === 'unknown' || inspectAttemptControl(a).execution?.status === 'unknown',
+    )
+  ) {
+    execution = 'unknown';
+  } else if (terminated) {
+    execution = 'terminated';
+  } else if (run.lifecycle === 'completed') {
+    execution = 'completed';
+  } else {
+    execution = run.lifecycle;
+  }
+
+  return {
+    id: run.id,
+    provider: run.provider,
+    lifecycle: run.lifecycle,
+    phase: run.phase,
+    constraints: run.constraints,
+    subject: run.subject,
+    orchestratorId: run.orchestratorId,
+    orchestrator: run.orchestrator,
+    priorOrchestrators: run.priorOrchestrators,
+    attempts,
+    dispatches,
+    receipts,
+    deliveries,
+    pullRequests,
+    resources,
+    helper,
+    reconciliation: run.reconciliation,
+    execution,
+    terminated,
+    released,
+    epicClosure: run.epicClosure,
+    pipeline: run.pipeline,
+    report: run.report,
+  };
+}
+
+/** Read narrow public views of all registered Runs. */
+export function inspectRunViews(config: FleetConfig): WorkflowRunView[] {
+  const registry = inspectRuns(config);
+  return registry.runs.map((r) => inspectRun(config, r.id));
+}
+
+/** Revoke scheduling and activation before terminating owned executions and helpers, preserving business records. */
+export async function stopRun(
+  config: FleetConfig,
+  runnerOrId?: RunnerAdapter | string,
+  runIdOrOptions?:
+    | string
+    | {
+        stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
+        cleanup?: () => void;
+      },
+  options?: {
+    stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
+    cleanup?: () => void;
+  },
+): Promise<StopRunResult> {
+  const runId = typeof runnerOrId === 'string' ? runnerOrId : (runIdOrOptions as string);
+  const passedRunner = typeof runnerOrId === 'string' ? undefined : runnerOrId;
+  const opts = (typeof runIdOrOptions === 'object' ? runIdOrOptions : options) ?? {};
+
+  if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
+
+  const snapshot = inspectRuns(config);
+  const targetRun = snapshot.runs.find((r) => r.id === runId);
+  if (!targetRun) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
+
+  const adapter = passedRunner ?? managedRunner(targetRun.provider);
+  if (adapter.name !== targetRun.provider)
+    throw new Error(
+      `Run provider mismatch: expected provider ${targetRun.provider}, but received ${adapter.name}`,
+    );
+
+  // Revoke further scheduling and activation before requesting cancellation
+  updateRunRegistry(config, (registry) => {
+    const current = registry.runs.find((r) => r.id === runId);
+    if (!current) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
+    if (current.lifecycle !== 'completed') {
+      current.lifecycle = 'blocked';
+    }
+    if (current.orchestrator && current.orchestrator.status !== 'running') {
+      current.orchestrator.startupStopped = true;
+    }
+    for (const dispatch of registry.dispatches?.filter((d) => d.runId === runId) ?? []) {
+      for (const attempt of dispatch.attempts) {
+        if (attempt.status !== 'running') {
+          attempt.startupStopped = true;
+        }
+      }
+    }
+  });
+
+  // Stop startup helper
+  const helperStopped = await stopStartupRecovery(config, runId);
+  const helperStatus = startupRecoveryStatus(config, runId);
+  const blockers: string[] = [];
+  if (helperStatus.active) {
+    blockers.push('Startup helper termination unverified; helper remains active');
+  }
+
+  const hasTermination = (
+    r: unknown,
+  ): r is { termination: (a: ManagedAttempt) => Promise<boolean> } =>
+    typeof (r as { termination?: unknown })?.termination === 'function';
+
+  const isStopped =
+    opts.stopped ??
+    (adapter.stopped
+      ? (a: ManagedAttempt) => adapter.stopped!(a)
+      : hasTermination(adapter)
+        ? (a: ManagedAttempt) => adapter.termination(a)
+        : async () => false);
+
+  const currentSnapshot = inspectRuns(config);
+  const currentRun = currentSnapshot.runs.find((r) => r.id === runId)!;
+  const attempts = [
+    ...(currentRun.priorOrchestrators ?? []),
+    ...(currentRun.orchestrator ? [currentRun.orchestrator] : []),
+    ...(currentSnapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+  ];
+
+  const attemptResults: StopRunResult['attempts'] = [];
+
+  for (const attempt of attempts) {
+    let stopped = await isStopped(attempt);
+    let cancellationControl: AttemptControl['cancellation'] | undefined;
+    let error: string | undefined;
+
+    if (!stopped) {
+      try {
+        const control = await cancelAttempt(attempt, adapter);
+        cancellationControl = control.cancellation;
+      } catch (err) {
+        error = String(err);
+      }
+      stopped = await isStopped(attempt);
+    }
+
+    if (stopped) {
+      await reconcileAttempt(attempt, { termination: isStopped });
+      updateRunRegistry(config, (registry) => {
+        const r = registry.runs.find((entry) => entry.id === runId);
+        if (!r) return;
+        const all = [
+          ...(r.priorOrchestrators ?? []),
+          ...(r.orchestrator ? [r.orchestrator] : []),
+          ...(registry.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+        ];
+        const match = all.find((a) => a.id === attempt.id);
+        if (match) {
+          match.status = 'unknown';
+          match.startupStopped = true;
+        }
+      });
+    } else {
+      const ctrl = inspectAttemptControl(attempt);
+      ctrl.execution = { status: 'unknown' };
+      writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(ctrl));
+      blockers.push(
+        `Attempt ${attempt.id} (${attempt.role}) termination unverified; occupancy remains reserved`,
+      );
+    }
+
+    attemptResults.push({
+      id: attempt.id,
+      role: attempt.role,
+      status: stopped ? 'unknown' : attempt.status,
+      terminated: stopped,
+      cancellation: cancellationControl,
+      error,
+    });
+  }
+
+  // Release checkouts only if explicit cleanup callback is provided
+  if (opts.cleanup) {
+    const reg = inspectRuns(config);
+    const owned = (reg.resources ?? []).filter((r) => r.runId === runId);
+    for (const res of owned) {
+      try {
+        await releaseRunCheckout(config, runId, res.path, isStopped, opts.cleanup);
+      } catch (err) {
+        blockers.push(`Resource ${res.path} release failed: ${String(err)}`);
+      }
+    }
+  }
+
+  const finalReg = inspectRuns(config);
+  const finalRun = finalReg.runs.find((r) => r.id === runId)!;
+  const finalResources = (finalReg.resources ?? []).filter((r) => r.runId === runId);
+  const finalHelper = startupRecoveryStatus(config, runId);
+
+  const allTerminated =
+    attemptResults.length === 0 || attemptResults.every((a) => a.terminated);
+  const released =
+    allTerminated && !finalHelper.active && finalResources.length === 0;
+
+  updateRunRegistry(config, (registry) => {
+    const r = registry.runs.find((entry) => entry.id === runId);
+    if (r) {
+      r.reconciliation = {
+        at: new Date().toISOString(),
+        blockers,
+        pendingDispatches: r.reconciliation?.pendingDispatches ?? [],
+      };
+    }
+  });
+
+  return {
+    runId,
+    lifecycle: finalRun.lifecycle,
+    terminated: allTerminated,
+    released,
+    attempts: attemptResults,
+    helper: {
+      active: finalHelper.active,
+      pending: finalHelper.pending,
+      stopped: helperStopped,
+    },
+    resources: finalResources,
+    blockers,
+  };
+}
+
+/** Terminate remaining executions and helpers for a completed Run without changing business success into failure. */
+export async function releaseRun(
+  config: FleetConfig,
+  runnerOrId?: RunnerAdapter | string,
+  runIdOrOptions?:
+    | string
+    | {
+        stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
+        cleanup?: () => void;
+      },
+  options?: {
+    stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
+    cleanup?: () => void;
+  },
+): Promise<ReleaseRunResult> {
+  const runId = typeof runnerOrId === 'string' ? runnerOrId : (runIdOrOptions as string);
+  const passedRunner = typeof runnerOrId === 'string' ? undefined : runnerOrId;
+  const opts = (typeof runIdOrOptions === 'object' ? runIdOrOptions : options) ?? {};
+
+  if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
+
+  const snapshot = inspectRuns(config);
+  const targetRun = snapshot.runs.find((r) => r.id === runId);
+  if (!targetRun) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
+
+  if (targetRun.lifecycle !== 'completed') {
+    throw new Error(
+      `Run ${runId} is not completed (lifecycle: ${targetRun.lifecycle}); only completed Runs can be released with releaseRun`,
+    );
+  }
+
+  const adapter = passedRunner ?? managedRunner(targetRun.provider);
+  if (adapter.name !== targetRun.provider)
+    throw new Error(
+      `Run provider mismatch: expected provider ${targetRun.provider}, but received ${adapter.name}`,
+    );
+
+  // Stop startup helper
+  const helperStopped = await stopStartupRecovery(config, runId);
+  const helperStatus = startupRecoveryStatus(config, runId);
+  const blockers: string[] = [];
+  if (helperStatus.active) {
+    blockers.push('Startup helper termination unverified; helper remains active');
+  }
+
+  const hasTermination = (
+    r: unknown,
+  ): r is { termination: (a: ManagedAttempt) => Promise<boolean> } =>
+    typeof (r as { termination?: unknown })?.termination === 'function';
+
+  const isStopped =
+    opts.stopped ??
+    (adapter.stopped
+      ? (a: ManagedAttempt) => adapter.stopped!(a)
+      : hasTermination(adapter)
+        ? (a: ManagedAttempt) => adapter.termination(a)
+        : async () => false);
+
+  const attempts = [
+    ...(targetRun.priorOrchestrators ?? []),
+    ...(targetRun.orchestrator ? [targetRun.orchestrator] : []),
+    ...(snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+  ];
+
+  const attemptResults: ReleaseRunResult['attempts'] = [];
+
+  for (const attempt of attempts) {
+    let stopped = await isStopped(attempt);
+    let cancellationControl: AttemptControl['cancellation'] | undefined;
+    let error: string | undefined;
+
+    if (!stopped) {
+      try {
+        const control = await cancelAttempt(attempt, adapter);
+        cancellationControl = control.cancellation;
+      } catch (err) {
+        error = String(err);
+      }
+      stopped = await isStopped(attempt);
+    }
+
+    if (stopped) {
+      await reconcileAttempt(attempt, { termination: isStopped });
+      updateRunRegistry(config, (registry) => {
+        const r = registry.runs.find((entry) => entry.id === runId);
+        if (!r) return;
+        const all = [
+          ...(r.priorOrchestrators ?? []),
+          ...(r.orchestrator ? [r.orchestrator] : []),
+          ...(registry.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+        ];
+        const match = all.find((a) => a.id === attempt.id);
+        if (match) {
+          match.status = 'unknown';
+          match.startupStopped = true;
+        }
+      });
+    } else {
+      const ctrl = inspectAttemptControl(attempt);
+      ctrl.execution = { status: 'unknown' };
+      writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(ctrl));
+      blockers.push(
+        `Attempt ${attempt.id} (${attempt.role}) termination unverified; occupancy remains reserved`,
+      );
+    }
+
+    attemptResults.push({
+      id: attempt.id,
+      role: attempt.role,
+      status: stopped ? 'unknown' : attempt.status,
+      terminated: stopped,
+      cancellation: cancellationControl,
+      error,
+    });
+  }
+
+  // Release checkouts only if explicit cleanup callback is provided
+  const regBeforeCleanup = inspectRuns(config);
+  const ownedResources = (regBeforeCleanup.resources ?? []).filter((r) => r.runId === runId);
+  if (ownedResources.length > 0) {
+    if (opts.cleanup) {
+      for (const res of ownedResources) {
+        try {
+          await releaseRunCheckout(config, runId, res.path, isStopped, opts.cleanup);
+        } catch (err) {
+          blockers.push(`Resource ${res.path} release failed: ${String(err)}`);
+        }
+      }
+    } else {
+      blockers.push('Checkout release requires the workflow preservation and cleanup gate');
+    }
+  }
+
+  const finalReg = inspectRuns(config);
+  const finalRun = finalReg.runs.find((r) => r.id === runId)!;
+  const finalResources = (finalReg.resources ?? []).filter((r) => r.runId === runId);
+  const finalHelper = startupRecoveryStatus(config, runId);
+
+  const allTerminated =
+    attemptResults.length === 0 || attemptResults.every((a) => a.terminated);
+  const released =
+    allTerminated && !finalHelper.active && finalResources.length === 0;
+
+  updateRunRegistry(config, (registry) => {
+    const r = registry.runs.find((entry) => entry.id === runId);
+    if (r) {
+      r.reconciliation = {
+        at: new Date().toISOString(),
+        blockers,
+        pendingDispatches: r.reconciliation?.pendingDispatches ?? [],
+      };
+    }
+  });
+
+  return {
+    runId,
+    lifecycle: finalRun.lifecycle,
+    terminated: allTerminated,
+    released,
+    attempts: attemptResults,
+    helper: {
+      active: finalHelper.active,
+      pending: finalHelper.pending,
+      stopped: helperStopped,
+    },
+    resources: finalResources,
+    blockers,
+  };
+}
+

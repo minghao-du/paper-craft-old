@@ -70,7 +70,10 @@ export async function drivePullRequest(
   )
     throw new Error('Expected repository and positive Issue identity');
   const owner = orchestratorForSubject(config, delivery.repository, delivery.issue);
-  if (owner.runner !== runner.name) throw new Error('Run provider mismatch');
+  if (owner.runner !== runner.name)
+    throw new Error(
+      `Run provider mismatch: expected provider ${owner.runner}, but received ${runner.name}`,
+    );
   await runner.preflight();
   const key = createHash('sha256')
     .update(`${config.file}:${delivery.repository}:${delivery.issue}`)

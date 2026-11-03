@@ -1,9 +1,14 @@
+import { execFileSync } from 'node:child_process';
 import { startupRecoveryStatus } from '@paper-craft/core/workflow/startup';
 import {
   startRun,
   inspectRuns,
   recoverRun,
+  stopRun,
+  releaseRun,
   orchestratorForSubject,
+  closeStageEpic,
+  type EpicClosureActions,
   type WorkflowRun,
   type RunRegistry,
 } from '@paper-craft/core/workflow/run-driver';
@@ -220,6 +225,8 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       )
       .option('--requirements <text>', 'Immutable additional Run Requirements')
       .option('--requirements-file <file>', 'Read immutable Run Requirements from a UTF-8 file')
+      .option('--demo-round <id>', 'Bind Run to an armed Demo round')
+      .option('--demo-config <file>', 'Demo configuration file for Demo-constrained Run')
       .addOption(
         new Option('--type <type>', 'Subject type; must match the title EPIC marker')
           .choices(['issue', 'epic'])
@@ -234,6 +241,8 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         requirements?: string;
         requirementsFile?: string;
         dangerouslySkipPermissions?: boolean;
+        demoRound?: string;
+        demoConfig?: string;
       },
     ) => {
       let config: FleetConfig | undefined;
@@ -264,14 +273,31 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
             `Type mismatch: --type ${options.type}, but title ${JSON.stringify(subject.title)} identifies ${kind}; correct the title or --type before retrying`,
           );
         startupInvoked = true;
-        const result = await startRun(
-          config,
-          managedRunner(options.provider),
-          { ...subject, kind },
-          options.provider,
-          requirements,
-          options.dangerouslySkipPermissions,
-        );
+        const constraints = options.demoRound
+          ? {
+              kind: 'demo' as const,
+              roundId: options.demoRound,
+              demoConfigPath: options.demoConfig,
+            }
+          : undefined;
+        const result = await (constraints !== undefined
+          ? startRun(
+              config,
+              managedRunner(options.provider),
+              { ...subject, kind },
+              options.provider,
+              requirements,
+              options.dangerouslySkipPermissions,
+              constraints,
+            )
+          : startRun(
+              config,
+              managedRunner(options.provider),
+              { ...subject, kind },
+              options.provider,
+              requirements,
+              options.dangerouslySkipPermissions,
+            ));
         const diagnostics = diagnosticError(config, result.orchestrator?.error, {
           command: 'start',
           run: result.id,
@@ -355,7 +381,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     try {
       config = loadFleetConfig(options.config);
       current = inspectRuns(config).runs.find((run) => run.id === id);
-      if (!current) throw new Error('Unknown Run');
+      if (!current) throw new Error(`Unknown Run: expected existing run with id ${id}`);
       const runner = managedRunner(current.provider);
       const result = await recoverRun(config, runner, id, {
         replaceOrchestrator: options.replace,
@@ -458,6 +484,132 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   });
   configured(
     orchestrator
+      .command('stop <run>')
+      .description('Revoke scheduling and terminate owned executions; retain completed business evidence')
+      .option('--detailed', 'Return the complete current structured result; logs remain referenced'),
+  ).action(async (id: string, options: Options) => {
+    let config: FleetConfig | undefined;
+    let current: WorkflowRun | undefined;
+    try {
+      config = loadFleetConfig(options.config);
+      current = inspectRuns(config).runs.find((run) => run.id === id);
+      if (!current) throw new Error(`Unknown Run: expected existing run with id ${id}`);
+      const runner = managedRunner(current.provider);
+      const result = await stopRun(config, runner, id, {
+        stopped: (attempt) => runner.stopped(attempt),
+      });
+      current = inspectRuns(config).runs.find((entry) => entry.id === id)!;
+      output(
+        {
+          ...result,
+          blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
+          inspection: await inspection(current, config, !!options.detailed),
+          outcome: result.released
+            ? 'succeeded'
+            : result.terminated
+              ? 'succeeded'
+              : 'blocked',
+        },
+        opts.human(),
+      );
+      if (!result.terminated || result.blockers.length) process.exitCode = 2;
+    } catch (error) {
+      if (config) {
+        try {
+          current = inspectRuns(config).runs.find((entry) => entry.id === id) ?? current;
+        } catch {
+          /* Retain the last verified state. */
+        }
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      output(
+        {
+          outcome: 'failed',
+          status: 'unknown',
+          ...(current && config
+            ? {
+                inspection: await inspection(current, config, !!options.detailed),
+                observation: current.orchestrator?.observation,
+                evidence: current.orchestrator?.evidence,
+              }
+            : {}),
+          ...diagnosticError(config, message, {
+            command: 'stop',
+            run: id,
+            attempt: current?.orchestrator?.id,
+          }),
+          ...(options.detailed ? { error: message } : {}),
+        },
+        opts.human(),
+      );
+      process.exitCode = 2;
+    }
+  });
+  configured(
+    orchestrator
+      .command('release <run>')
+      .description('Terminate remaining executions and release resources for a completed Run')
+      .option('--detailed', 'Return the complete current structured result; logs remain referenced'),
+  ).action(async (id: string, options: Options) => {
+    let config: FleetConfig | undefined;
+    let current: WorkflowRun | undefined;
+    try {
+      config = loadFleetConfig(options.config);
+      current = inspectRuns(config).runs.find((run) => run.id === id);
+      if (!current) throw new Error(`Unknown Run: expected existing run with id ${id}`);
+      const runner = managedRunner(current.provider);
+      const result = await releaseRun(config, runner, id, {
+        stopped: (attempt) => runner.stopped(attempt),
+      });
+      current = inspectRuns(config).runs.find((entry) => entry.id === id)!;
+      output(
+        {
+          ...result,
+          blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
+          inspection: await inspection(current, config, !!options.detailed),
+          outcome: result.released
+            ? 'succeeded'
+            : result.terminated
+              ? 'succeeded'
+              : 'blocked',
+        },
+        opts.human(),
+      );
+      if (!result.terminated || result.blockers.length) process.exitCode = 2;
+    } catch (error) {
+      if (config) {
+        try {
+          current = inspectRuns(config).runs.find((entry) => entry.id === id) ?? current;
+        } catch {
+          /* Retain the last verified state. */
+        }
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      output(
+        {
+          outcome: 'failed',
+          status: 'unknown',
+          ...(current && config
+            ? {
+                inspection: await inspection(current, config, !!options.detailed),
+                observation: current.orchestrator?.observation,
+                evidence: current.orchestrator?.evidence,
+              }
+            : {}),
+          ...diagnosticError(config, message, {
+            command: 'release',
+            run: id,
+            attempt: current?.orchestrator?.id,
+          }),
+          ...(options.detailed ? { error: message } : {}),
+        },
+        opts.human(),
+      );
+      process.exitCode = 2;
+    }
+  });
+  configured(
+    orchestrator
       .command('finalize-epic <number>')
       .description('Assess EPIC delivery; finalize specialists only after confirmed closure')
       .requiredOption('--repository <owner/name>', 'Target repository')
@@ -484,26 +636,147 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     orchestrator
       .command('close-epic <number>')
       .description('Record explicit human confirmation, close and archive an accepted EPIC')
-      .requiredOption('--repository <owner/name>', 'Target repository')
-      .requiredOption('--human-confirmation <text>', 'Exact explicit human closure confirmation'),
+      .option('--repository <owner/name>', 'Target repository')
+      .option('--human-confirmation <text>', 'Exact explicit human closure confirmation')
+      .option('--confirmation-file <file>', 'Human confirmation JSON file')
+      .option('--authority <attempt>', 'Active Orchestrator authority')
+      .option('--dispatch <id>', 'Accepted integrated acceptance Dispatch')
+      .option('--run <id>', 'Owning Run identity'),
   ).action(
     async (
       number: string,
-      options: Options & { repository: string; humanConfirmation: string },
+      options: Options & {
+        repository?: string;
+        humanConfirmation?: string;
+        confirmationFile?: string;
+        authority?: string;
+        dispatch?: string;
+        run?: string;
+      },
     ) => {
       try {
         const config = loadFleetConfig(options.config);
+        const num = Number(number);
+        const registry = inspectRuns(config);
+        const run = options.run
+          ? registry.runs.find((r) => r.id === options.run)
+          : registry.runs.find(
+              (r) =>
+                r.subject.number === num &&
+                (!options.repository || r.subject.repository === options.repository) &&
+                r.lifecycle !== 'completed',
+            ) ??
+            registry.runs.find(
+              (r) =>
+                r.subject.number === num &&
+                (!options.repository || r.subject.repository === options.repository),
+            );
+
+        let confirmation: { deliveryVersion: string; source: 'human'; evidence: string } | undefined;
+        if (options.confirmationFile && existsSync(options.confirmationFile)) {
+          confirmation = JSON.parse(readFileSync(options.confirmationFile, 'utf8'));
+        } else if (options.humanConfirmation) {
+          if (existsSync(options.humanConfirmation)) {
+            confirmation = JSON.parse(readFileSync(options.humanConfirmation, 'utf8'));
+          } else {
+            try {
+              const parsed = JSON.parse(options.humanConfirmation);
+              if (parsed && typeof parsed === 'object' && parsed.source) {
+                confirmation = parsed;
+              }
+            } catch {
+              /* plain text confirmation */
+            }
+            if (!confirmation) {
+              confirmation = {
+                deliveryVersion: '',
+                source: 'human',
+                evidence: options.humanConfirmation,
+              };
+            }
+          }
+        }
+        if (!confirmation) {
+          throw new Error('Expected explicit human confirmation');
+        }
+
+        if (run) {
+          const repo = options.repository ?? run.subject.repository;
+          const authority = options.authority ?? run.orchestratorId ?? run.orchestrator?.id;
+          if (!authority) throw new Error('Active Orchestrator authority required');
+          const dispatch = options.dispatch
+            ? registry.dispatches?.find((d) => d.id === options.dispatch && d.runId === run.id)
+            : registry.dispatches?.find(
+                (d) =>
+                  d.runId === run.id &&
+                  d.role === 'epic' &&
+                  d.stage === 'integrated-acceptance' &&
+                  d.lifecycle === 'accepted',
+              );
+          if (!dispatch) {
+            throw new Error(
+              'Active Orchestrator and accepted integrated Dispatch required before GitHub close',
+            );
+          }
+
+          const projectCwd = config.project;
+          const git = (...args: string[]) =>
+            execFileSync('git', args, { cwd: projectCwd, encoding: 'utf8', timeout: 10000 }).trim();
+
+          const actions: EpicClosureActions = {
+            head: () => git('rev-parse', 'HEAD'),
+            view: async () => {
+              const out = execFileSync(
+                'gh',
+                ['issue', 'view', String(num), '--repo', repo, '--json', 'state'],
+                { cwd: projectCwd, encoding: 'utf8', timeout: 30000 },
+              );
+              return JSON.parse(out);
+            },
+            close: async () => {
+              execFileSync('gh', ['issue', 'close', String(num), '--repo', repo], {
+                cwd: projectCwd,
+                encoding: 'utf8',
+                timeout: 30000,
+              });
+            },
+          };
+
+          const result = await closeStageEpic(
+            config,
+            run.id,
+            authority,
+            dispatch.id,
+            confirmation,
+            actions,
+          );
+          output(
+            {
+              closed: true,
+              run: run.id,
+              epic: num,
+              deliveryVersion: result.deliveryVersion,
+              head: result.head,
+              phase: 'post_closure_finalization',
+            },
+            opts.human(),
+          );
+          return;
+        }
+
+        if (!options.repository) throw new Error('Target repository required');
         const runner = managedRunner(
-          orchestratorForSubject(config, options.repository, Number(number)).runner,
+          orchestratorForSubject(config, options.repository, num).runner,
         );
-        const epic = inspectEpicRun(config, options.repository, Number(number));
+        const epic = inspectEpicRun(config, options.repository, num);
         if (!epic) throw new Error('Expected delivered EPIC record');
         output(
           await finishEpic(config, runner, epic, {
-            epic: Number(number),
+            epic: num,
             confirmed: true,
             source: 'human',
-            evidence: options.humanConfirmation,
+            evidence: confirmation.evidence,
+            deliveryVersion: confirmation.deliveryVersion,
           }),
           opts.human(),
         );

@@ -8,32 +8,43 @@ import { DemoControl } from '@paper-craft/core/workflow/demo-control';
 import { nativeDemoExecution } from '@paper-craft/core/workflow/demo-execution';
 /** Human controls persist version-bound consent; business gates belong to the Orchestrator. */
 export function registerDemoDelivery(demo: Command) {
-  const service = (id: string, authority?: string, dispatch?: string) => {
+  const service = (id: string) => {
     const round = new DemoRounds(
       JSON.parse(readFileSync(demo.opts().config, 'utf8')),
       nativeDemoAdapter(),
     ).status(id);
     return {
       round,
-      delivery: new DemoDelivery(round, nativeDemoDelivery(round, authority, dispatch)),
+      delivery: new DemoDelivery(round, nativeDemoDelivery(round)),
       control: new DemoControl(round, nativeDemoExecution()),
     };
   };
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
   demo
     .command('gate <round> <stage>')
-    .description('Orchestrator checks worker1/worker2 prerequisites before dispatch')
-    .action(async (id, stage) => {
+    .description('Orchestrator checks worker1/worker2 prerequisites and authorizes worker dispatch')
+    .option('--stage-name <name>', 'Worker stage name to authorize (default: implementation)')
+    .option('--brief <file>', 'Evaluated task brief file')
+    .option('--input-revision <rev>', 'Proposed task input revision')
+    .action(async (id, stage, o) => {
       if (!['worker1', 'worker2'].includes(stage)) throw new Error('Expected worker1 or worker2');
-      print(await service(id).delivery.gate(stage));
+      const brief = o.brief ? readFileSync(o.brief, 'utf8') : undefined;
+      print(
+        await service(id).delivery.gate(stage, {
+          stageName: o.stageName,
+          brief,
+          inputRevision: o.inputRevision,
+        }),
+      );
     });
   demo
     .command('closure-request <round>')
     .description('Show integrated delivery version and pause active budget for human judgment')
     .action(async (id) => {
       const s = service(id);
-      print(await s.delivery.request());
-      await s.control.checkpoint('human');
+      const facts = await s.delivery.request();
+      print(facts);
+      await s.control.humanWait(`Closure request for round ${id} delivery version ${facts.version}`);
     });
   demo
     .command('confirm <round> <version>')
@@ -42,15 +53,8 @@ export function registerDemoDelivery(demo: Command) {
     .action(async (id, version, o) => {
       const s = service(id);
       print(await s.delivery.confirm(version, o.confirm === true));
-      await s.control.checkpoint();
-    });
-  demo
-    .command('close <round>')
-    .description('Orchestrator actually closes Parent and invokes existing closure verification')
-    .requiredOption('--authority <attempt>', 'Active managed Orchestrator authority')
-    .requiredOption('--dispatch <id>', 'Accepted integrated acceptance Dispatch')
-    .action(async (id, o) => {
-      await service(id, o.authority, o.dispatch).delivery.close();
-      print({ closed: true });
+      if (s.control.status().wait === 'human') {
+        await s.control.humanResume();
+      }
     });
 }

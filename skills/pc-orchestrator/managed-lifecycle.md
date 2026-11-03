@@ -131,12 +131,21 @@ After all child deliveries are recorded, preserved and released, dispatch an `ep
 assignment at stage `integrated-acceptance` against the integrated Git HEAD. Collect
 and accept its JSON goal judgment (`satisfied`, nonempty `criteria`, `blockers`).
 
-`workflow stage close` verifies an already closed GitHub EPIC; it does not issue
-human approval. Supply the target-specific human confirmation JSON with
-`source:"human"`, evidence, and `deliveryVersion`: `closureRequest.deliveryVersion` from `stage inspect --dispatch INTEGRATED`. Obtain fresh confirmation whenever this version changes.
+Normal Workflow closes the Parent EPIC via:
+```sh
+pc workflow orchestrator close-epic <issue> --config .epic-config.json --confirmation-file human-confirmation.json
+```
+(or `workflow stage close` for stage-level execution). Normal Workflow verifies single Run authority,
+current professional acceptance, complete child deliveries, and matching human confirmation evidence before
+performing the actual GitHub close. Registration that merely observes an already-closed Parent
+is not used as a substitute for actual closure.
+Supply the target-specific human confirmation JSON with `source:"human"`, evidence, and `deliveryVersion`:
+`closureRequest.deliveryVersion` from `stage inspect --dispatch INTEGRATED`. Obtain fresh confirmation whenever this version changes.
+Uncertain close results are reconciled and retained rather than blindly replayed, and verified closure opens
+`post_closure_finalization`.
 
 ```sh
-pc workflow stage close --config .epic-config.json --run RUN --authority ATTEMPT --dispatch INTEGRATED --decision human-confirmation.json
+pc workflow orchestrator close-epic <issue> --config .epic-config.json --confirmation-file human-confirmation.json
 pc workflow stage pipeline --config .epic-config.json --run RUN --authority ATTEMPT --dispatch PIPELINE
 pc workflow stage publish --config .epic-config.json --run RUN --authority ATTEMPT --dispatch RESEARCH --decision coordinator.json
 ```
@@ -159,6 +168,25 @@ Run `pnpm exec tsx scripts/demos/workflow-demo.ts` for the isolated seven-role s
 regression. It retains the temporary evidence directory and makes no model or
 GitHub calls. This proves controlled CLI lifecycle behavior, not native execution
 for every role or scientific validity.
+
+## Safe Stop and Completed-Run Release
+
+An operator or automated supervisor may halt an active Run or release a completed Run using public workflow services and CLI:
+
+```bash
+pc workflow orchestrator stop <run-id> --config <config>
+pc workflow orchestrator release <run-id> --config <config>
+```
+
+- **Stop (`stopRun` / `pc workflow orchestrator stop <run>`)**:
+  Revokes further scheduling authority and pending activation before requesting cancellation of owned executions.
+  Accepted deliverables, receipts, acknowledgements and retained business evidence are never rewritten or erased.
+  Cancellation acknowledgements alone do not establish release. Termination of every owned current/historical attempt and background startup helper must be independently verified; unknown or failed termination remains visible as a blocker and prevents resource reuse.
+- **Completed-Run release (`releaseRun` / `pc workflow orchestrator release <run>`)**:
+  A distinct completed-Run operation that terminates remaining executions and helpers without recording user interruption or changing completed business success into failure.
+  Releasing checkouts and resources requires satisfying normal Workflow preservation and cleanup prerequisites; neither stop nor completed release may silently bypass them.
+- **Idempotence and authority**:
+  Repeated stop or release requests reconcile existing owned state without launching replacements, deleting scenes or claiming another Run's resources. The Run retains its single active managed Orchestrator authority, fixed provider and configured physical ownership boundaries; Fleet does not become a scheduling agent.
 
 ## Opt-in native scheduler demonstration
 

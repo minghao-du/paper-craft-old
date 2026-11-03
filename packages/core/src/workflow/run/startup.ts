@@ -1,4 +1,6 @@
 /** Durable startup reconciliation; provider executions and business acceptance remain separate. */
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { FleetConfig } from '../fleet/fleet-config.js';
 import {
   inspectOrchestrator,
@@ -16,6 +18,7 @@ export {
   startupDirectory,
   startupRecoveryStatus,
   ensureStartupRecovery,
+  stopStartupRecovery,
 } from '../runtime/startup-supervisor.js';
 
 function attempts(registry: RunRegistry, runId: string): ManagedAttempt[] {
@@ -62,9 +65,32 @@ export async function reconcileStartup(
   let waiting = false;
   const snapshot = inspectRuns(config);
   const owner = snapshot.runs.find((r) => r.id === runId);
-  if (!owner || owner.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
+  if (!owner) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
+  if (owner.provider !== runner.name)
+    throw new Error(
+      `Run provider mismatch: expected provider ${owner.provider}, but received ${runner.name}`,
+    );
   if (owner.lifecycle === 'completed') return false;
   verifyRunRequirements(owner);
+  if (owner.constraints?.kind === 'demo') {
+    const roundRoot = dirname(config.project);
+    const controlFile = join(roundRoot, 'control.json');
+    if (existsSync(controlFile)) {
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      if (control.stopped || control.activeMs >= control.budgetMs) {
+        updateRunRegistry(config, (registry) => {
+          for (const a of attempts(registry, runId)) {
+            a.startupStopped = true;
+            a.status = 'unknown';
+            a.error = 'Demo round budget expired or stopped during startup; occupancy retained';
+          }
+          const run = registry.runs.find((r) => r.id === runId);
+          if (run) run.lifecycle = 'blocked';
+        });
+        return false;
+      }
+    }
+  }
   if (owner.launchStarted === true && !owner.orchestrator) {
     const durable = inspectOrchestrator(config, runId);
     if (!durable || durable.run !== runId || durable.id !== owner.orchestratorId) return true;

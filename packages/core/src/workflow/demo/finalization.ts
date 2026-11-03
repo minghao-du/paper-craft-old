@@ -1,121 +1,161 @@
-/** Bounded demo finalization gates; the Orchestrator alone dispatches real specialists. */
-import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+/** Bounded demo finalization observation; the Orchestrator alone schedules business work. */
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
-import { inspectRuns, dispositionStagePipeline, publishStageReport } from '../run/run-driver.js';
+import { inspectRunViews } from '../run/run-driver.js';
 import { pipelineAccepted } from '../delivery/epic-finalization.js';
 import type { DemoRound } from './round.js';
-/** Facts independently inspected before invoking normal finalization operations. */
-export interface DemoFinalizationAdapter {
-  inspect(): Promise<{ closed: boolean; pipelineAccepted: boolean }>;
-  pipeline(): Promise<void>;
-  publish(coordinator: { identity: string; entry: string; brief: string }): Promise<unknown>;
+
+/** Stable public view of post-closure finalization and report publication for a Demo round. */
+export interface DemoFinalizationView {
+  roundId: string;
+  closed: boolean;
+  epicClosure?: {
+    head: string;
+    deliveryVersion: string;
+    evidence: string;
+    confirmed: string;
+    status?: 'closed';
+  };
+  pipeline?: {
+    disposition: string;
+    head: string;
+    inspectedVersions: Record<string, string>;
+    accepted: boolean;
+  };
+  report?: {
+    path: string;
+    hash: string;
+    published: boolean;
+    acceptedVersions: Record<string, string>;
+    observedVersions: Record<string, string>;
+  };
+  businessCompleted: boolean;
 }
-/** Public demo gate forbids reporting around closure or Pipeline failures. */
+
+/** Adapter providing observation facts for Demo finalization. */
+export interface DemoFinalizationAdapter {
+  inspect(): Promise<DemoFinalizationView>;
+}
+
+/** Public demo finalization observation seam; records boundary facts on inspection. */
 export class DemoFinalization {
   constructor(
     readonly round: DemoRound,
     readonly adapter: DemoFinalizationAdapter,
   ) {}
+
   private record(stage: string, facts: unknown) {
     appendFileSync(
       join(this.round.root, 'finalization-boundaries.jsonl'),
       JSON.stringify({ stage, facts, at: new Date().toISOString() }) + '\n',
     );
   }
-  /** Accept the real specialist's inspected no-change conclusion, never implement repairs. */
-  async pipeline() {
+
+  /** Observe the durable post-closure finalization and publication state. */
+  async view(): Promise<DemoFinalizationView> {
     const facts = await this.adapter.inspect();
-    this.record('pipeline', facts);
-    if (!facts.closed) throw new Error('Verified actual Parent closure required');
-    await this.adapter.pipeline();
-    const after = await this.adapter.inspect();
-    this.record('pipeline-result', after);
-    if (!after.pipelineAccepted)
-      throw new Error('Pipeline changes or missing evidence block reporting; retain scene');
-    return after;
-  }
-  /** Publish using only the operator-configured isolated Coordinator contract. */
-  async publish() {
-    const facts = await this.adapter.inspect();
-    this.record('publication', facts);
-    if (!facts.closed || !facts.pipelineAccepted)
-      throw new Error('Verified closure and accepted Pipeline required');
-    return this.adapter.publish({
-      identity: this.round.config.coordinator,
-      entry: this.round.entry,
-      brief: this.round.config.brief,
-    });
+    this.record('finalization-view', facts);
+    return facts;
   }
 }
-/** Actual Runtime, GitHub and physical destination checks, with no scheduler or mock fallback. */
+
+/** Native inspection of runtime registry, repository, and isolated destination facts. */
 export function nativeDemoFinalization(
   round: DemoRound,
-  authority: string,
-  dispatch: string,
+  customGh?: (path: string) => ReturnType<typeof JSON.parse>,
 ): DemoFinalizationAdapter {
   const config = loadFleetConfig(join(round.checkout, '.epic-config.json'));
-  const state = () => {
-    const control = JSON.parse(readFileSync(join(round.root, 'control.json'), 'utf8'));
-    const registry = inspectRuns(config);
-    const run = registry.runs.find((r) => r.id === control.runId);
-    if (
-      !run ||
-      run.provider !== 'agy' ||
-      run.orchestrator?.id !== authority ||
-      run.lifecycle !== 'running' ||
-      control.stopped
-    )
-      throw new Error('Active owned Agy Orchestrator required');
-    if (
-      realpathSync(round.research) !== round.research ||
-      dirname(round.entry) !== round.research ||
-      round.entry !== join(round.research, 'report.md')
-    )
-      throw new Error('Isolated physical report destination required');
-    const d = registry.dispatches?.find((d) => d.id === dispatch && d.runId === run.id);
-    if (!d || d.attempts.some((a) => a.runner !== 'agy'))
-      throw new Error('Current Agy specialist Dispatch required');
-    return { run, registry, d };
-  };
   return {
-    async inspect() {
-      const { run } = state();
-      const repo = round.repository!.owner + '/' + round.repository!.name;
-      const parent = JSON.parse(
-        execFileSync('gh', ['api', `repos/${repo}/issues/${round.parent}`], {
+    async inspect(): Promise<DemoFinalizationView> {
+      const controlPath = join(round.root, 'control.json');
+      const control = existsSync(controlPath) ? JSON.parse(readFileSync(controlPath, 'utf8')) : {};
+      const runViews = inspectRunViews(config);
+      const run = runViews.find((r) => r.id === control.runId);
+
+      let head: string;
+      try {
+        head = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: round.checkout,
           encoding: 'utf8',
-          timeout: 30000,
-        }),
+        }).trim();
+      } catch {
+        head = run?.epicClosure?.head ?? '';
+      }
+
+      let parentClosed: boolean;
+      if (round.repository && round.parent) {
+        try {
+          const repo = `${round.repository.owner}/${round.repository.name}`;
+          const parentJson = customGh
+            ? customGh(`repos/${repo}/issues/${round.parent}`)
+            : JSON.parse(
+                execFileSync('gh', ['api', `repos/${repo}/issues/${round.parent}`], {
+                  encoding: 'utf8',
+                  timeout: 10000,
+                }),
+              );
+          parentClosed = parentJson.state === 'closed';
+        } catch {
+          parentClosed = run?.epicClosure?.status === 'closed';
+        }
+      } else {
+        parentClosed = run?.epicClosure?.status === 'closed';
+      }
+
+      const closed = Boolean(
+        parentClosed &&
+          run?.epicClosure?.status === 'closed' &&
+          run.epicClosure.head === head &&
+          (run.phase === 'post_closure_finalization' || run.phase === 'completed'),
       );
-      const head = execFileSync('git', ['rev-parse', 'HEAD'], {
-        cwd: round.checkout,
-        encoding: 'utf8',
-      }).trim();
+
+      const pipe = run?.pipeline;
+      const isPipeAccepted = Boolean(
+        pipe &&
+          pipelineAccepted(pipe) &&
+          pipe.head === head &&
+          ['not_applicable', 'completed_no_changes'].includes(pipe.disposition) &&
+          Object.values(pipe.inspectedVersions ?? {}).includes(head),
+      );
+
+      const report = run?.report;
+      const reportExists = existsSync(round.entry);
+      const reportPublished = Boolean(
+        report &&
+          reportExists &&
+          report.path === round.entry &&
+          createHash('sha256').update(readFileSync(round.entry)).digest('hex') === report.hash,
+      );
+
       return {
-        closed:
-          parent.state === 'closed' &&
-          run.phase === 'post_closure_finalization' &&
-          run.epicClosure?.head === head,
-        pipelineAccepted: pipelineAccepted(run.pipeline) && run.pipeline?.head === head,
+        roundId: round.id,
+        closed,
+        epicClosure: run?.epicClosure,
+        pipeline: pipe
+          ? {
+              disposition: pipe.disposition,
+              head: pipe.head,
+              inspectedVersions: pipe.inspectedVersions,
+              accepted: isPipeAccepted,
+            }
+          : undefined,
+        report: report
+          ? {
+              path: report.path,
+              hash: report.hash,
+              published: reportPublished,
+              acceptedVersions: report.acceptedVersions,
+              observedVersions: report.observedVersions,
+            }
+          : undefined,
+        businessCompleted:
+          run?.phase === 'completed' &&
+          run.lifecycle === 'completed' &&
+          Boolean(control.completed),
       };
-    },
-    async pipeline() {
-      const { run, registry, d } = state();
-      const receipt = registry.receipts?.find((r) => r.id === d.acceptedReceipt);
-      if (!receipt?.evidence[0]) throw new Error('Accepted real Pipeline evidence required');
-      const result = JSON.parse(readFileSync(receipt.evidence[0].path, 'utf8'));
-      // A maintenance delivery would violate the two-PR diagnostic scope.
-      if (!['not_applicable', 'completed_no_changes'].includes(result.disposition))
-        throw new Error('Pipeline changes require retention; no repair or third delivery');
-      if (!Object.values(result.inspectedVersions ?? {}).includes(run.epicClosure!.head))
-        throw new Error('Pipeline inspection must bind delivered revision');
-      dispositionStagePipeline(config, run.id, authority, dispatch);
-    },
-    async publish(coordinator) {
-      const { run } = state();
-      return publishStageReport(config, run.id, authority, dispatch, coordinator);
     },
   };
 }

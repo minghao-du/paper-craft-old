@@ -67,6 +67,49 @@ export interface DemoRound {
   initialRevision?: string;
   parent?: number;
   error?: string;
+  demoConfigFile?: string;
+  workflowConfigFile?: string;
+  requirements?: string;
+}
+
+/** Provisioning result distinguishing demo config, workflow config, and immutable requirements. */
+export interface DemoProvisionResult {
+  round: DemoRound;
+  demoConfig: DemoConfig;
+  demoConfigFile: string;
+  workflowConfig: Record<string, unknown>;
+  workflowConfigFile: string;
+  requirements: string;
+}
+
+/** Build immutable Orchestrator Requirements with round, parent, repository, and diagnostic restrictions. */
+export function buildDemoRequirements(round: DemoRound): string {
+  const demoConfigPath = join(round.root, 'demo-config.json');
+  const workflowConfigPath = join(round.checkout, '.epic-config.json');
+  const repository = round.repository ? `${round.repository.owner}/${round.repository.name}` : '';
+  return `Diagnostic demo round ${round.id}. Parent: ${repository}#${round.parent}. Demo configuration: ${demoConfigPath}. Workflow configuration: ${workflowConfigPath}.
+Read skills/pc-demo/SKILL.md from the paper-craft installation.
+Use pc demo --config ${demoConfigPath} gate ${round.id} worker1 before Worker1 and gate ${round.id} worker2 before Worker2 dispatch; failed gate stops the round.
+Worker dispatch without matching gate authorization is strictly denied.
+Planning may proceed under common controls.
+Exactly two native child Issues, second natively blocked by first.
+Workers deliver Python stdlib generator+test+TSV then reader+changed-input test+JSON.
+Complete Quality, merge, Final Records, preservation, cleanup and verified handover for each.
+Run independent boundary verification.
+After accepted integrated acceptance invoke closure-request ${round.id}, wait without polling for explicit human confirm, then close the parent through normal Workflow pc workflow orchestrator close-epic ${round.parent} with confirmed human consent.
+Never invent consent.
+After verified actual closure dispatch real Agy pipeline-audit for bounded applicability and structural inspection.
+Require inspectedVersions to include closure head and actual inspection evidence even for not_applicable/completed_no_changes.
+Use normal Workflow pc workflow orchestrator stage pipeline --config ${workflowConfigPath} --run <run> --authority <authority> --dispatch <id>. changes_needed or defects stop and retain; never repair, create extra Issues or a third PR.
+Then dispatch real Agy research-state to write a short report artifact with all nine Research-State sections, actual commands/results, issue/PR references, accepted versus observed versions, values and limitations.
+Use normal Workflow pc workflow orchestrator stage publish --config ${workflowConfigPath} --run <run> --authority <authority> --dispatch <id> --decision <coordinator.json>; it supplies operator Coordinator identity, isolated entry and confirmed brief to the existing transactional publication contract.
+Do not claim completion before verified provenance.
+Human report and stop remain available throughout specialists.
+Agy only.
+Exactly two native dependent child tasks and two PRs.
+Never retry failures or repair defects.
+Preserve every failed stage.
+Coordinator ${round.config.coordinator}; report entry ${round.entry}. ${round.config.brief}`;
 }
 /** Public round-control seam. This slice never launches an agent or Run. */
 export class DemoRounds {
@@ -136,7 +179,7 @@ export class DemoRounds {
     return round;
   }
   /** Consent authorizes this fresh round only; partial failures remain inspectable. */
-  async provision(confirmed: boolean): Promise<DemoRound> {
+  async provision(confirmed: boolean): Promise<DemoRound & DemoProvisionResult> {
     if (!confirmed) throw new Error('Explicit confirmation required after reviewing preflight');
     await this.preflight();
     const id = randomUUID();
@@ -191,16 +234,25 @@ export class DemoRounds {
         round.checkout,
         demoBaseline,
       );
-      writeFileSync(
-        join(round.checkout, '.epic-config.json'),
-        JSON.stringify({
-          main_checkout: round.checkout,
-          clone_root: round.worktrees,
-          clone_names: [],
-          local_worktrees: true,
-          base_branch: 'main',
-        }),
-      );
+      const demoConfigFile = join(round.root, 'demo-config.json');
+      writeFileSync(demoConfigFile, JSON.stringify(this.config, null, 2));
+      round.demoConfigFile = demoConfigFile;
+
+      const workflowConfigFile = join(round.checkout, '.epic-config.json');
+      const workflowConfig = {
+        main_checkout: round.checkout,
+        clone_root: round.worktrees,
+        clone_names: [],
+        local_worktrees: true,
+        base_branch: 'main',
+        demo: {
+          round: round.id,
+          config: demoConfigFile,
+        },
+      };
+      writeFileSync(workflowConfigFile, JSON.stringify(workflowConfig, null, 2));
+      round.workflowConfigFile = workflowConfigFile;
+
       writeFileSync(join(round.research, 'brief.md'), this.config.brief);
       save();
       round.parent = await this.adapter.createParent(
@@ -208,9 +260,19 @@ export class DemoRounds {
         `[EPIC] Independent Agy demo ${id}`,
         demoBaseline['README.md'],
       );
+      const requirements = buildDemoRequirements(round);
+      writeFileSync(join(round.root, 'requirements.txt'), requirements);
+      round.requirements = requirements;
       round.phase = 'provisioned';
       save();
-      return round;
+      return Object.assign(round, {
+        round,
+        demoConfig: this.config,
+        demoConfigFile,
+        workflowConfig,
+        workflowConfigFile,
+        requirements,
+      });
     } catch (error) {
       round.phase = 'failed';
       round.error = error instanceof Error ? error.message : String(error);

@@ -40,7 +40,7 @@ pc workflow orchestrator start 79 --type issue --provider claude --config /absol
 pc workflow orchestrator status --config /absolute/path/.epic-config.json
 ```
 
-Supply additional Requirements with `--requirements <text>` or `--requirements-file <file>` (UTF-8), never both. File contents are captured at intake, so later work does not depend on the source file. Requirements become immutable Run context inherited by every role, retry and replacement; child-specific assignments add scope without replacing those constraints. Repeated start may omit Requirements to reuse them or supply identical text; different text rejects. Retain the returned Run identity.
+Supply additional Requirements with `--requirements <text>` or `--requirements-file <file>` (UTF-8), never both. File contents are captured at intake, so later work does not depend on the source file. Requirements become immutable Run context inherited by every role, retry and replacement; child-specific assignments add scope without replacing those constraints. Repeated start may omit Requirements to reuse them or supply identical text; different text rejects. For Demo rounds, pass `--demo-round <id>` and `--demo-config <file>` (or bind via the generated workflow config) to apply minimal immutable demo run constraints. Retain the returned Run identity.
 For agy, follow independent startup in [agy procedure](agy-interactive.md). Codex and Claude retain controlled startup.
 
 The startup, provider and ownership gates in the execution contract determine whether dispatch is available.
@@ -93,7 +93,12 @@ Use [managed recovery](managed-lifecycle.md) for receipt reconciliation, bounded
 
 ```bash
 pc workflow orchestrator recover <run-id> --config /absolute/path/.epic-config.json
+pc workflow orchestrator stop <run-id> --config /absolute/path/.epic-config.json
+pc workflow orchestrator release <run-id> --config /absolute/path/.epic-config.json
 ```
+
+Use `stop` to revoke further scheduling authority, cancel owned executions and helpers, and verify termination without altering completed business deliverables.
+Use `release` on a completed Run to terminate remaining executions/helpers and release resources through verified preservation and cleanup prerequisites.
 
 **Done:** Every reported result has an acceptance/rework disposition, and unresolved execution or ownership uncertainty remains a recorded blocker to dependent work.
 
