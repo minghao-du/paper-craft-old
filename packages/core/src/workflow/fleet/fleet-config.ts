@@ -21,6 +21,10 @@ export interface FleetConfig {
   slots: string[];
   worktrees: boolean;
   base: string;
+  demo?: {
+    round: string;
+    config?: string;
+  };
 }
 
 /** Resolve a directory physically; missing or inaccessible directories are errors. */
@@ -50,7 +54,8 @@ export function within(root: string, path: string): boolean {
 /** Load the authoritative config; refuse frozen copies in worker checkouts. */
 export function loadFleetConfig(path = '.epic-config.json'): FleetConfig {
   const file = realpathSync(expandTilde(path));
-  const config = schema.parse(JSON.parse(readFileSync(file, 'utf8')));
+  const raw = JSON.parse(readFileSync(file, 'utf8'));
+  const config = schema.parse(raw);
   const parent = dirname(file);
   const project = config.main_checkout
     ? directory(resolve(parent, expandTilde(config.main_checkout)))
@@ -68,6 +73,7 @@ export function loadFleetConfig(path = '.epic-config.json'): FleetConfig {
     slots: config.clone_names,
     worktrees: config.local_worktrees,
     base: config.base_branch,
+    ...(raw.demo ? { demo: raw.demo } : {}),
   };
 }
 

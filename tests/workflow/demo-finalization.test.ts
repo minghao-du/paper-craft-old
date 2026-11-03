@@ -1,41 +1,58 @@
 import { test, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DemoFinalization } from '../../packages/core/src/workflow/demo/finalization.js';
+import { DemoFinalization, type DemoFinalizationView } from '../../packages/core/src/workflow/demo/finalization.js';
 import type { DemoRound } from '../../packages/core/src/workflow/demo/round.js';
 
-test('demo publication blocks unclosed or changes-needed delivery and confines coordinator destination', async () => {
+test('demo finalization provides stable public view and records boundary', async () => {
   const root = mkdtempSync(join(tmpdir(), 'demo-finalization-'));
   const round = {
+    id: 'round-1',
     root,
     entry: join(root, 'report.md'),
     config: { coordinator: 'operator', brief: 'bounded report' },
   } as DemoRound;
-  let closed = false,
-    accepted = false,
-    published = 0;
+
+  const mockView: DemoFinalizationView = {
+    roundId: 'round-1',
+    closed: true,
+    epicClosure: {
+      head: '1234',
+      deliveryVersion: 'dv-1',
+      evidence: 'evidence',
+      confirmed: 'consent',
+      status: 'closed',
+    },
+    pipeline: {
+      disposition: 'completed_no_changes',
+      head: '1234',
+      inspectedVersions: { repository: '1234' },
+      accepted: true,
+    },
+    report: {
+      path: round.entry,
+      hash: 'hash-abc',
+      published: true,
+      acceptedVersions: { integrated: '1234' },
+      observedVersions: { integrated: '1234' },
+    },
+    businessCompleted: true,
+  };
+
   const adapter = {
     async inspect() {
-      return { closed, pipelineAccepted: accepted };
-    },
-    async pipeline() {
-      accepted = true;
-    },
-    async publish() {
-      published++;
-      return { path: round.entry };
+      return mockView;
     },
   };
+
   try {
     const service = new DemoFinalization(round, adapter);
-    await expect(service.pipeline()).rejects.toThrow('closure');
-    closed = true;
-    await expect(service.publish()).rejects.toThrow('Pipeline');
-    expect(published).toBe(0);
-    await service.pipeline();
-    expect(await service.publish()).toEqual({ path: round.entry });
-    expect(published).toBe(1);
+    const view = await service.view();
+    expect(view).toEqual(mockView);
+
+    const log = readFileSync(join(root, 'finalization-boundaries.jsonl'), 'utf8');
+    expect(log).toContain('finalization-view');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

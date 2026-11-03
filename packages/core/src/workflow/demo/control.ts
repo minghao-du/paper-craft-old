@@ -15,6 +15,8 @@ export interface DemoControlState {
   started?: number;
   stopped: boolean;
   releasing?: boolean;
+  completed?: boolean;
+  stoppedReason?: string;
   execution: 'unknown' | 'running' | 'released';
   budgetMs: number;
   activeMs: number;
@@ -138,7 +140,7 @@ export class DemoControl {
   /** Account active time; caller must use verified human/permission boundaries. */
   async checkpoint(wait?: 'human' | 'permission', now = Date.now(), preserveWait = false) {
     const s = this.mutate((s) => {
-      if (!s.wait && s.started) s.activeMs += Math.max(0, now - s.tick);
+      if (!s.wait && !s.completed && s.started) s.activeMs += Math.max(0, now - s.tick);
       s.tick = now;
       if (!preserveWait) s.wait = wait;
     });
