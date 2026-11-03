@@ -46,6 +46,11 @@ Commands:
                                     concise outcome and retained occupancy
   recover-all [options]             Reconcile each incomplete Run; report
                                     unowned work as blocked
+  stop [options] <run>              Revoke scheduling and terminate owned
+                                    executions; retain completed business
+                                    evidence
+  release [options] <run>           Terminate remaining executions and release
+                                    resources for a completed Run
   finalize-epic [options] <number>  Assess EPIC delivery; finalize specialists
                                     only after confirmed closure
   close-epic [options] <number>     Record explicit human confirmation, close
@@ -97,6 +102,20 @@ Options:
 "
 `;
 
+exports[`publishes orchestrator release help 1`] = `
+"Usage: pc workflow orchestrator release [options] <run>
+
+Terminate remaining executions and release resources for a completed Run
+
+Options:
+  --detailed       Return the complete current structured result; logs remain
+                   referenced
+  --config <file>  Authoritative Fleet configuration (default:
+                   ".epic-config.json")
+  -h, --help       display help for command
+"
+`;
+
 exports[`publishes orchestrator start help 1`] = `
 "Usage: pc workflow orchestrator start [options] <issue>
 
@@ -124,6 +143,21 @@ exports[`publishes orchestrator status help 1`] = `
 "Usage: pc workflow orchestrator status [options]
 
 Read concise current Runs, pending work and resource ownership
+
+Options:
+  --detailed       Return the complete current structured result; logs remain
+                   referenced
+  --config <file>  Authoritative Fleet configuration (default:
+                   ".epic-config.json")
+  -h, --help       display help for command
+"
+`;
+
+exports[`publishes orchestrator stop help 1`] = `
+"Usage: pc workflow orchestrator stop [options] <run>
+
+Revoke scheduling and terminate owned executions; retain completed business
+evidence
 
 Options:
   --detailed       Return the complete current structured result; logs remain

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { writeResearchReport } from '../delivery/research-report.js';
-import { ensureStartupRecovery, reconcileStartup } from './startup.js';
+import { ensureStartupRecovery, reconcileStartup, stopStartupRecovery, startupRecoveryStatus } from './startup.js';
 import { assertStageRole, assertWorkflowRole } from '../runtime/workflow-role.js';
 import { initializationInstructions, verifyRoleInitialization } from './role-initialization.js';
 /** Run intake and authoritative Fleet relationships; managed execution belongs to one Run. */
@@ -23,10 +23,13 @@ import {
   inspectOrchestrator,
   requireInteractive,
   cancelAttempt,
+  reconcileAttempt,
+  inspectAttemptControl,
   managedRunner,
   startOrchestrator,
   type ManagedAttempt,
   type RunnerAdapter,
+  type AttemptControl,
 } from '../runtime/runtime.js';
 import { pipelineAccepted, type PipelineDisposition } from '../delivery/epic-finalization.js';
 import type { IssueInput } from '../delivery/issue-driver.js';
@@ -1661,3 +1664,503 @@ function verifyRetainedStageEvidence(receipt: StageReceipt) {
   )
     throw new Error('Accepted stage evidence changed');
 }
+
+/** Stable, narrow public view of Run identity, attempts, helpers, execution state, and resource ownership. */
+export interface WorkflowRunView {
+  id: string;
+  provider: string;
+  lifecycle: WorkflowRun['lifecycle'];
+  phase?: WorkflowRun['phase'];
+  subject: RunSubject;
+  orchestratorId: string;
+  orchestrator?: ManagedAttempt;
+  priorOrchestrators?: ManagedAttempt[];
+  attempts: ManagedAttempt[];
+  dispatches: StageDispatch[];
+  deliveries: NonNullable<RunRegistry['deliveries']>;
+  pullRequests: NonNullable<RunRegistry['pullRequests']>;
+  resources: NonNullable<RunRegistry['resources']>;
+  helper: {
+    active: boolean;
+    pending?: boolean;
+    evidenceDirectory?: string;
+    error?: string;
+  };
+  reconciliation?: WorkflowRun['reconciliation'];
+  execution: 'running' | 'reserved' | 'blocked' | 'completed' | 'unknown' | 'terminated';
+  terminated: boolean;
+  released: boolean;
+}
+
+/** Result of a verified stopRun operation. */
+export interface StopRunResult {
+  runId: string;
+  lifecycle: WorkflowRun['lifecycle'];
+  terminated: boolean;
+  released: boolean;
+  attempts: {
+    id: string;
+    role: ManagedAttempt['role'];
+    status: ManagedAttempt['status'];
+    terminated: boolean;
+    cancellation?: AttemptControl['cancellation'];
+    error?: string;
+  }[];
+  helper: {
+    active: boolean;
+    pending?: boolean;
+    stopped: boolean;
+  };
+  resources: { path: string; runId: string }[];
+  blockers: string[];
+}
+
+/** Result of a completed releaseRun operation. */
+export interface ReleaseRunResult {
+  runId: string;
+  lifecycle: WorkflowRun['lifecycle'];
+  terminated: boolean;
+  released: boolean;
+  attempts: {
+    id: string;
+    role: ManagedAttempt['role'];
+    status: ManagedAttempt['status'];
+    terminated: boolean;
+    cancellation?: AttemptControl['cancellation'];
+    error?: string;
+  }[];
+  helper: {
+    active: boolean;
+    pending?: boolean;
+    stopped: boolean;
+  };
+  resources: { path: string; runId: string }[];
+  blockers: string[];
+}
+
+/** Read a stable, narrow public view of a single Run and its owned resources without exposing registry serialization. */
+export function inspectRun(config: FleetConfig, runId: string): WorkflowRunView {
+  if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
+  const registry = inspectRuns(config);
+  const run = registry.runs.find((r) => r.id === runId);
+  if (!run) throw new Error('Unknown Run');
+
+  const dispatches = (registry.dispatches ?? []).filter((d) => d.runId === run.id);
+  const attempts = [
+    ...(run.priorOrchestrators ?? []),
+    ...(run.orchestrator ? [run.orchestrator] : []),
+    ...dispatches.flatMap((d) => d.attempts),
+  ];
+  const resources = (registry.resources ?? []).filter((r) => r.runId === run.id);
+  const deliveries = (registry.deliveries ?? []).filter((d) => d.runId === run.id);
+  const pullRequests = (registry.pullRequests ?? []).filter((p) => p.runId === run.id);
+  const helper = startupRecoveryStatus(config, run.id, registry);
+
+  const isAttemptTerminated = (a: ManagedAttempt): boolean => {
+    const control = inspectAttemptControl(a);
+    return (
+      control.execution?.status === 'terminated' ||
+      (a.startupStopped === true && a.status !== 'running' && !a.address)
+    );
+  };
+
+  const terminated = attempts.length > 0 && attempts.every(isAttemptTerminated);
+  const released =
+    (attempts.length === 0 || attempts.every(isAttemptTerminated)) &&
+    !helper.active &&
+    resources.length === 0;
+
+  let execution: WorkflowRunView['execution'];
+  if (
+    attempts.some(
+      (a) => a.status === 'running' || inspectAttemptControl(a).execution?.status === 'running',
+    )
+  ) {
+    execution = 'running';
+  } else if (
+    attempts.some(
+      (a) => a.status === 'unknown' || inspectAttemptControl(a).execution?.status === 'unknown',
+    )
+  ) {
+    execution = 'unknown';
+  } else if (terminated) {
+    execution = 'terminated';
+  } else if (run.lifecycle === 'completed') {
+    execution = 'completed';
+  } else {
+    execution = run.lifecycle;
+  }
+
+  return {
+    id: run.id,
+    provider: run.provider,
+    lifecycle: run.lifecycle,
+    phase: run.phase,
+    subject: run.subject,
+    orchestratorId: run.orchestratorId,
+    orchestrator: run.orchestrator,
+    priorOrchestrators: run.priorOrchestrators,
+    attempts,
+    dispatches,
+    deliveries,
+    pullRequests,
+    resources,
+    helper,
+    reconciliation: run.reconciliation,
+    execution,
+    terminated,
+    released,
+  };
+}
+
+/** Read narrow public views of all registered Runs. */
+export function inspectRunViews(config: FleetConfig): WorkflowRunView[] {
+  const registry = inspectRuns(config);
+  return registry.runs.map((r) => inspectRun(config, r.id));
+}
+
+/** Revoke scheduling and activation before terminating owned executions and helpers, preserving business records. */
+export async function stopRun(
+  config: FleetConfig,
+  runnerOrId?: RunnerAdapter | string,
+  runIdOrOptions?:
+    | string
+    | {
+        stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
+        cleanup?: () => void;
+      },
+  options?: {
+    stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
+    cleanup?: () => void;
+  },
+): Promise<StopRunResult> {
+  const runId = typeof runnerOrId === 'string' ? runnerOrId : (runIdOrOptions as string);
+  const passedRunner = typeof runnerOrId === 'string' ? undefined : runnerOrId;
+  const opts = (typeof runIdOrOptions === 'object' ? runIdOrOptions : options) ?? {};
+
+  if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
+
+  const snapshot = inspectRuns(config);
+  const targetRun = snapshot.runs.find((r) => r.id === runId);
+  if (!targetRun) throw new Error('Unknown Run');
+
+  const adapter = passedRunner ?? managedRunner(targetRun.provider);
+  if (adapter.name !== targetRun.provider) throw new Error('Run provider mismatch');
+
+  // Revoke further scheduling and activation before requesting cancellation
+  updateRunRegistry(config, (registry) => {
+    const current = registry.runs.find((r) => r.id === runId);
+    if (!current) throw new Error('Unknown Run');
+    if (current.lifecycle !== 'completed') {
+      current.lifecycle = 'blocked';
+    }
+    if (current.orchestrator && current.orchestrator.status !== 'running') {
+      current.orchestrator.startupStopped = true;
+    }
+    for (const dispatch of registry.dispatches?.filter((d) => d.runId === runId) ?? []) {
+      for (const attempt of dispatch.attempts) {
+        if (attempt.status !== 'running') {
+          attempt.startupStopped = true;
+        }
+      }
+    }
+  });
+
+  // Stop startup helper
+  const helperStopped = await stopStartupRecovery(config, runId);
+  const helperStatus = startupRecoveryStatus(config, runId);
+  const blockers: string[] = [];
+  if (helperStatus.active) {
+    blockers.push('Startup helper termination unverified; helper remains active');
+  }
+
+  const hasTermination = (
+    r: unknown,
+  ): r is { termination: (a: ManagedAttempt) => Promise<boolean> } =>
+    typeof (r as { termination?: unknown })?.termination === 'function';
+
+  const isStopped =
+    opts.stopped ??
+    (adapter.stopped
+      ? (a: ManagedAttempt) => adapter.stopped!(a)
+      : hasTermination(adapter)
+        ? (a: ManagedAttempt) => adapter.termination(a)
+        : async () => false);
+
+  const currentSnapshot = inspectRuns(config);
+  const currentRun = currentSnapshot.runs.find((r) => r.id === runId)!;
+  const attempts = [
+    ...(currentRun.priorOrchestrators ?? []),
+    ...(currentRun.orchestrator ? [currentRun.orchestrator] : []),
+    ...(currentSnapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+  ];
+
+  const attemptResults: StopRunResult['attempts'] = [];
+
+  for (const attempt of attempts) {
+    let stopped = await isStopped(attempt);
+    let cancellationControl: AttemptControl['cancellation'] | undefined;
+    let error: string | undefined;
+
+    if (!stopped) {
+      try {
+        const control = await cancelAttempt(attempt, adapter);
+        cancellationControl = control.cancellation;
+      } catch (err) {
+        error = String(err);
+      }
+      stopped = await isStopped(attempt);
+    }
+
+    if (stopped) {
+      await reconcileAttempt(attempt, { termination: isStopped });
+      updateRunRegistry(config, (registry) => {
+        const r = registry.runs.find((entry) => entry.id === runId);
+        if (!r) return;
+        const all = [
+          ...(r.priorOrchestrators ?? []),
+          ...(r.orchestrator ? [r.orchestrator] : []),
+          ...(registry.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+        ];
+        const match = all.find((a) => a.id === attempt.id);
+        if (match) {
+          match.status = 'unknown';
+          match.startupStopped = true;
+        }
+      });
+    } else {
+      const ctrl = inspectAttemptControl(attempt);
+      ctrl.execution = { status: 'unknown' };
+      writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(ctrl));
+      blockers.push(
+        `Attempt ${attempt.id} (${attempt.role}) termination unverified; occupancy remains reserved`,
+      );
+    }
+
+    attemptResults.push({
+      id: attempt.id,
+      role: attempt.role,
+      status: stopped ? 'unknown' : attempt.status,
+      terminated: stopped,
+      cancellation: cancellationControl,
+      error,
+    });
+  }
+
+  // Release checkouts only if explicit cleanup callback is provided
+  if (opts.cleanup) {
+    const reg = inspectRuns(config);
+    const owned = (reg.resources ?? []).filter((r) => r.runId === runId);
+    for (const res of owned) {
+      try {
+        await releaseRunCheckout(config, runId, res.path, isStopped, opts.cleanup);
+      } catch (err) {
+        blockers.push(`Resource ${res.path} release failed: ${String(err)}`);
+      }
+    }
+  }
+
+  const finalReg = inspectRuns(config);
+  const finalRun = finalReg.runs.find((r) => r.id === runId)!;
+  const finalResources = (finalReg.resources ?? []).filter((r) => r.runId === runId);
+  const finalHelper = startupRecoveryStatus(config, runId);
+
+  const allTerminated =
+    attemptResults.length === 0 || attemptResults.every((a) => a.terminated);
+  const released =
+    allTerminated && !finalHelper.active && finalResources.length === 0;
+
+  updateRunRegistry(config, (registry) => {
+    const r = registry.runs.find((entry) => entry.id === runId);
+    if (r) {
+      r.reconciliation = {
+        at: new Date().toISOString(),
+        blockers,
+        pendingDispatches: r.reconciliation?.pendingDispatches ?? [],
+      };
+    }
+  });
+
+  return {
+    runId,
+    lifecycle: finalRun.lifecycle,
+    terminated: allTerminated,
+    released,
+    attempts: attemptResults,
+    helper: {
+      active: finalHelper.active,
+      pending: finalHelper.pending,
+      stopped: helperStopped,
+    },
+    resources: finalResources,
+    blockers,
+  };
+}
+
+/** Terminate remaining executions and helpers for a completed Run without changing business success into failure. */
+export async function releaseRun(
+  config: FleetConfig,
+  runnerOrId?: RunnerAdapter | string,
+  runIdOrOptions?:
+    | string
+    | {
+        stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
+        cleanup?: () => void;
+      },
+  options?: {
+    stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
+    cleanup?: () => void;
+  },
+): Promise<ReleaseRunResult> {
+  const runId = typeof runnerOrId === 'string' ? runnerOrId : (runIdOrOptions as string);
+  const passedRunner = typeof runnerOrId === 'string' ? undefined : runnerOrId;
+  const opts = (typeof runIdOrOptions === 'object' ? runIdOrOptions : options) ?? {};
+
+  if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
+
+  const snapshot = inspectRuns(config);
+  const targetRun = snapshot.runs.find((r) => r.id === runId);
+  if (!targetRun) throw new Error('Unknown Run');
+
+  if (targetRun.lifecycle !== 'completed') {
+    throw new Error(
+      `Run ${runId} is not completed (lifecycle: ${targetRun.lifecycle}); only completed Runs can be released with releaseRun`,
+    );
+  }
+
+  const adapter = passedRunner ?? managedRunner(targetRun.provider);
+  if (adapter.name !== targetRun.provider) throw new Error('Run provider mismatch');
+
+  // Stop startup helper
+  const helperStopped = await stopStartupRecovery(config, runId);
+  const helperStatus = startupRecoveryStatus(config, runId);
+  const blockers: string[] = [];
+  if (helperStatus.active) {
+    blockers.push('Startup helper termination unverified; helper remains active');
+  }
+
+  const hasTermination = (
+    r: unknown,
+  ): r is { termination: (a: ManagedAttempt) => Promise<boolean> } =>
+    typeof (r as { termination?: unknown })?.termination === 'function';
+
+  const isStopped =
+    opts.stopped ??
+    (adapter.stopped
+      ? (a: ManagedAttempt) => adapter.stopped!(a)
+      : hasTermination(adapter)
+        ? (a: ManagedAttempt) => adapter.termination(a)
+        : async () => false);
+
+  const attempts = [
+    ...(targetRun.priorOrchestrators ?? []),
+    ...(targetRun.orchestrator ? [targetRun.orchestrator] : []),
+    ...(snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+  ];
+
+  const attemptResults: ReleaseRunResult['attempts'] = [];
+
+  for (const attempt of attempts) {
+    let stopped = await isStopped(attempt);
+    let cancellationControl: AttemptControl['cancellation'] | undefined;
+    let error: string | undefined;
+
+    if (!stopped) {
+      try {
+        const control = await cancelAttempt(attempt, adapter);
+        cancellationControl = control.cancellation;
+      } catch (err) {
+        error = String(err);
+      }
+      stopped = await isStopped(attempt);
+    }
+
+    if (stopped) {
+      await reconcileAttempt(attempt, { termination: isStopped });
+      updateRunRegistry(config, (registry) => {
+        const r = registry.runs.find((entry) => entry.id === runId);
+        if (!r) return;
+        const all = [
+          ...(r.priorOrchestrators ?? []),
+          ...(r.orchestrator ? [r.orchestrator] : []),
+          ...(registry.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+        ];
+        const match = all.find((a) => a.id === attempt.id);
+        if (match) {
+          match.status = 'unknown';
+          match.startupStopped = true;
+        }
+      });
+    } else {
+      const ctrl = inspectAttemptControl(attempt);
+      ctrl.execution = { status: 'unknown' };
+      writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(ctrl));
+      blockers.push(
+        `Attempt ${attempt.id} (${attempt.role}) termination unverified; occupancy remains reserved`,
+      );
+    }
+
+    attemptResults.push({
+      id: attempt.id,
+      role: attempt.role,
+      status: stopped ? 'unknown' : attempt.status,
+      terminated: stopped,
+      cancellation: cancellationControl,
+      error,
+    });
+  }
+
+  // Release checkouts only if explicit cleanup callback is provided
+  const regBeforeCleanup = inspectRuns(config);
+  const ownedResources = (regBeforeCleanup.resources ?? []).filter((r) => r.runId === runId);
+  if (ownedResources.length > 0) {
+    if (opts.cleanup) {
+      for (const res of ownedResources) {
+        try {
+          await releaseRunCheckout(config, runId, res.path, isStopped, opts.cleanup);
+        } catch (err) {
+          blockers.push(`Resource ${res.path} release failed: ${String(err)}`);
+        }
+      }
+    } else {
+      blockers.push('Checkout release requires the workflow preservation and cleanup gate');
+    }
+  }
+
+  const finalReg = inspectRuns(config);
+  const finalRun = finalReg.runs.find((r) => r.id === runId)!;
+  const finalResources = (finalReg.resources ?? []).filter((r) => r.runId === runId);
+  const finalHelper = startupRecoveryStatus(config, runId);
+
+  const allTerminated =
+    attemptResults.length === 0 || attemptResults.every((a) => a.terminated);
+  const released =
+    allTerminated && !finalHelper.active && finalResources.length === 0;
+
+  updateRunRegistry(config, (registry) => {
+    const r = registry.runs.find((entry) => entry.id === runId);
+    if (r) {
+      r.reconciliation = {
+        at: new Date().toISOString(),
+        blockers,
+        pendingDispatches: r.reconciliation?.pendingDispatches ?? [],
+      };
+    }
+  });
+
+  return {
+    runId,
+    lifecycle: finalRun.lifecycle,
+    terminated: allTerminated,
+    released,
+    attempts: attemptResults,
+    helper: {
+      active: finalHelper.active,
+      pending: finalHelper.pending,
+      stopped: helperStopped,
+    },
+    resources: finalResources,
+    blockers,
+  };
+}
+

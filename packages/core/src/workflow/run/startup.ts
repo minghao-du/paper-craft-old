@@ -16,6 +16,7 @@ export {
   startupDirectory,
   startupRecoveryStatus,
   ensureStartupRecovery,
+  stopStartupRecovery,
 } from '../runtime/startup-supervisor.js';
 
 function attempts(registry: RunRegistry, runId: string): ManagedAttempt[] {

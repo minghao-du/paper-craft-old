@@ -93,7 +93,12 @@ Use [managed recovery](managed-lifecycle.md) for receipt reconciliation, bounded
 
 ```bash
 pc workflow orchestrator recover <run-id> --config /absolute/path/.epic-config.json
+pc workflow orchestrator stop <run-id> --config /absolute/path/.epic-config.json
+pc workflow orchestrator release <run-id> --config /absolute/path/.epic-config.json
 ```
+
+Use `stop` to revoke further scheduling authority, cancel owned executions and helpers, and verify termination without altering completed business deliverables.
+Use `release` on a completed Run to terminate remaining executions/helpers and release resources through verified preservation and cleanup prerequisites.
 
 **Done:** Every reported result has an acceptance/rework disposition, and unresolved execution or ownership uncertainty remains a recorded blocker to dependent work.
 

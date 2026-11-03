@@ -1,6 +1,6 @@
 /** Local adapter for detached per-Run startup supervision. */
 import { createHash } from 'node:crypto';
-import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,3 +83,56 @@ export function ensureStartupRecovery(
     closeSync(log);
   }
 }
+
+/** Stop the detached per-Run startup helper and verify its termination. */
+export async function stopStartupRecovery(
+  config: FleetConfig,
+  runId: string,
+  timeoutMs = 5000,
+): Promise<boolean> {
+  let evidenceDirectory: string;
+  try {
+    evidenceDirectory = startupDirectory(config, runId);
+  } catch {
+    return true;
+  }
+  const pidFile = join(evidenceDirectory, 'startup.lock', 'pid');
+  if (!existsSync(pidFile)) return true;
+  let pid: number;
+  try {
+    pid = Number(readFileSync(pidFile, 'utf8'));
+  } catch {
+    return true;
+  }
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+  } catch {
+    rmSync(join(evidenceDirectory, 'startup.lock'), { recursive: true, force: true });
+    return true;
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    return true;
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } catch {
+      return true;
+    }
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {}
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
