@@ -89,8 +89,8 @@ then closes the Parent through normal Workflow:
 Normal Workflow verifies single Run authority, current professional acceptance,
 complete child deliveries, and matching human evidence before any external side effect,
 performs the actual GitHub close, verifies closed state, reconciles uncertain results,
-records the accepted version, and opens post-closure finalization. Demo only manages
-closure request, human consent, and budget wait controls; `pc demo close` is removed.
+records the accepted version, and opens post-closure finalization. Demo manages
+closure request, human consent, and budget wait controls, delegating Parent Epic closure to normal Workflow.
 Never write human-closure.json from agent output or invent human consent.
 
 The native verifier reads retained gate snapshots and compares the Worker 2

@@ -211,17 +211,6 @@ export async function startRun(
       demoConfigPath: config.demo.config,
     };
   }
-  if (!constraints && requirements) {
-    const m = requirements.match(/Diagnostic demo round ([0-9a-f-]{36}|[a-zA-Z0-9_-]+)/);
-    if (m) {
-      const demoConfigMatch = requirements.match(/Demo configuration: (.*?)\./);
-      constraints = {
-        kind: 'demo',
-        roundId: m[1],
-        demoConfigPath: demoConfigMatch ? demoConfigMatch[1] : undefined,
-      };
-    }
-  }
   const verifyPermissions = (run: WorkflowRun) => {
     if (dangerouslySkipPermissions && !run.dangerouslySkipPermissions)
       throw new Error('Permission mode conflicts with the existing Run; reuse its stored mode');
@@ -492,6 +481,35 @@ function authorize(registry: RunRegistry, runId: string, authority: string): Wor
     throw new Error('Inactive or wrong Orchestrator authority');
   return run;
 }
+function resolveGateAuthFile(roundRoot: string, subject?: string): string {
+  const defaultFile = join(roundRoot, 'gate-authorization.json');
+  if (existsSync(defaultFile)) {
+    if (!subject) return defaultFile;
+    try {
+      const defaultAuth = JSON.parse(readFileSync(defaultFile, 'utf8'));
+      if (subject.endsWith('#' + defaultAuth.issue)) return defaultFile;
+      for (const specific of ['gate-worker1-authorization.json', 'gate-worker2-authorization.json']) {
+        const specPath = join(roundRoot, specific);
+        if (existsSync(specPath)) {
+          try {
+            const specAuth = JSON.parse(readFileSync(specPath, 'utf8'));
+            if (subject.endsWith('#' + specAuth.issue)) return specPath;
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return defaultFile;
+  }
+  for (const specific of ['gate-worker1-authorization.json', 'gate-worker2-authorization.json']) {
+    const specPath = join(roundRoot, specific);
+    if (existsSync(specPath)) return specPath;
+  }
+  return defaultFile;
+}
 /** Reserve before launch; replay returns the same generation and never launches twice. */
 export async function dispatchStage(
   config: FleetConfig,
@@ -522,7 +540,7 @@ export async function dispatchStage(
       }
     }
     if (request.role === 'worker') {
-      const authFile = join(roundRoot, 'gate-authorization.json');
+      const authFile = resolveGateAuthFile(roundRoot, request.subject);
       if (!existsSync(authFile)) {
         throw new Error(
           `Worker dispatch denied: matching Gate authorization required for demo round ${owningRun.constraints.roundId}`,
@@ -530,10 +548,14 @@ export async function dispatchStage(
       }
       const auth = JSON.parse(readFileSync(authFile, 'utf8'));
       if (auth.roundId !== owningRun.constraints.roundId) {
-        throw new Error('Worker dispatch denied: Gate authorization round mismatch');
+        throw new Error(
+          `Worker dispatch denied: Gate authorization round mismatch: expected ${owningRun.constraints.roundId}, received ${auth.roundId}`,
+        );
       }
       if (auth.runId !== owningRun.id) {
-        throw new Error('Worker dispatch denied: Gate authorization Run mismatch');
+        throw new Error(
+          `Worker dispatch denied: Gate authorization Run mismatch: expected ${owningRun.id}, received ${auth.runId}`,
+        );
       }
       if (request.stage === 'final-records') {
         if (!request.subject.endsWith('#' + auth.issue)) {
@@ -629,7 +651,7 @@ export async function dispatchStage(
         }
       }
       if (request.role === 'worker') {
-        const authFile = join(roundRoot, 'gate-authorization.json');
+        const authFile = resolveGateAuthFile(roundRoot, request.subject);
         if (!existsSync(authFile)) {
           throw new Error(
             `Worker dispatch denied: matching Gate authorization required for demo round ${run.constraints.roundId}`,
@@ -637,10 +659,14 @@ export async function dispatchStage(
         }
         const auth = JSON.parse(readFileSync(authFile, 'utf8'));
         if (auth.roundId !== run.constraints.roundId) {
-          throw new Error('Worker dispatch denied: Gate authorization round mismatch');
+          throw new Error(
+            `Worker dispatch denied: Gate authorization round mismatch: expected ${run.constraints.roundId}, received ${auth.roundId}`,
+          );
         }
         if (auth.runId !== run.id) {
-          throw new Error('Worker dispatch denied: Gate authorization Run mismatch');
+          throw new Error(
+            `Worker dispatch denied: Gate authorization Run mismatch: expected ${run.id}, received ${auth.runId}`,
+          );
         }
         if (request.stage === 'final-records') {
           if (!request.subject.endsWith('#' + auth.issue)) {
@@ -686,7 +712,10 @@ export async function dispatchStage(
         }
       }
     }
-    if (runner.name !== run.provider) throw new Error('Run provider mismatch');
+    if (runner.name !== run.provider)
+      throw new Error(
+        `Run provider mismatch: expected provider ${run.provider}, but received ${runner.name}`,
+      );
     assertStageRole(request.stage, request.role, `Run ${request.runId}`);
     if (!request.brief.trim() || !request.inputRevision || !request.stage || !request.subject)
       throw new Error('Incomplete stage inputs');
@@ -827,7 +856,7 @@ export async function dispatchStage(
     request.stage !== 'final-records'
   ) {
     const roundRoot = dirname(config.project);
-    const authFile = join(roundRoot, 'gate-authorization.json');
+    const authFile = resolveGateAuthFile(roundRoot, request.subject);
     if (existsSync(authFile)) {
       const auth = JSON.parse(readFileSync(authFile, 'utf8'));
       auth.claimed = true;
@@ -835,6 +864,32 @@ export async function dispatchStage(
       auth.claimedLaunchId = dispatch.id;
       auth.claimedAttemptId = attempt.id;
       writeFileSync(authFile, JSON.stringify(auth, null, 2));
+
+      // Also ensure default and stage-specific authorization files with matching id/issue are marked claimed
+      const filesToUpdate = new Set([
+        join(roundRoot, 'gate-authorization.json'),
+        join(roundRoot, 'gate-worker1-authorization.json'),
+        join(roundRoot, 'gate-worker2-authorization.json'),
+      ]);
+      filesToUpdate.delete(authFile);
+      for (const otherPath of filesToUpdate) {
+        if (existsSync(otherPath)) {
+          try {
+            const other = JSON.parse(readFileSync(otherPath, 'utf8'));
+            if (other.id === auth.id || other.issue === auth.issue) {
+              Object.assign(other, {
+                claimed: true,
+                claimedAt: auth.claimedAt,
+                claimedLaunchId: auth.claimedLaunchId,
+                claimedAttemptId: auth.claimedAttemptId,
+              });
+              writeFileSync(otherPath, JSON.stringify(other, null, 2));
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      }
     }
   }
   try {
@@ -1021,7 +1076,10 @@ export async function retryStage(
   const snapshot = inspectRuns(config);
   const dispatch = findDispatch(snapshot, dispatchId);
   const run = authorize(snapshot, dispatch.runId, authority);
-  if (runner.name !== run.provider) throw new Error('Run provider mismatch');
+  if (runner.name !== run.provider)
+    throw new Error(
+      `Run provider mismatch: expected provider ${run.provider}, but received ${runner.name}`,
+    );
   if (run.constraints?.kind === 'demo') {
     throw new Error('Stage retries prohibited for demo-constrained Runs');
   }
@@ -1161,7 +1219,11 @@ export async function recoverRun(
   if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
   const snapshot = inspectRuns(config);
   const run = snapshot.runs.find((r) => r.id === runId);
-  if (!run || run.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
+  if (!run) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
+  if (run.provider !== runner.name)
+    throw new Error(
+      `Run provider mismatch: expected provider ${run.provider}, but received ${runner.name}`,
+    );
   verifyRunRequirements(run);
   if (run.constraints?.kind === 'demo') {
     if (options.replaceOrchestrator) {
@@ -1170,6 +1232,24 @@ export async function recoverRun(
   }
   if (run.lifecycle === 'completed')
     throw new Error('Completed Run authority has ended; start a new Run after resolving occupancy');
+  const blockers: string[] = [];
+  if (run.constraints?.kind === 'demo') {
+    const roundRoot = dirname(config.project);
+    const controlFile = join(roundRoot, 'control.json');
+    if (existsSync(controlFile)) {
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      if (control.stopped || control.activeMs >= control.budgetMs) {
+        blockers.push(`Demo round ${run.constraints.roundId} is stopped or expired`);
+        updateRunRegistry(config, (registry) => {
+          const r = registry.runs.find((x) => x.id === runId);
+          if (r) r.lifecycle = 'blocked';
+        });
+        if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
+          return { blockers, pendingDispatches: [] };
+        }
+      }
+    }
+  }
   if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
     updateRunRegistry(config, (registry) => {
       if (registry.revision !== snapshot.revision)
@@ -1196,21 +1276,6 @@ export async function recoverRun(
       current.lifecycle = attempt.status === 'running' ? 'running' : 'blocked';
     });
     return recoverRun(config, runner, runId);
-  }
-  const blockers: string[] = [];
-  if (run.constraints?.kind === 'demo') {
-    const roundRoot = dirname(config.project);
-    const controlFile = join(roundRoot, 'control.json');
-    if (existsSync(controlFile)) {
-      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-      if (control.stopped || control.activeMs >= control.budgetMs) {
-        blockers.push(`Demo round ${run.constraints.roundId} is stopped or expired`);
-        updateRunRegistry(config, (registry) => {
-          const r = registry.runs.find((x) => x.id === runId);
-          if (r) r.lifecycle = 'blocked';
-        });
-      }
-    }
   }
   const pendingDispatches: string[] = [];
   const recovered = new Map<
@@ -1540,14 +1605,15 @@ export function orchestratorForSubject(
     );
   if (run.orchestrator.runner !== run.provider)
     throw new Error(
-      `Run provider mismatch: expected ${run.provider}, received ${run.orchestrator.runner}`,
+      `Run provider mismatch: expected provider ${run.provider}, but received ${run.orchestrator.runner}`,
     );
   return run.orchestrator;
 }
 /** Record a consuming Run reference without granting another execution owner. */
 export function referenceRunSubject(config: FleetConfig, runId: string, subject: string): string {
   return updateRunRegistry(config, (registry) => {
-    if (!registry.runs.some((r) => r.id === runId)) throw new Error('Unknown Run');
+    if (!registry.runs.some((r) => r.id === runId))
+      throw new Error(`Unknown Run: expected existing run with id ${runId}`);
     registry.subjects ??= [];
     const owner = registry.subjects.find((s) => s.subject === subject);
     if (!owner) return reserveSubject(registry, runId, subject);
@@ -1584,7 +1650,10 @@ export async function startBusinessTurn(
     throw new Error(
       `No Run owns ${repository}#${number}; run pc workflow orchestrator start ${number} --type <issue|epic> --provider <provider> --config ${config.file}`,
     );
-  if (owner.runner !== runner.name) throw new Error('Run provider mismatch');
+  if (owner.runner !== runner.name)
+    throw new Error(
+      `Run provider mismatch: expected provider ${owner.runner}, but received ${runner.name}`,
+    );
   const dispatch = await dispatchStage(config, runner, {
     runId: owner.run,
     authority: owner.id,
@@ -1735,7 +1804,10 @@ export async function sendStageMessage(
   const attempt = updateRunRegistry(config, (registry) => {
     const dispatch = findDispatch(registry, dispatchId);
     authorize(registry, dispatch.runId, authority);
-    if (dispatch.provider !== runner.name) throw new Error('Run provider mismatch');
+    if (dispatch.provider !== runner.name)
+      throw new Error(
+        `Run provider mismatch: expected provider ${dispatch.provider}, but received ${runner.name}`,
+      );
     if (dispatch.lifecycle === 'accepted')
       throw new Error('Accepted task requires a new Dispatch for follow-up assignment');
     const existing = dispatch.messages?.find((m) => m.id === message.id);
@@ -1780,7 +1852,10 @@ export async function stopAcceptedExecution(
   const registry = inspectRuns(config);
   const dispatch = findDispatch(registry, dispatchId);
   authorize(registry, dispatch.runId, authority);
-  if (runner.name !== dispatch.provider) throw new Error('Run provider mismatch');
+  if (runner.name !== dispatch.provider)
+    throw new Error(
+      `Run provider mismatch: expected provider ${dispatch.provider}, but received ${runner.name}`,
+    );
   if (dispatch.lifecycle !== 'accepted' || dispatch.messages?.some((m) => m.status !== 'completed'))
     throw new Error('Acceptance and reconciled input required before release');
   const attempt = dispatch.attempts.at(-1)!;
@@ -2268,7 +2343,7 @@ export function inspectRun(config: FleetConfig, runId: string): WorkflowRunView 
   if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
   const registry = inspectRuns(config);
   const run = registry.runs.find((r) => r.id === runId);
-  if (!run) throw new Error('Unknown Run');
+  if (!run) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
 
   const dispatches = (registry.dispatches ?? []).filter((d) => d.runId === run.id);
   const receipts = (registry.receipts ?? []).filter((r) => r.runId === run.id);
@@ -2373,15 +2448,18 @@ export async function stopRun(
 
   const snapshot = inspectRuns(config);
   const targetRun = snapshot.runs.find((r) => r.id === runId);
-  if (!targetRun) throw new Error('Unknown Run');
+  if (!targetRun) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
 
   const adapter = passedRunner ?? managedRunner(targetRun.provider);
-  if (adapter.name !== targetRun.provider) throw new Error('Run provider mismatch');
+  if (adapter.name !== targetRun.provider)
+    throw new Error(
+      `Run provider mismatch: expected provider ${targetRun.provider}, but received ${adapter.name}`,
+    );
 
   // Revoke further scheduling and activation before requesting cancellation
   updateRunRegistry(config, (registry) => {
     const current = registry.runs.find((r) => r.id === runId);
-    if (!current) throw new Error('Unknown Run');
+    if (!current) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
     if (current.lifecycle !== 'completed') {
       current.lifecycle = 'blocked';
     }
@@ -2551,7 +2629,7 @@ export async function releaseRun(
 
   const snapshot = inspectRuns(config);
   const targetRun = snapshot.runs.find((r) => r.id === runId);
-  if (!targetRun) throw new Error('Unknown Run');
+  if (!targetRun) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
 
   if (targetRun.lifecycle !== 'completed') {
     throw new Error(
@@ -2560,7 +2638,10 @@ export async function releaseRun(
   }
 
   const adapter = passedRunner ?? managedRunner(targetRun.provider);
-  if (adapter.name !== targetRun.provider) throw new Error('Run provider mismatch');
+  if (adapter.name !== targetRun.provider)
+    throw new Error(
+      `Run provider mismatch: expected provider ${targetRun.provider}, but received ${adapter.name}`,
+    );
 
   // Stop startup helper
   const helperStopped = await stopStartupRecovery(config, runId);

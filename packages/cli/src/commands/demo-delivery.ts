@@ -8,14 +8,14 @@ import { DemoControl } from '@paper-craft/core/workflow/demo-control';
 import { nativeDemoExecution } from '@paper-craft/core/workflow/demo-execution';
 /** Human controls persist version-bound consent; business gates belong to the Orchestrator. */
 export function registerDemoDelivery(demo: Command) {
-  const service = (id: string, authority?: string, dispatch?: string) => {
+  const service = (id: string) => {
     const round = new DemoRounds(
       JSON.parse(readFileSync(demo.opts().config, 'utf8')),
       nativeDemoAdapter(),
     ).status(id);
     return {
       round,
-      delivery: new DemoDelivery(round, nativeDemoDelivery(round, authority, dispatch)),
+      delivery: new DemoDelivery(round, nativeDemoDelivery(round)),
       control: new DemoControl(round, nativeDemoExecution()),
     };
   };

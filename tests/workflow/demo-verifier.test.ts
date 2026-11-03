@@ -270,9 +270,58 @@ test('native inspection rejects invalid raw delivery, provider, execution and ob
       }) + '\n',
     );
     writeFileSync(
+      join(root, 'gate-worker1-authorization.json'),
+      JSON.stringify({
+        id: 'auth1',
+        roundId: 'raw-fixture',
+        runId: 'run',
+        issue: 2,
+        stage: 'work',
+        claimed: true,
+        authorizedAt: '2026-01-01T00:00:00Z',
+      }),
+    );
+    writeFileSync(
+      join(root, 'gate-worker2-authorization.json'),
+      JSON.stringify({
+        id: 'auth2',
+        roundId: 'raw-fixture',
+        runId: 'run',
+        issue: 3,
+        stage: 'work',
+        claimed: true,
+        authorizedAt: '2026-01-02T00:00:00Z',
+      }),
+    );
+    writeFileSync(
+      join(root, 'gate-authorizations.jsonl'),
+      JSON.stringify({
+        gate: 'worker1',
+        id: 'auth1',
+        roundId: 'raw-fixture',
+        runId: 'run',
+        issue: 2,
+        stage: 'work',
+        claimed: true,
+        authorizedAt: '2026-01-01T00:00:00Z',
+      }) +
+        '\n' +
+        JSON.stringify({
+          gate: 'worker2',
+          id: 'auth2',
+          roundId: 'raw-fixture',
+          runId: 'run',
+          issue: 3,
+          stage: 'work',
+          claimed: true,
+          authorizedAt: '2026-01-02T00:00:00Z',
+        }) +
+        '\n',
+    );
+    writeFileSync(
       join(root, 'gate-authorization.json'),
       JSON.stringify({
-        id: 'auth',
+        id: 'auth2',
         roundId: 'raw-fixture',
         runId: 'run',
         issue: 3,

@@ -1,16 +1,44 @@
 import { test, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DemoDelivery } from '../../packages/core/src/workflow/demo/delivery.js';
 import type { DemoRound } from '../../packages/core/src/workflow/demo/round.js';
+import { updateRunRegistry } from '../../packages/core/src/workflow/run/run-driver.js';
+import { loadFleetConfig } from '../../packages/core/src/workflow/fleet/fleet-config.js';
 
 test('reconnected human consent cannot confirm a changed delivery and gate preserves native prerequisites', async () => {
   const root = mkdtempSync(join(tmpdir(), 'demo-delivery-'));
   let firstReleased = true;
   let version = 'one',
     valid = true;
-  const round = { root } as DemoRound;
+  const configPath = join(root, '.epic-config.json');
+  writeFileSync(configPath, JSON.stringify({
+    clone_root: '.',
+    local_worktrees: true,
+  }));
+  writeFileSync(join(root, 'control.json'), JSON.stringify({
+    armed: true,
+    stopped: false,
+    releasing: false,
+    activeMs: 0,
+    budgetMs: 100000,
+  }));
+  const round = { id: 'demo-delivery-round', root, workflowConfigFile: configPath } as DemoRound;
+  updateRunRegistry(loadFleetConfig(configPath), (reg) => {
+    reg.runs.push({
+      id: 'run-demo',
+      provider: 'agy',
+      subject: { repository: 'o/r', number: 1, kind: 'epic' },
+      orchestratorId: 'orch-1',
+      lifecycle: 'running',
+      constraints: {
+        kind: 'demo',
+        roundId: round.id,
+      },
+      brief: { path: join(root, 'brief.md') },
+    });
+  });
   const adapter = {
     async inspect() {
       return {
@@ -24,12 +52,26 @@ test('reconnected human consent cannot confirm a changed delivery and gate prese
     },
   };
   try {
+    const controlPath = join(root, 'control.json');
+    const resetControl = () =>
+      writeFileSync(
+        controlPath,
+        JSON.stringify({
+          armed: true,
+          stopped: false,
+          releasing: false,
+          activeMs: 0,
+          budgetMs: 100000,
+        }),
+      );
     const delivery = new DemoDelivery(round, adapter);
     valid = false;
     await expect(delivery.gate('worker1')).rejects.toThrow();
+    resetControl();
     valid = true;
     firstReleased = false;
     await expect(delivery.gate('worker2')).rejects.toThrow();
+    resetControl();
     firstReleased = true;
     await delivery.gate('worker2');
 

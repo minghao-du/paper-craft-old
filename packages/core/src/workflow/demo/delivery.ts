@@ -106,7 +106,8 @@ export class DemoDelivery {
       let failureReason: string | undefined;
       if (!pass) {
         if (!roundArmed) failureReason = 'Round is not armed or budget is expired';
-        else if (!runBound) failureReason = 'No active bound Run found for round ' + this.round.id;
+        else if (!runBound)
+          failureReason = `No active bound Run found for round ${this.round.id}: expected an active Run bound to round ${this.round.id}, received none`;
         else if (!parentValid) failureReason = 'Parent identity mismatch';
         else if (!exactChildren) failureReason = `Expected exactly two child tasks, found ${facts.children.length}`;
         else if (!facts.nativeDependency) failureReason = 'Native dependency direction violated (second child must be blocked by first)';
@@ -150,8 +151,16 @@ export class DemoDelivery {
         claimed: false,
       };
       writeFileSync(
+        join(this.round.root, 'gate-worker1-authorization.json'),
+        JSON.stringify(authorization, null, 2),
+      );
+      writeFileSync(
         join(this.round.root, 'gate-authorization.json'),
         JSON.stringify(authorization, null, 2),
+      );
+      appendFileSync(
+        join(this.round.root, 'gate-authorizations.jsonl'),
+        JSON.stringify({ gate: 'worker1', ...authorization }) + '\n',
       );
 
       return Object.assign(facts, { authorization, task1, task2 });
@@ -183,8 +192,6 @@ export class DemoDelivery {
         } catch {
           // ignore error reading run
         }
-      } else if (!workflowConfigPath || !existsSync(workflowConfigPath)) {
-        runBound = true;
       }
       const facts = await this.adapter.inspect();
       const parentValid = facts.parentValid !== false && (facts.parent === undefined || facts.parent === this.round.parent);
@@ -243,7 +250,8 @@ export class DemoDelivery {
       let failureReason: string | undefined;
       if (!pass) {
         if (!roundArmed) failureReason = 'Round is not armed or budget is expired';
-        else if (!runBound) failureReason = 'No active bound Run found for round ' + this.round.id;
+        else if (!runBound)
+          failureReason = `No active bound Run found for round ${this.round.id}: expected an active Run bound to round ${this.round.id}, received none`;
         else if (!parentValid) failureReason = 'Parent identity mismatch';
         else if (!exactChildren) failureReason = `Expected exactly two child tasks, found ${facts.children.length}`;
         else if (!facts.nativeDependency) failureReason = 'Native dependency direction violated';
@@ -281,8 +289,16 @@ export class DemoDelivery {
         claimed: false,
       };
       writeFileSync(
+        join(this.round.root, 'gate-worker2-authorization.json'),
+        JSON.stringify(authorization, null, 2),
+      );
+      writeFileSync(
         join(this.round.root, 'gate-authorization.json'),
         JSON.stringify(authorization, null, 2),
+      );
+      appendFileSync(
+        join(this.round.root, 'gate-authorizations.jsonl'),
+        JSON.stringify({ gate: 'worker2', ...authorization }) + '\n',
       );
 
       return Object.assign(facts, { authorization, task1, task2 });

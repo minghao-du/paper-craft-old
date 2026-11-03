@@ -7,11 +7,9 @@ import { inspectAttemptControl } from '../runtime/runtime.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 import type { DemoRound } from './round.js';
 import type { DemoDeliveryAdapter } from './delivery.js';
-/** Authority and accepted integrated Dispatch parameters are retained for signature compatibility. */
+/** Real native relationship, delivery and closure boundary. No scheduling decisions. */
 export function nativeDemoDelivery(
   round: DemoRound,
-  _authority = '',
-  _dispatch = '',
   customGh?: (path: string) => ReturnType<typeof JSON.parse>,
 ): DemoDeliveryAdapter {
   const config = loadFleetConfig(round.workflowConfigFile ?? join(round.checkout, '.epic-config.json'));
