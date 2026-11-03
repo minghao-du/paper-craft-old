@@ -350,7 +350,9 @@ export class InteractiveCodexRunner implements RunnerAdapter {
       execFileSync('tmux', ['send-keys', '-t', pane, 'C-c'], {
         stdio: ['ignore', 'pipe', 'ignore'],
       });
-    } catch {}
+    } catch {
+      /* ignore interrupt failure */
+    }
     let nextInterrupt = Date.now() + 1000;
     const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
@@ -361,7 +363,9 @@ export class InteractiveCodexRunner implements RunnerAdapter {
           execFileSync('tmux', ['send-keys', '-t', pane, 'C-c'], {
             stdio: ['ignore', 'pipe', 'ignore'],
           });
-        } catch {}
+        } catch {
+          /* ignore interrupt retry failure */
+        }
         nextInterrupt = Date.now() + 1000;
       }
       await new Promise((r) => setTimeout(r, 100));

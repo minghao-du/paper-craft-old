@@ -127,7 +127,9 @@ export async function stopStartupRecovery(
   }
   try {
     process.kill(pid, 'SIGKILL');
-  } catch {}
+  } catch {
+    /* process already exited */
+  }
   try {
     process.kill(pid, 0);
     return false;
