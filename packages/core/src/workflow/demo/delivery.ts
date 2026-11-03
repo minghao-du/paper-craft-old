@@ -1,4 +1,5 @@
 /** Demo boundary checks and human consent; business assignments remain Orchestrator decisions. */
+import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -6,7 +7,7 @@ import { inspectRuns } from '../run/run-driver.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 import type { DemoRound } from './round.js';
 
-/** Authorization bound to Round, Run, first task Issue, stage and inputs. */
+/** Authorization bound to Round, Run, task Issue, stage and inputs. */
 export interface GateAuthorization {
   id: string;
   roundId: string;
@@ -14,6 +15,7 @@ export interface GateAuthorization {
   issue: number;
   stage: string;
   inputRevision?: string;
+  requiredAncestorSha?: string;
   briefHash?: string;
   authorizedAt: string;
   claimed: boolean;
@@ -40,6 +42,8 @@ export interface DemoDeliverySnapshot {
   accepted: boolean;
   task1?: number;
   task2?: number;
+  task1MergeSha?: string;
+  task1Pr?: number;
   parentValid?: boolean;
   noExtraTasks?: boolean;
   extraTasks?: number[];
@@ -159,6 +163,137 @@ export class DemoDelivery {
       return Object.assign(facts, { authorization, task1, task2 });
     }
 
+    if (stage === 'worker2') {
+      const controlFile = join(this.round.root, 'control.json');
+      let roundArmed = false;
+      let control: { stopped?: boolean; releasing?: boolean; activeMs?: number; budgetMs?: number; stoppedReason?: string } | undefined;
+      if (existsSync(controlFile)) {
+        control = JSON.parse(readFileSync(controlFile, 'utf8'));
+        roundArmed = !control?.stopped && !control?.releasing && (control?.activeMs ?? 0) < (control?.budgetMs ?? Infinity);
+      } else if (!existsSync(join(this.round.root, 'round.json')) && !this.round.workflowConfigFile) {
+        roundArmed = true;
+      }
+      const workflowConfigPath = this.round.workflowConfigFile ?? (this.round.checkout ? join(this.round.checkout, '.epic-config.json') : undefined);
+      let runBound = false;
+      let boundRunId = '';
+      if (workflowConfigPath && existsSync(workflowConfigPath)) {
+        try {
+          const registry = inspectRuns(loadFleetConfig(workflowConfigPath));
+          const bound = registry.runs.find(
+            (r) => r.constraints?.kind === 'demo' && r.constraints.roundId === this.round.id && r.lifecycle !== 'completed',
+          );
+          if (bound) {
+            runBound = true;
+            boundRunId = bound.id;
+          }
+        } catch {
+          // ignore error reading run
+        }
+      } else if (!workflowConfigPath || !existsSync(workflowConfigPath)) {
+        runBound = true;
+      }
+      const facts = await this.adapter.inspect();
+      const parentValid = facts.parentValid !== false && (facts.parent === undefined || facts.parent === this.round.parent);
+      const exactChildren = facts.children.length === 2;
+      const noExtra = facts.noExtraTasks !== false && (!facts.extraTasks || facts.extraTasks.length === 0);
+
+      // Resolve task1 and task2 stably
+      let task1 = facts.task1;
+      let task2 = facts.task2;
+      const savedTasksFile = join(this.round.root, 'demo-tasks.json');
+      if (existsSync(savedTasksFile)) {
+        try {
+          const saved = JSON.parse(readFileSync(savedTasksFile, 'utf8'));
+          task1 ??= saved.task1;
+          task2 ??= saved.task2;
+        } catch {
+          /* ignore */
+        }
+      }
+      if (task1 === undefined && exactChildren && facts.nativeDependency) {
+        task1 = facts.children[0];
+        task2 = facts.children[1];
+      }
+
+      // Check baseline ancestry if inputRevision is provided
+      let baselineValid = true;
+      if (options?.inputRevision) {
+        if (facts.secondBaseline === false) {
+          baselineValid = false;
+        } else if (facts.task1MergeSha && this.round.checkout && existsSync(this.round.checkout)) {
+          try {
+            execFileSync('git', ['merge-base', '--is-ancestor', facts.task1MergeSha, options.inputRevision], {
+              cwd: this.round.checkout,
+              encoding: 'utf8',
+              stdio: 'pipe',
+            });
+          } catch {
+            baselineValid = false;
+          }
+        }
+      }
+
+      const pass = Boolean(
+        roundArmed &&
+        runBound &&
+        parentValid &&
+        exactChildren &&
+        facts.nativeDependency &&
+        noExtra &&
+        task1 !== undefined &&
+        task2 !== undefined &&
+        facts.firstReleased &&
+        baselineValid,
+      );
+
+      let failureReason: string | undefined;
+      if (!pass) {
+        if (!roundArmed) failureReason = 'Round is not armed or budget is expired';
+        else if (!runBound) failureReason = 'No active bound Run found for round ' + this.round.id;
+        else if (!parentValid) failureReason = 'Parent identity mismatch';
+        else if (!exactChildren) failureReason = `Expected exactly two child tasks, found ${facts.children.length}`;
+        else if (!facts.nativeDependency) failureReason = 'Native dependency direction violated';
+        else if (!noExtra) failureReason = 'Extra tasks detected';
+        else if (!facts.firstReleased) failureReason = 'Task 1 delivery is incomplete or resources are not released';
+        else if (!baselineValid) failureReason = `Task 2 input revision ${options?.inputRevision} does not contain Task 1 merge ${facts.task1MergeSha ?? ''} as an ancestor`;
+        else failureReason = 'Unknown prerequisite failure';
+      }
+
+      appendFileSync(
+        join(this.round.root, 'delivery-boundaries.jsonl'),
+        JSON.stringify({ at: new Date().toISOString(), stage, pass, facts, ...(failureReason ? { error: failureReason } : {}) }) + '\n',
+      );
+
+      if (!pass) {
+        if (control && existsSync(controlFile)) {
+          control.stopped = true;
+          control.stoppedReason = 'Gate 2 verification failed: ' + failureReason;
+          writeFileSync(controlFile, JSON.stringify(control, null, 2));
+        }
+        throw new Error('Gate 2 verification failed: ' + failureReason);
+      }
+
+      // Issue durable Gate authorization for task 2
+      const authorization: GateAuthorization = {
+        id: randomUUID(),
+        roundId: this.round.id,
+        runId: boundRunId,
+        issue: task2!,
+        stage: options?.stageName ?? 'implementation',
+        inputRevision: options?.inputRevision,
+        requiredAncestorSha: facts.task1MergeSha,
+        briefHash: options?.brief ? createHash('sha256').update(options.brief).digest('hex') : undefined,
+        authorizedAt: new Date().toISOString(),
+        claimed: false,
+      };
+      writeFileSync(
+        join(this.round.root, 'gate-authorization.json'),
+        JSON.stringify(authorization, null, 2),
+      );
+
+      return Object.assign(facts, { authorization, task1, task2 });
+    }
+
     const facts = await this.adapter.inspect();
     const pass =
       facts.children.length === 2 &&
@@ -232,9 +367,21 @@ export async function demoChronology(round: DemoRound) {
           .filter(Boolean)
           .map((x) => JSON.parse(x))
       : [];
-  const registry = inspectRuns(loadFleetConfig(join(round.checkout, '.epic-config.json')));
+  const configPath = round.workflowConfigFile ?? (round.checkout ? join(round.checkout, '.epic-config.json') : undefined);
+  if (!configPath || !existsSync(configPath)) {
+    return [
+      {
+        stage: 'ordering',
+        expected: 'Witnessed complete handover before Worker 2 dispatch',
+        observed: JSON.stringify(events),
+        verdict: events.some((e) => !e.pass) ? ('finding' as const) : ('missing' as const),
+        reference: path,
+      },
+    ];
+  }
+  const registry = inspectRuns(loadFleetConfig(configPath));
   const worker2 = (registry.dispatches ?? []).filter(
-    (d) => d.role === 'worker' && events.some((e) => d.subject.endsWith('#' + e.facts.children[1])),
+    (d) => d.role === 'worker' && events.some((e) => d.subject.endsWith('#' + (e.facts.task2 ?? e.facts.children?.[1]))),
   );
   const witnessed =
     worker2.length > 0 &&

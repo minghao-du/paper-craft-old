@@ -17,7 +17,7 @@ Dispatch independent ready children concurrently; retain blockers for dependent 
 Follow [overlapping Run ownership](managed-lifecycle.md#child-only-intake-and-overlapping-runs) when standalone delivery already owns a child.
 An existing result still needs explicit professional acceptance against this EPIC's objective.
 
-For a Demo-constrained EPIC Run (`--demo-round <id>` or configured demo round), follow [pc-demo](../pc-demo/SKILL.md): planning creates exactly two native children with task 2 natively blocked by task 1. The Orchestrator automatically checks Gate 1 (`pc demo --config <file> gate <round> worker1`) before dispatching Worker 1. Worker dispatch without claimed Gate authorization is denied. Task 2 remains blocked until Gate 2 is satisfied. Corrective rework, stage retries, replacement attempts, and extra task PRs are prohibited.
+For a Demo-constrained EPIC Run (`--demo-round <id>` or configured demo round), follow [pc-demo](../pc-demo/SKILL.md): planning creates exactly two native children with task 2 natively blocked by task 1. The Orchestrator automatically checks Gate 1 (`pc demo --config <file> gate <round> worker1`) before dispatching Worker 1. Worker dispatch without claimed Gate authorization is denied. Task 2 remains blocked until task 1 handover is fully released and verified by automatic Gate 2 (`pc demo --config <file> gate <round> worker2`), proving task 1 merge ancestry at dispatch. Corrective rework, stage retries, replacement attempts, and extra task PRs are prohibited.
 
 Execute each ready child's [Shared Issue Delivery](SKILL.md#shared-issue-delivery) under the owning Run, retaining its parent constraints.
 Collect accepted child outcomes before unblocking their dependents.

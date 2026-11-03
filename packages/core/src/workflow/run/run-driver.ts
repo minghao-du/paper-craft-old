@@ -532,6 +532,38 @@ export async function dispatchStage(
         if (auth.claimed) {
           throw new Error('Worker dispatch denied: Gate authorization already claimed');
         }
+        if (auth.inputRevision && auth.inputRevision !== request.inputRevision) {
+          throw new Error(
+            `Worker dispatch denied: input revision ${request.inputRevision} does not match authorized revision ${auth.inputRevision}`,
+          );
+        }
+        if (auth.stage && auth.stage !== request.stage) {
+          throw new Error(
+            `Worker dispatch denied: authorized for stage ${auth.stage}, cannot launch ${request.stage}`,
+          );
+        }
+        if (auth.briefHash) {
+          const rawHash = createHash('sha256').update(request.brief).digest('hex');
+          if (rawHash !== auth.briefHash) {
+            throw new Error('Worker dispatch denied: brief does not match authorized brief');
+          }
+        }
+        if (auth.requiredAncestorSha) {
+          const targetRev = request.inputRevision;
+          const checkoutDir = request.checkout ? workflowSource(config, request.checkout) : config.project;
+          const gitCwd = existsSync(checkoutDir) ? checkoutDir : config.project;
+          try {
+            execFileSync('git', ['merge-base', '--is-ancestor', auth.requiredAncestorSha, targetRev], {
+              cwd: gitCwd,
+              encoding: 'utf8',
+              stdio: 'pipe',
+            });
+          } catch {
+            throw new Error(
+              `Worker dispatch denied: task 2 revision ${targetRev} does not contain Task 1 merge ${auth.requiredAncestorSha} as an ancestor`,
+            );
+          }
+        }
       }
     }
   }
@@ -606,6 +638,32 @@ export async function dispatchStage(
           }
           if (auth.claimed) {
             throw new Error('Worker dispatch denied: Gate authorization already claimed');
+          }
+          if (auth.inputRevision && auth.inputRevision !== request.inputRevision) {
+            throw new Error(
+              `Worker dispatch denied: input revision ${request.inputRevision} does not match authorized revision ${auth.inputRevision}`,
+            );
+          }
+          if (auth.stage && auth.stage !== request.stage) {
+            throw new Error(
+              `Worker dispatch denied: authorized for stage ${auth.stage}, cannot launch ${request.stage}`,
+            );
+          }
+          if (auth.requiredAncestorSha) {
+            const targetRev = request.inputRevision;
+            const checkoutDir = request.checkout ? workflowSource(config, request.checkout) : config.project;
+            const gitCwd = existsSync(checkoutDir) ? checkoutDir : config.project;
+            try {
+              execFileSync('git', ['merge-base', '--is-ancestor', auth.requiredAncestorSha, targetRev], {
+                cwd: gitCwd,
+                encoding: 'utf8',
+                stdio: 'pipe',
+              });
+            } catch {
+              throw new Error(
+                `Worker dispatch denied: task 2 revision ${targetRev} does not contain Task 1 merge ${auth.requiredAncestorSha} as an ancestor`,
+              );
+            }
           }
         }
       }

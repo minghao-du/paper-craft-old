@@ -31,10 +31,17 @@ export function registerDemoDelivery(demo: Command) {
     .description('Orchestrator checks worker1/worker2 prerequisites and authorizes worker dispatch')
     .option('--stage-name <name>', 'Worker stage name to authorize (default: implementation)')
     .option('--brief <file>', 'Evaluated task brief file')
+    .option('--input-revision <rev>', 'Proposed task input revision')
     .action(async (id, stage, o) => {
       if (!['worker1', 'worker2'].includes(stage)) throw new Error('Expected worker1 or worker2');
       const brief = o.brief ? readFileSync(o.brief, 'utf8') : undefined;
-      print(await service(id).delivery.gate(stage, { stageName: o.stageName, brief }));
+      print(
+        await service(id).delivery.gate(stage, {
+          stageName: o.stageName,
+          brief,
+          inputRevision: o.inputRevision,
+        }),
+      );
     });
   demo
     .command('closure-request <round>')
