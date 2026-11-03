@@ -504,19 +504,34 @@ export async function dispatchStage(
       }
     }
     if (request.role === 'worker') {
-      const boundaryFile = join(roundRoot, 'delivery-boundaries.jsonl');
-      const boundaries = existsSync(boundaryFile)
-        ? readFileSync(boundaryFile, 'utf8')
-            .trim()
-            .split('\n')
-            .filter(Boolean)
-            .map((line) => JSON.parse(line))
-        : [];
-      const hasGatePass = boundaries.some((b: { pass?: boolean }) => b.pass === true);
-      if (!hasGatePass) {
+      const authFile = join(roundRoot, 'gate-authorization.json');
+      if (!existsSync(authFile)) {
         throw new Error(
           `Worker dispatch denied: matching Gate authorization required for demo round ${owningRun.constraints.roundId}`,
         );
+      }
+      const auth = JSON.parse(readFileSync(authFile, 'utf8'));
+      if (auth.roundId !== owningRun.constraints.roundId) {
+        throw new Error('Worker dispatch denied: Gate authorization round mismatch');
+      }
+      if (auth.runId !== owningRun.id) {
+        throw new Error('Worker dispatch denied: Gate authorization Run mismatch');
+      }
+      if (request.stage === 'final-records') {
+        if (!request.subject.endsWith('#' + auth.issue)) {
+          throw new Error(
+            `Worker continuation denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
+          );
+        }
+      } else {
+        if (!request.subject.endsWith('#' + auth.issue)) {
+          throw new Error(
+            `Worker dispatch denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
+          );
+        }
+        if (auth.claimed) {
+          throw new Error('Worker dispatch denied: Gate authorization already claimed');
+        }
       }
     }
   }
@@ -564,19 +579,34 @@ export async function dispatchStage(
         }
       }
       if (request.role === 'worker') {
-        const boundaryFile = join(roundRoot, 'delivery-boundaries.jsonl');
-        const boundaries = existsSync(boundaryFile)
-          ? readFileSync(boundaryFile, 'utf8')
-              .trim()
-              .split('\n')
-              .filter(Boolean)
-              .map((line) => JSON.parse(line))
-          : [];
-        const hasGatePass = boundaries.some((b: { pass?: boolean }) => b.pass === true);
-        if (!hasGatePass) {
+        const authFile = join(roundRoot, 'gate-authorization.json');
+        if (!existsSync(authFile)) {
           throw new Error(
             `Worker dispatch denied: matching Gate authorization required for demo round ${run.constraints.roundId}`,
           );
+        }
+        const auth = JSON.parse(readFileSync(authFile, 'utf8'));
+        if (auth.roundId !== run.constraints.roundId) {
+          throw new Error('Worker dispatch denied: Gate authorization round mismatch');
+        }
+        if (auth.runId !== run.id) {
+          throw new Error('Worker dispatch denied: Gate authorization Run mismatch');
+        }
+        if (request.stage === 'final-records') {
+          if (!request.subject.endsWith('#' + auth.issue)) {
+            throw new Error(
+              `Worker continuation denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
+            );
+          }
+        } else {
+          if (!request.subject.endsWith('#' + auth.issue)) {
+            throw new Error(
+              `Worker dispatch denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
+            );
+          }
+          if (auth.claimed) {
+            throw new Error('Worker dispatch denied: Gate authorization already claimed');
+          }
         }
       }
     }
@@ -712,6 +742,22 @@ export async function dispatchStage(
     return dispatch;
   }
   const attempt = dispatch.attempts[0];
+  if (
+    owningRun.constraints?.kind === 'demo' &&
+    request.role === 'worker' &&
+    request.stage !== 'final-records'
+  ) {
+    const roundRoot = dirname(config.project);
+    const authFile = join(roundRoot, 'gate-authorization.json');
+    if (existsSync(authFile)) {
+      const auth = JSON.parse(readFileSync(authFile, 'utf8'));
+      auth.claimed = true;
+      auth.claimedAt = new Date().toISOString();
+      auth.claimedLaunchId = dispatch.id;
+      auth.claimedAttemptId = attempt.id;
+      writeFileSync(authFile, JSON.stringify(auth, null, 2));
+    }
+  }
   try {
     const ack = await runner.start(attempt);
     if (!ack.conversation || !ack.address || !ack.evidence)
@@ -897,6 +943,9 @@ export async function retryStage(
   const dispatch = findDispatch(snapshot, dispatchId);
   const run = authorize(snapshot, dispatch.runId, authority);
   if (runner.name !== run.provider) throw new Error('Run provider mismatch');
+  if (run.constraints?.kind === 'demo') {
+    throw new Error('Stage retries prohibited for demo-constrained Runs');
+  }
   requireInteractive(runner);
   await runner.preflight();
   if (dispatch.remediation?.exhausted)

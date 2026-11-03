@@ -65,13 +65,15 @@ policy and throttling failures remain explicit cleanup failures; uncertain remot
 deletions are queried before any further mutation. No automatic deletion retries.
 ## Sequential delivery and human Closure
 
-The Orchestrator creates exactly two native children with the second blocked by
-the first, then calls `./pc demo --config <file> gate <round> worker1` before
-Worker 1 and `gate <round> worker2` before Worker 2. A failed gate stops dispatch;
-retain the boundary evidence. The second gate requires the actual merged, accepted,
-Final Records completed, preserved and released first delivery. Worker 2 starts at
-a revision containing that merge. Keep exactly two task PRs and use real Agy roles
-for Quality, landing, Integrated Acceptance and later specialists.
+From normal EPIC planning, the Orchestrator plans and Workflow creates exactly two native children with the second natively blocked by the first and no extra business tasks. Persisted task-1 and task-2 identities remain stable regardless of GitHub array order; both deliveries belong to the Parent Run.
+
+The Demo-bound Orchestrator automatically invokes `./pc demo --config <file> gate <round> worker1` after planning and child creation and before the first Worker; the operator does not manually invoke it. Gate 1 independently verifies Parent identity, the exact child set and parentage, native dependency direction, absence of extra tasks, and the current armed/bound Round, retaining observed facts in `delivery-boundaries.jsonl`.
+
+A successful Gate 1 check produces a durable authorization bound to Round, Run, first task Issue, stage, and evaluated inputs. Workflow rechecks this authorization at execution, claims it durably on disk before invoking the Runner, and prevents reuse for another launch. Missing, stale, wrong-identity, or previously used authorization cannot launch a Worker. An uncertain launch result is reconciled without respawning. A failed Gate or diagnostic violation stops the Round and retains evidence. Stage retries, replacement Attempts, corrective rework, and extra task PRs are prohibited for Demo.
+
+Task 1 delivery reuses normal Worker, Quality, landing, receipt/acceptance, Final Records, preservation and release paths. Normal continuation needed for successful final records is permitted. The second task remains blocked until Gate 2 is satisfied.
+
+Worker 2 waits for full PR 1 landing, final records, preservation, cleanup and verified handover before `gate <round> worker2`. A failed gate stops dispatch; retain the boundary evidence. The second gate requires the actual merged, accepted, Final Records completed, preserved and released first delivery. Worker 2 starts at a revision containing that merge. Keep exactly two task PRs and use real Agy roles for Quality, landing, Integrated Acceptance and later specialists.
 
 After Integrated Acceptance, call `closure-request <round>` to present the exact
 delivery fingerprint and exclude human waiting from the active budget. The human

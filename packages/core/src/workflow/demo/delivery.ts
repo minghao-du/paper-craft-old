@@ -1,9 +1,35 @@
 /** Demo boundary checks and human consent; business assignments remain Orchestrator decisions. */
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID, createHash } from 'node:crypto';
 import { inspectRuns } from '../run/run-driver.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 import type { DemoRound } from './round.js';
+
+/** Authorization bound to Round, Run, first task Issue, stage and inputs. */
+export interface GateAuthorization {
+  id: string;
+  roundId: string;
+  runId: string;
+  issue: number;
+  stage: string;
+  inputRevision?: string;
+  briefHash?: string;
+  authorizedAt: string;
+  claimed: boolean;
+  claimedAt?: string;
+  claimedLaunchId?: string;
+  claimedAttemptId?: string;
+}
+
+/** Stable task identities from the plan, independent of GitHub array order. */
+export interface DemoTaskIdentities {
+  roundId: string;
+  parent: number;
+  task1: number;
+  task2: number;
+}
+
 /** Independently observed current delivery, never an agent's asserted result. */
 export interface DemoDeliverySnapshot {
   version: string;
@@ -12,6 +38,12 @@ export interface DemoDeliverySnapshot {
   firstReleased: boolean;
   secondBaseline: boolean;
   accepted: boolean;
+  task1?: number;
+  task2?: number;
+  parentValid?: boolean;
+  noExtraTasks?: boolean;
+  extraTasks?: number[];
+  parent?: number;
 }
 /** External GitHub/Runtime facts; controlled adapters cannot establish live acceptance. */
 export interface DemoDeliveryAdapter {
@@ -21,6 +53,7 @@ export interface DemoDeliveryAdapter {
     source: 'human';
     evidence: string;
   }): Promise<void>;
+  createChildren?(tasks?: { title: string; body: string }[]): Promise<{ task1: number; task2: number }>;
 }
 /** Persisted public gates support reconnecting without continuing agent polling. */
 export class DemoDelivery {
@@ -29,12 +62,108 @@ export class DemoDelivery {
     readonly adapter: DemoDeliveryAdapter,
   ) {}
   /** Reject invalid decomposition or premature sequential dispatch and retain the observed boundary. */
-  async gate(stage: 'worker1' | 'worker2' | 'closure') {
+  async gate(
+    stage: 'worker1' | 'worker2' | 'closure',
+    options?: { stageName?: string; inputRevision?: string; brief?: string },
+  ) {
+    if (stage === 'worker1') {
+      const controlFile = join(this.round.root, 'control.json');
+      let roundArmed = false;
+      let control: { stopped?: boolean; releasing?: boolean; activeMs?: number; budgetMs?: number; stoppedReason?: string } | undefined;
+      if (existsSync(controlFile)) {
+        control = JSON.parse(readFileSync(controlFile, 'utf8'));
+        roundArmed = !control?.stopped && !control?.releasing && (control?.activeMs ?? 0) < (control?.budgetMs ?? Infinity);
+      }
+      const workflowConfigPath = this.round.workflowConfigFile ?? join(this.round.checkout, '.epic-config.json');
+      let runBound = false;
+      let boundRunId = '';
+      if (existsSync(workflowConfigPath)) {
+        try {
+          const registry = inspectRuns(loadFleetConfig(workflowConfigPath));
+          const bound = registry.runs.find(
+            (r) => r.constraints?.kind === 'demo' && r.constraints.roundId === this.round.id && r.lifecycle !== 'completed',
+          );
+          if (bound) {
+            runBound = true;
+            boundRunId = bound.id;
+          }
+        } catch {
+          // ignore error reading run
+        }
+      }
+      const facts = await this.adapter.inspect();
+      const parentValid = facts.parentValid !== false && (facts.parent === undefined || facts.parent === this.round.parent);
+      const exactChildren = facts.children.length === 2;
+      const noExtra = facts.noExtraTasks !== false && (!facts.extraTasks || facts.extraTasks.length === 0);
+
+      // Resolve task1 and task2 stably
+      let task1 = facts.task1;
+      let task2 = facts.task2;
+      if (task1 === undefined && exactChildren && facts.nativeDependency) {
+        task1 = facts.children[0];
+        task2 = facts.children[1];
+      }
+      const pass = Boolean(roundArmed && runBound && parentValid && exactChildren && facts.nativeDependency && noExtra && task1 !== undefined);
+
+      let failureReason: string | undefined;
+      if (!pass) {
+        if (!roundArmed) failureReason = 'Round is not armed or budget is expired';
+        else if (!runBound) failureReason = 'No active bound Run found for round ' + this.round.id;
+        else if (!parentValid) failureReason = 'Parent identity mismatch';
+        else if (!exactChildren) failureReason = `Expected exactly two child tasks, found ${facts.children.length}`;
+        else if (!facts.nativeDependency) failureReason = 'Native dependency direction violated (second child must be blocked by first)';
+        else if (!noExtra) failureReason = 'Extra tasks detected';
+        else failureReason = 'Unknown prerequisite failure';
+      }
+
+      appendFileSync(
+        join(this.round.root, 'delivery-boundaries.jsonl'),
+        JSON.stringify({ at: new Date().toISOString(), stage, pass, facts, ...(failureReason ? { error: failureReason } : {}) }) + '\n',
+      );
+
+      if (!pass) {
+        if (control && existsSync(controlFile)) {
+          control.stopped = true;
+          control.stoppedReason = 'Gate 1 verification failed: ' + failureReason;
+          writeFileSync(controlFile, JSON.stringify(control, null, 2));
+        }
+        throw new Error('Gate 1 verification failed: ' + failureReason);
+      }
+
+      // Persist stable task identities
+      const taskIdentities: DemoTaskIdentities = {
+        roundId: this.round.id,
+        parent: this.round.parent ?? 1,
+        task1: task1!,
+        task2: task2!,
+      };
+      writeFileSync(join(this.round.root, 'demo-tasks.json'), JSON.stringify(taskIdentities, null, 2));
+
+      // Issue durable Gate authorization
+      const authorization: GateAuthorization = {
+        id: randomUUID(),
+        roundId: this.round.id,
+        runId: boundRunId,
+        issue: task1!,
+        stage: options?.stageName ?? 'implementation',
+        inputRevision: options?.inputRevision,
+        briefHash: options?.brief ? createHash('sha256').update(options.brief).digest('hex') : undefined,
+        authorizedAt: new Date().toISOString(),
+        claimed: false,
+      };
+      writeFileSync(
+        join(this.round.root, 'gate-authorization.json'),
+        JSON.stringify(authorization, null, 2),
+      );
+
+      return Object.assign(facts, { authorization, task1, task2 });
+    }
+
     const facts = await this.adapter.inspect();
     const pass =
       facts.children.length === 2 &&
       facts.nativeDependency &&
-      (stage === 'worker1' || facts.firstReleased) &&
+      facts.firstReleased &&
       (stage !== 'closure' || (facts.secondBaseline && facts.accepted));
     appendFileSync(
       join(this.round.root, 'delivery-boundaries.jsonl'),
@@ -43,6 +172,22 @@ export class DemoDelivery {
     if (!pass)
       throw new Error('Native structure or complete sequential delivery prerequisite failed');
     return facts;
+  }
+
+  /** Normal Workflow creates exactly two native children with task 2 natively blocked by task 1. */
+  async createChildren(tasks?: { title: string; body: string }[]) {
+    if (!this.adapter.createChildren) {
+      throw new Error('Adapter does not support child creation');
+    }
+    const created = await this.adapter.createChildren(tasks);
+    const taskIdentities: DemoTaskIdentities = {
+      roundId: this.round.id,
+      parent: this.round.parent ?? 1,
+      task1: created.task1,
+      task2: created.task2,
+    };
+    writeFileSync(join(this.round.root, 'demo-tasks.json'), JSON.stringify(taskIdentities, null, 2));
+    return created;
   }
   /** Present the actual version before accepting a human decision. */
   async request() {
