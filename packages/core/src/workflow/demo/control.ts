@@ -21,6 +21,7 @@ export interface DemoControlState {
   tick: number;
   wait?: 'human' | 'permission';
   permissionEvidence?: string;
+  humanEvidence?: string;
   observations: {
     id: string;
     text: string;
@@ -158,6 +159,25 @@ export class DemoControl {
     if (this.status().wait !== 'permission') throw new Error('No permission wait to resume');
     this.mutate((s) => {
       s.permissionEvidence = undefined;
+    });
+    return this.checkpoint();
+  }
+
+  /** Operator evidence starts an evidenced human closure wait; no automatic judgment is implied. */
+  async humanWait(evidence: string) {
+    if (!evidence.trim() || this.status().wait === 'permission')
+      throw new Error('Expected human wait evidence outside permission wait');
+    this.mutate((s) => {
+      s.humanEvidence = evidence;
+    });
+    return this.checkpoint('human');
+  }
+
+  /** Resume only the human closure pause, preserving any separate permission wait. */
+  async humanResume() {
+    if (this.status().wait !== 'human') throw new Error('No human wait to resume');
+    this.mutate((s) => {
+      s.humanEvidence = undefined;
     });
     return this.checkpoint();
   }

@@ -1,18 +1,17 @@
 /** Real native relationship, delivery and closure boundary. No scheduling decisions. */
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { inspectRuns, inspectRun, closeStageEpic } from '../run/run-driver.js';
+import { inspectRuns, inspectRun, canonicalDeliveryFingerprint } from '../run/run-driver.js';
 import { inspectAttemptControl } from '../runtime/runtime.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 import type { DemoRound } from './round.js';
 import type { DemoDeliveryAdapter } from './delivery.js';
-/** Authority and accepted integrated Dispatch are supplied by the active Orchestrator for closure. */
+/** Authority and accepted integrated Dispatch parameters are retained for signature compatibility. */
 export function nativeDemoDelivery(
   round: DemoRound,
-  authority = '',
-  dispatch = '',
+  _authority = '',
+  _dispatch = '',
   customGh?: (path: string) => ReturnType<typeof JSON.parse>,
 ): DemoDeliveryAdapter {
   const config = loadFleetConfig(round.workflowConfigFile ?? join(round.checkout, '.epic-config.json'));
@@ -208,7 +207,7 @@ export function nativeDemoDelivery(
         }
       const head = git('rev-parse', 'HEAD');
       return {
-        version: createHash('sha256').update(JSON.stringify({ head, deliveries })).digest('hex'),
+        version: canonicalDeliveryFingerprint(head, deliveries),
         children: children.map((c) => c.number),
         nativeDependency,
         firstReleased: complete,
@@ -275,35 +274,6 @@ export function nativeDemoDelivery(
       const taskIdentities = { roundId: round.id, parent: round.parent!, task1, task2 };
       writeFileSync(join(round.root, 'demo-tasks.json'), JSON.stringify(taskIdentities, null, 2));
       return { task1, task2 };
-    },
-    async close(consent) {
-      const { run, registry } = state();
-      if (
-        run.orchestrator?.id !== authority ||
-        run.lifecycle !== 'running' ||
-        !registry.dispatches?.some(
-          (d) =>
-            d.id === dispatch &&
-            d.runId === run.id &&
-            d.role === 'epic' &&
-            d.stage === 'integrated-acceptance' &&
-            d.lifecycle === 'accepted',
-        )
-      )
-        throw new Error(
-          'Active Orchestrator and accepted integrated Dispatch required before GitHub close',
-        );
-      if (!authority || !dispatch)
-        throw new Error('Active Orchestrator authority and accepted integrated Dispatch required');
-      execFileSync('gh', ['issue', 'close', String(round.parent), '--repo', repo], {
-        encoding: 'utf8',
-        timeout: 30000,
-      });
-      await closeStageEpic(config, run.id, authority, dispatch, consent, async () => ({
-        head: git('rev-parse', 'HEAD'),
-        closed: gh(`repos/${repo}/issues/${round.parent}`).state === 'closed',
-        evidence: `GitHub ${repo}#${round.parent} actual closure`,
-      }));
     },
   };
 }

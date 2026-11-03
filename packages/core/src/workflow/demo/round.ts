@@ -96,7 +96,7 @@ Exactly two native child Issues, second natively blocked by first.
 Workers deliver Python stdlib generator+test+TSV then reader+changed-input test+JSON.
 Complete Quality, merge, Final Records, preservation, cleanup and verified handover for each.
 Run independent boundary verification.
-After accepted integrated acceptance invoke closure-request ${round.id}, wait without polling for explicit human confirm, then close ${round.id} with your authority and accepted Dispatch.
+After accepted integrated acceptance invoke closure-request ${round.id}, wait without polling for explicit human confirm, then close the parent through normal Workflow pc workflow orchestrator close-epic ${round.parent} with confirmed human consent.
 Never invent consent.
 After verified actual closure dispatch real Agy pipeline-audit for bounded applicability and structural inspection.
 Require inspectedVersions to include closure head and actual inspection evidence even for not_applicable/completed_no_changes.

@@ -131,12 +131,21 @@ After all child deliveries are recorded, preserved and released, dispatch an `ep
 assignment at stage `integrated-acceptance` against the integrated Git HEAD. Collect
 and accept its JSON goal judgment (`satisfied`, nonempty `criteria`, `blockers`).
 
-`workflow stage close` verifies an already closed GitHub EPIC; it does not issue
-human approval. Supply the target-specific human confirmation JSON with
-`source:"human"`, evidence, and `deliveryVersion`: `closureRequest.deliveryVersion` from `stage inspect --dispatch INTEGRATED`. Obtain fresh confirmation whenever this version changes.
+Normal Workflow closes the Parent EPIC via:
+```sh
+pc workflow orchestrator close-epic <issue> --config .epic-config.json --confirmation-file human-confirmation.json
+```
+(or `workflow stage close` for stage-level execution). Normal Workflow verifies single Run authority,
+current professional acceptance, complete child deliveries, and matching human confirmation evidence before
+performing the actual GitHub close. Registration that merely observes an already-closed Parent
+is not used as a substitute for actual closure.
+Supply the target-specific human confirmation JSON with `source:"human"`, evidence, and `deliveryVersion`:
+`closureRequest.deliveryVersion` from `stage inspect --dispatch INTEGRATED`. Obtain fresh confirmation whenever this version changes.
+Uncertain close results are reconciled and retained rather than blindly replayed, and verified closure opens
+`post_closure_finalization`.
 
 ```sh
-pc workflow stage close --config .epic-config.json --run RUN --authority ATTEMPT --dispatch INTEGRATED --decision human-confirmation.json
+pc workflow orchestrator close-epic <issue> --config .epic-config.json --confirmation-file human-confirmation.json
 pc workflow stage pipeline --config .epic-config.json --run RUN --authority ATTEMPT --dispatch PIPELINE
 pc workflow stage publish --config .epic-config.json --run RUN --authority ATTEMPT --dispatch RESEARCH --decision coordinator.json
 ```

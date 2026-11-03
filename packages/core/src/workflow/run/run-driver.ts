@@ -1800,6 +1800,23 @@ export async function releaseAcceptedExecution(
   );
 }
 
+/** Actions seam for actual native EPIC closure, verification and head resolution. */
+export interface EpicClosureActions {
+  /** Resolve current Git HEAD */
+  head?: () => Promise<string> | string;
+  /** Check current GitHub issue state without modifying it */
+  view?: () => Promise<{ state: string; number?: number }>;
+  /** Execute actual close on GitHub */
+  close?: () => Promise<void>;
+}
+
+/** Canonical accepted delivery fingerprint for closure request, human consent, native close, and recorded closure. */
+export function canonicalDeliveryFingerprint(head: string, deliveries: unknown[]): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ head, deliveries }))
+    .digest('hex');
+}
+
 /** Commit externally verified closure after accepted integrated goal judgment and delivery. */
 export async function closeStageEpic(
   config: FleetConfig,
@@ -1807,34 +1824,28 @@ export async function closeStageEpic(
   authority: string,
   dispatchId: string,
   confirmation: { deliveryVersion: string; source: 'human'; evidence: string },
-  observe: () => Promise<{ head: string; closed: boolean; evidence: string }>,
+  observeOrActions?: (() => Promise<{ head: string; closed: boolean; evidence: string }>) | EpicClosureActions,
 ) {
   const snapshot = inspectRuns(config);
   const run = authorize(snapshot, runId, authority);
   const dispatch = findDispatch(snapshot, dispatchId);
   const deliveries = snapshot.deliveries?.filter((d) => d.runId === runId) ?? [];
-  const facts = await observe();
-  const version = createHash('sha256')
-    .update(JSON.stringify({ head: facts.head, deliveries }))
-    .digest('hex');
+
+  if (run.subject.kind !== 'epic') {
+    throw new Error('Issue-only Run cannot close or finalize parent EPIC');
+  }
+
   if (
-    run.subject.kind !== 'epic' ||
     dispatch.runId !== runId ||
     dispatch.role !== 'epic' ||
     dispatch.stage !== 'integrated-acceptance' ||
-    dispatch.lifecycle !== 'accepted' ||
-    dispatch.inputRevision !== facts.head ||
-    !deliveries.length ||
-    deliveries.some((d) => d.status !== 'done' || !d.recorded || !d.released || !d.archive) ||
-    confirmation.source !== 'human' ||
-    !confirmation.evidence.trim() ||
-    confirmation.deliveryVersion !== version ||
-    !facts.closed ||
-    !facts.evidence.trim()
-  )
+    dispatch.lifecycle !== 'accepted'
+  ) {
     throw new Error(
-      'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+      'Active Orchestrator and accepted integrated Dispatch required before GitHub close',
     );
+  }
+
   const receipt = snapshot.receipts!.find((r) => r.id === dispatch.acceptedReceipt)!;
   verifyRetainedStageEvidence(receipt);
   const judgment = JSON.parse(readFileSync(receipt.evidence[0].path, 'utf8'));
@@ -1843,21 +1854,138 @@ export async function closeStageEpic(
     !judgment.criteria?.length ||
     !Array.isArray(judgment.blockers) ||
     judgment.blockers.length
-  )
+  ) {
     throw new Error('Integrated goal remains unaccepted');
+  }
+
+  if (
+    !deliveries.length ||
+    deliveries.some((d) => d.status !== 'done' || !d.recorded || !d.released || !d.archive)
+  ) {
+    throw new Error(
+      'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+    );
+  }
+
+  if (typeof observeOrActions === 'function') {
+    const facts = await observeOrActions();
+    const version = canonicalDeliveryFingerprint(facts.head, deliveries);
+    if (
+      dispatch.inputRevision !== facts.head ||
+      !confirmation ||
+      confirmation.source !== 'human' ||
+      !confirmation.evidence?.trim() ||
+      confirmation.deliveryVersion !== version ||
+      !facts.closed ||
+      !facts.evidence?.trim()
+    ) {
+      throw new Error(
+        'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+      );
+    }
+
+    updateRunRegistry(config, (registry) => {
+      const current = authorize(registry, runId, authority);
+      if (registry.revision !== snapshot.revision)
+        throw new Error('Registry changed during closure verification');
+      current.epicClosure = {
+        deliveryVersion: version,
+        head: facts.head,
+        evidence: facts.evidence,
+        confirmed: confirmation.evidence,
+      };
+      current.phase = 'post_closure_finalization';
+    });
+    return { deliveryVersion: version, head: facts.head };
+  }
+
+  const actions = observeOrActions ?? {};
+  const projectCwd = config.project;
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: projectCwd, encoding: 'utf8', timeout: 10000 }).trim();
+
+  const head = await (actions.head ? actions.head() : git('rev-parse', 'HEAD'));
+  if (dispatch.inputRevision !== head) {
+    throw new Error('Delivery changed after acceptance; obtain renewed acceptance and confirmation');
+  }
+
+  const version = canonicalDeliveryFingerprint(head, deliveries);
+
+  if (
+    !confirmation ||
+    confirmation.source !== 'human' ||
+    !confirmation.evidence?.trim() ||
+    confirmation.deliveryVersion !== version
+  ) {
+    throw new Error(
+      'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+    );
+  }
+
+  const viewState = async (): Promise<{ state: string }> => {
+    if (actions.view) return actions.view();
+    const out = execFileSync(
+      'gh',
+      ['issue', 'view', String(run.subject.number), '--repo', run.subject.repository, '--json', 'state'],
+      { cwd: projectCwd, encoding: 'utf8', timeout: 30000 },
+    );
+    return JSON.parse(out);
+  };
+
+  const closeIssue = async (): Promise<void> => {
+    if (actions.close) return actions.close();
+    execFileSync('gh', ['issue', 'close', String(run.subject.number), '--repo', run.subject.repository], {
+      cwd: projectCwd,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+  };
+
+  // Check if Parent was already closed BEFORE actual closure
+  const before = await viewState();
+  if (before && before.state?.toLowerCase() === 'closed') {
+    throw new Error('Registration that merely observes an already-closed Parent is not a substitute for actual closure');
+  }
+
+  // Perform actual close with reconciliation of uncertain results
+  let closeError: unknown;
+  try {
+    await closeIssue();
+  } catch (err) {
+    closeError = err;
+  }
+
+  if (closeError) {
+    // Reconcile uncertain close result: check external state
+    const reconciled = await viewState();
+    if (reconciled && reconciled.state?.toLowerCase() === 'closed') {
+      // Reconciled! Closed despite uncertainty
+    } else {
+      throw closeError;
+    }
+  }
+
+  // Independently verify closed state
+  const after = await viewState();
+  if (!after || after.state?.toLowerCase() !== 'closed') {
+    throw new Error('Expected verified actual closure; Parent remains open');
+  }
+
+  const evidence = `GitHub ${run.subject.repository}#${run.subject.number} actual closure`;
+
   updateRunRegistry(config, (registry) => {
     const current = authorize(registry, runId, authority);
     if (registry.revision !== snapshot.revision)
       throw new Error('Registry changed during closure verification');
     current.epicClosure = {
       deliveryVersion: version,
-      head: facts.head,
-      evidence: facts.evidence,
+      head,
+      evidence,
       confirmed: confirmation.evidence,
     };
     current.phase = 'post_closure_finalization';
   });
-  return { deliveryVersion: version, head: facts.head };
+  return { deliveryVersion: version, head };
 }
 
 /** Retain a validated accepted Pipeline result; receipt acceptance alone is insufficient. */
