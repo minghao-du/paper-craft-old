@@ -3,8 +3,16 @@ import { existsSync, readFileSync, writeFileSync, realpathSync, mkdirSync, rmSyn
 import { join } from 'node:path';
 import type { DemoRound, DemoRepository } from './round.js';
 import type { DemoVerification } from './verifier.js';
+/** Authorization options for disposing a defective or retained problem round. */
+export interface DemoDisposalAuthorization {
+  fresh: DemoRound;
+  forceDefective?: boolean;
+  confirmed?: boolean;
+}
+
 /** External facts and deletion boundary, replaced only for offline contract tests. */
 export interface DemoDisposalAdapter {
+  release?(round: DemoRound): Promise<boolean | void>;
   verify(round: DemoRound): Promise<DemoVerification>;
   released(round: DemoRound): Promise<boolean>;
   repository(round: DemoRound): Promise<DemoRepository | null>;
@@ -16,7 +24,7 @@ export interface DemoDisposalAdapter {
 export class DemoDisposition {
   constructor(readonly adapter: DemoDisposalAdapter) {}
   /** Clean rounds auto-dispose; retained problems require a different verified round and explicit consent. */
-  async finish(round: DemoRound, authorization?: { fresh: DemoRound; confirmed: boolean }) {
+  async finish(round: DemoRound, authorization?: DemoDisposalAuthorization) {
     const record = join(round.root, 'disposition.json');
     const retain = (cleanup: 'retained' | 'failed', reason: string) => {
       const result = { cleanup, reason, success: false };
@@ -57,7 +65,7 @@ export class DemoDisposition {
         );
       };
       owned();
-      await this.adapter.released(round);
+      await this.adapter.release?.(round);
       const result = await this.adapter.verify(round);
       const clean = (r: DemoVerification) =>
         r.business === 'completed' &&
@@ -66,7 +74,8 @@ export class DemoDisposition {
         r.cleanup !== 'failed';
       const old = existsSync(record);
       let authorized = false;
-      if (authorization?.confirmed) {
+      let freshExistedAtAuth = false;
+      if (authorization && (authorization.forceDefective || authorization.confirmed)) {
         const fresh = authorization.fresh;
         if (
           fresh.id === round.id ||
@@ -74,7 +83,13 @@ export class DemoDisposition {
           fresh.baseline !== round.baseline
         )
           throw new Error('Expected different fresh validation round with equivalent baseline');
-        authorized = clean(await this.adapter.verify(fresh));
+        const freshResult = await this.adapter.verify(fresh);
+        if (!clean(freshResult)) {
+          throw new Error('Fresh validation round is not verified clean');
+        }
+        freshExistedAtAuth =
+          existsSync(fresh.root) && existsSync(join(fresh.root, 'round.json'));
+        authorized = true;
       }
       if ((old || !clean(result) || !observations()) && !authorized)
         return retain(
@@ -99,12 +114,17 @@ export class DemoDisposition {
         throw new Error('Remote repository identity changed');
       if (identity) {
         try {
-          const beforeDelete = () => {
+          const beforeDelete = async () => {
             if (journal() !== observedJournal || (!authorized && !observations()))
               throw new Error('Late observation prevents repository deletion');
+            if (!(await this.adapter.released(round)))
+              throw new Error('Execution state uncertain before repository deletion');
           };
-          beforeDelete();
-          await this.adapter.removeRepository(round, beforeDelete);
+          await beforeDelete();
+          await this.adapter.removeRepository(round, () => {
+            if (journal() !== observedJournal || (!authorized && !observations()))
+              throw new Error('Late observation prevents repository deletion');
+          });
         } catch (error) {
           // Reconcile before another mutation; even an absent repository preserves the failure diagnosis.
           const remaining = await this.adapter.repository(round);
@@ -121,6 +141,20 @@ export class DemoDisposition {
           'failed',
           'Observation journal changed after remote deletion; local evidence retained',
         );
+      if (!(await this.adapter.released(round)))
+        return retain(
+          'failed',
+          'Execution state uncertain after remote deletion; local evidence retained',
+        );
+      if (authorized && authorization?.fresh && freshExistedAtAuth) {
+        if (
+          !existsSync(authorization.fresh.root) ||
+          !existsSync(join(authorization.fresh.root, 'round.json'))
+        ) {
+          throw new Error('Fresh validation evidence missing before scene deletion');
+        }
+      }
+      owned();
       await this.adapter.removeLocal(round);
       return {
         cleanup: 'completed' as const,

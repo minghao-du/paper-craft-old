@@ -21,12 +21,6 @@ export function registerDemoDelivery(demo: Command) {
   };
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
   demo
-    .command('create-children <round>')
-    .description('Normal Workflow creates the two native child tasks from the EPIC plan')
-    .action(async (id) => {
-      print(await service(id).delivery.createChildren());
-    });
-  demo
     .command('gate <round> <stage>')
     .description('Orchestrator checks worker1/worker2 prerequisites and authorizes worker dispatch')
     .option('--stage-name <name>', 'Worker stage name to authorize (default: implementation)')

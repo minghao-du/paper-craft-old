@@ -232,48 +232,5 @@ export function nativeDemoDelivery(
           ),
       };
     },
-    async createChildren(customTasks) {
-      const tasks = customTasks ?? [
-        {
-          title: 'Task 1: Generate TSV data with Python standard library',
-          body: 'Python standard-library generator generate.py writes data.tsv with id/value header and ten tab-separated rows (1,10) through (10,100). Deliver generator, minimal unittest and TSV in PR 1.',
-        },
-        {
-          title: 'Task 2: Summarize TSV data into JSON',
-          body: 'summarize.py reads data.tsv and writes summary.json containing n=10, mean=55, min=10, max=100. Deliver reader, unittest using changed temporary input, and JSON in PR 2.',
-        },
-      ];
-      const c1Url = execFileSync(
-        'gh',
-        ['issue', 'create', '--repo', repo, '--title', tasks[0].title, '--body', tasks[0].body],
-        { encoding: 'utf8' },
-      ).trim();
-      const task1 = Number(c1Url.split('/').at(-1));
-      execFileSync(
-        'gh',
-        ['issue', 'edit', String(round.parent), '--repo', repo, '--add-sub-issue', String(task1)],
-        { encoding: 'utf8' },
-      );
-      const c2Url = execFileSync(
-        'gh',
-        ['issue', 'create', '--repo', repo, '--title', tasks[1].title, '--body', tasks[1].body],
-        { encoding: 'utf8' },
-      ).trim();
-      const task2 = Number(c2Url.split('/').at(-1));
-      execFileSync(
-        'gh',
-        ['issue', 'edit', String(round.parent), '--repo', repo, '--add-sub-issue', String(task2)],
-        { encoding: 'utf8' },
-      );
-      const task1Obj = gh(`repos/${repo}/issues/${task1}`);
-      execFileSync(
-        'gh',
-        ['api', `repos/${repo}/issues/${task2}/dependencies/blocked_by`, '-F', `issue_id=${task1Obj.id}`],
-        { encoding: 'utf8' },
-      );
-      const taskIdentities = { roundId: round.id, parent: round.parent!, task1, task2 };
-      writeFileSync(join(round.root, 'demo-tasks.json'), JSON.stringify(taskIdentities, null, 2));
-      return { task1, task2 };
-    },
   };
 }

@@ -59,8 +59,8 @@ checks and failed deletion retain diagnostic records. Do not use `stop` to mark 
 clean completion: stop is a retained user interruption.
 
 For a retained problem scene, validate the fix in a different fresh round with the
-same baseline, then use `dispose <old-round> --validated-by <fresh-round>
---confirm-resolved` only after explicit operator confirmation that the findings
+same baseline, then use `dispose <old-round> --force-defective
+--authorized-by-fresh-round <fresh-round>` only after explicit operator confirmation that the findings
 were resolved. A repair commit alone is insufficient. The fresh validation scene
 must still be available for independent checking. Deletion does not erase Agy
 native history, GitHub backups or external console/chat copies. Permission,
@@ -159,6 +159,6 @@ They cannot resume a human closure pause.
 
 When validating a fix for an old retained scene, validate the fix in a different
 fresh round with the same baseline, then use
-`./pc demo --config <file> dispose <old> --validated-by <fresh> --confirm-resolved`
+`./pc demo --config <file> dispose <old> --force-defective --authorized-by-fresh-round <fresh>`
 only after explicit operator confirmation that the findings were resolved.
 Verification itself never disposes or deletes scenes.

@@ -1,4 +1,4 @@
-import { inspectRuns } from '../run/run-driver.js';
+import { inspectRuns, inspectRun } from '../run/run-driver.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 /** Native disposal only follows freshly collected verifier evidence and persisted identities. */
 import { execFileSync } from 'node:child_process';
@@ -23,22 +23,51 @@ export function nativeDemoDisposal(
   return {
     verify: (round) => verifier.verify(round),
     display,
-    async released(round) {
-      const config = loadFleetConfig(join(round.checkout, '.epic-config.json'));
+    async release(round) {
+      const configPath = round.workflowConfigFile ?? join(round.checkout, '.epic-config.json');
+      if (!existsSync(configPath)) return false;
+      const config = loadFleetConfig(configPath);
       const state = new DemoControl(round, nativeDemoExecution()).status();
-      if (inspectRuns(config).runs.find((r) => r.id === state.runId)?.lifecycle !== 'completed')
-        return (
-          (await new DemoControl(round, nativeDemoExecution()).stop()).execution === 'released'
-        );
-      if ((await new DemoControl(round, nativeDemoExecution()).release()).execution !== 'released')
+      const run = inspectRuns(config).runs.find((r) => r.id === state.runId);
+      if (run && run.lifecycle === 'completed') {
+        const res = await new DemoControl(round, nativeDemoExecution()).release();
+        return res.execution === 'released';
+      } else if (run) {
+        const res = await new DemoControl(round, nativeDemoExecution()).stop();
+        return res.execution === 'released';
+      }
+      return true;
+    },
+    async released(round) {
+      const configPath = round.workflowConfigFile ?? join(round.checkout, '.epic-config.json');
+      if (!existsSync(configPath)) return false;
+      const config = loadFleetConfig(configPath);
+      const state = new DemoControl(round, nativeDemoExecution()).status();
+      if (state.execution !== 'released' || !state.runId) return false;
+      let runView: ReturnType<typeof inspectRun>;
+      try {
+        runView = inspectRun(config, state.runId);
+      } catch {
         return false;
+      }
+      if (runView.resources && runView.resources.length > 0) return false;
+      if (runView.helper?.active) return false;
       if ((await verifier.verify(round)).execution !== 'released') return false;
       const watch = join(round.root, 'watch.json'),
         exit = join(round.root, 'watch-exit.json');
-      if (!existsSync(watch) || !existsSync(exit)) return false;
-      return (
-        JSON.parse(readFileSync(watch, 'utf8')).pid === JSON.parse(readFileSync(exit, 'utf8')).pid
-      );
+      if (existsSync(watch) && !existsSync(exit)) return false;
+      if (existsSync(watch) && existsSync(exit)) {
+        try {
+          if (
+            JSON.parse(readFileSync(watch, 'utf8')).pid !==
+            JSON.parse(readFileSync(exit, 'utf8')).pid
+          )
+            return false;
+        } catch {
+          return false;
+        }
+      }
+      return true;
     },
     async repository(round) {
       try {
