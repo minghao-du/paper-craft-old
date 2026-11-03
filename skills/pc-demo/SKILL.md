@@ -43,3 +43,25 @@ Controlled checker samples never establish native Agy/GitHub acceptance.
 `pc demo --config <file> start <round> --confirm --budget-minutes 60` starts an independent Agy Orchestrator. No provider fallback or permission bypass is enabled. Reconnect using `status <round>`. Submit suspected problems with `report <round> <text> --evidence <reference>` and stop with `stop <round>`; proof is not required. Observations remain in `control.json` even after business completion. Stopping revokes scheduling authority before cancellation and preserves diagnostics.
 
 A detached demo watchdog enforces the active budget after launcher disconnect. Human/permission waiting must be recorded at verified boundaries through the public control checkpoint; the watchdog does not infer waiting from missing output. Native stop cannot prove aggregate detached-helper/ownership release and therefore retains unknown occupancy; do not reuse or delete these resources based on a stop response. Missing release proof is a blocker, never a successful stop or demo pass. Generic runtime recovery remains outside this demo control boundary; do not invoke recovery/retry on a stopped demo Run. Usage is unavailable unless separately evidenced by the provider.
+
+## Sequential delivery and human Closure
+
+The Orchestrator creates exactly two native children with the second blocked by
+the first, then calls `./pc demo --config <file> gate <round> worker1` before
+Worker 1 and `gate <round> worker2` before Worker 2. A failed gate stops dispatch;
+retain the boundary evidence. The second gate requires the actual merged, accepted,
+Final Records completed, preserved and released first delivery. Worker 2 starts at
+a revision containing that merge. Keep exactly two task PRs and use real Agy roles
+for Quality, landing, Integrated Acceptance and later specialists.
+
+After Integrated Acceptance, call `closure-request <round>` to present the exact
+delivery fingerprint and exclude human waiting from the active budget. The human
+reconnects with `confirm <round> <version> --confirm`. This only creates consent;
+changed deliveries require a fresh request and fresh confirmation. The Orchestrator
+then calls `close <round> --authority <attempt> --dispatch <id>` to recheck consent,
+actually close GitHub Parent and run the existing authoritative closure gate.
+Never write human-closure.json from agent output or invent human consent.
+
+The native verifier reads retained gate snapshots and compares the Worker 2
+Attempt creation times with the witnessed handover. Missing historical observations
+remain inconclusive. Correct eventual artifacts cannot erase a failed gate.
