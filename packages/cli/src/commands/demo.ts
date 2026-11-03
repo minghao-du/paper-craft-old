@@ -1,3 +1,4 @@
+import { registerDemoFinalization } from './demo-finalization.js';
 import { registerDemoDelivery } from './demo-delivery.js';
 import { registerDemoVerifier } from './demo-verifier.js';
 import { DemoControl } from '@paper-craft/core/workflow/demo-control';
@@ -17,6 +18,7 @@ export function registerDemoCommands(program: Command) {
     );
   registerDemoVerifier(demo);
   registerDemoDelivery(demo);
+  registerDemoFinalization(demo);
   const controller = () =>
     new DemoRounds(
       JSON.parse(readFileSync(demo.opts().config, 'utf8')) as DemoConfig,

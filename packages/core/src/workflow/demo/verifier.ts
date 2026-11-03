@@ -1,3 +1,4 @@
+import { pipelineAccepted } from '../delivery/epic-finalization.js';
 /** Independent round inspection. Controlled samples exercise detection, never live acceptance. */
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -321,9 +322,9 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
         'Accepted Pipeline disposition',
         Boolean(
           run?.pipeline &&
-          ['not_applicable', 'completed_no_changes', 'completed'].includes(
-            run.pipeline.disposition,
-          ),
+          pipelineAccepted(run.pipeline) &&
+          run.pipeline.head === run.epicClosure?.head &&
+          Object.values(run.pipeline.inspectedVersions).includes(run.epicClosure!.head),
         ),
         run?.pipeline,
       );
@@ -331,7 +332,11 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
       if (report && report.path === round.entry && existsSync(round.entry))
         reportValid =
           createHash('sha256').update(readFileSync(round.entry)).digest('hex') === report.hash &&
-          Boolean(report.receipt && report.revision);
+          Boolean(report.receipt && report.revision && existsSync(report.receipt)) &&
+          report.acceptedVersions.integrated === run?.epicClosure?.head &&
+          report.observedVersions.integrated === run?.epicClosure?.head &&
+          JSON.parse(readFileSync(report.receipt, 'utf8')).hash === report.hash &&
+          JSON.parse(readFileSync(report.receipt, 'utf8')).path === round.entry;
       check(
         'publication',
         'Isolated transactional Research-State publication with matching hash',

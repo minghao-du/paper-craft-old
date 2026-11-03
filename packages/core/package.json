@@ -196,6 +196,11 @@
       "paper-craft-source": "./src/workflow/demo/delivery-native.ts",
       "types": "./dist/workflow/demo/delivery-native.d.ts",
       "default": "./dist/workflow/demo/delivery-native.js"
+    },
+    "./workflow/demo-finalization": {
+      "paper-craft-source": "./src/workflow/demo/finalization.ts",
+      "types": "./dist/workflow/demo/finalization.d.ts",
+      "default": "./dist/workflow/demo/finalization.js"
     }
   },
   "files": [
