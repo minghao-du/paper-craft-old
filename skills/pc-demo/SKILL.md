@@ -59,3 +59,24 @@ must still be available for independent checking. Deletion does not erase Agy
 native history, GitHub backups or external console/chat copies. Permission,
 policy and throttling failures remain explicit cleanup failures; uncertain remote
 deletions are queried before any further mutation. No automatic deletion retries.
+## Sequential delivery and human Closure
+
+The Orchestrator creates exactly two native children with the second blocked by
+the first, then calls `./pc demo --config <file> gate <round> worker1` before
+Worker 1 and `gate <round> worker2` before Worker 2. A failed gate stops dispatch;
+retain the boundary evidence. The second gate requires the actual merged, accepted,
+Final Records completed, preserved and released first delivery. Worker 2 starts at
+a revision containing that merge. Keep exactly two task PRs and use real Agy roles
+for Quality, landing, Integrated Acceptance and later specialists.
+
+After Integrated Acceptance, call `closure-request <round>` to present the exact
+delivery fingerprint and exclude human waiting from the active budget. The human
+reconnects with `confirm <round> <version> --confirm`. This only creates consent;
+changed deliveries require a fresh request and fresh confirmation. The Orchestrator
+then calls `close <round> --authority <attempt> --dispatch <id>` to recheck consent,
+actually close GitHub Parent and run the existing authoritative closure gate.
+Never write human-closure.json from agent output or invent human consent.
+
+The native verifier reads retained gate snapshots and compares the Worker 2
+Attempt creation times with the witnessed handover. Missing historical observations
+remain inconclusive. Correct eventual artifacts cannot erase a failed gate.

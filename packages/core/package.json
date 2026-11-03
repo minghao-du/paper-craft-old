@@ -196,6 +196,16 @@
       "paper-craft-source": "./src/workflow/demo/disposal-native.ts",
       "types": "./dist/workflow/demo/disposal-native.d.ts",
       "default": "./dist/workflow/demo/disposal-native.js"
+    },
+    "./workflow/demo-delivery": {
+      "paper-craft-source": "./src/workflow/demo/delivery.ts",
+      "types": "./dist/workflow/demo/delivery.d.ts",
+      "default": "./dist/workflow/demo/delivery.js"
+    },
+    "./workflow/demo-delivery-native": {
+      "paper-craft-source": "./src/workflow/demo/delivery-native.ts",
+      "types": "./dist/workflow/demo/delivery-native.d.ts",
+      "default": "./dist/workflow/demo/delivery-native.js"
     }
   },
   "files": [
