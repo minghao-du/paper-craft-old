@@ -32,12 +32,15 @@ tests establish provisioning behavior only, never real GitHub/Agy acceptance.
 Use `./pc demo --config <file> verify <round> --boundary <stage>` to inspect
 independent GitHub metadata, merged Git objects and Runtime evidence. Supported
 boundaries are `structure`, `delivery`, `closure`, `finalization`, and `final`
-(the default). Diagnostics persist in `verification.jsonl`; an earlier confirmed
-violation remains a finding after later outputs become correct. Business,
-defect, execution/resource and cleanup results are separate. Missing chronology,
-isolated re-execution, observation or termination evidence prevents a clean
-verdict. A checker result alone does not authorize deletion or prove zero bugs.
-Controlled checker samples never establish native Agy/GitHub acceptance.
+(the default). Verification is strictly evidence-only and leaves the scene
+completely intact: it requests no cancellation, resource release, closure,
+publication, or deletion at any boundary. Diagnostics persist in
+`verification.jsonl`; an earlier confirmed violation remains a finding after
+later outputs become correct. Business, defect, execution/resource and cleanup
+results are separate (`clean: true|false`). Missing chronology, isolated
+re-execution, observation or termination evidence prevents a clean verdict. A
+checker result alone does not authorize deletion or prove zero bugs. Controlled
+checker samples never establish native Agy/GitHub acceptance.
 ## Managed execution controls
 
 The operator starts execution using a two-command sequence:
@@ -123,12 +126,14 @@ checker exports immutable merged Git source into a temporary validation director
 runs `python3 -m unittest discover -s tests`, reruns both programs, then changes
 the temporary TSV and checks recomputation. Accepted source is never modified.
 
-Run `./pc demo --config <file> verify <round>` after business completion. Final
-verification requests verified execution release, displays independent results,
-and automatically disposes a clean scene. Earlier-stage inspection uses
-`verify <round> --boundary structure|delivery|closure|finalization`; `delivery`
-means both deliveries have completed. Findings and unknown occupancy retain the
-scene. `dispose` supports the same final checks and retained-scene authorization.
+Run `./pc demo --config <file> verify <round>` after business completion. Verification
+inspects independent evidence and displays separate business, defect, execution, and
+cleanup results without releasing resources or disposing scenes (`clean: true|false`).
+Earlier-stage inspection uses `verify <round> --boundary structure|delivery|closure|finalization`;
+`delivery` means both deliveries have completed. Findings, missing evidence, and
+unknown/active execution result in `clean: false` and leave the scene available for
+inspection. Resource release and scene deletion belong exclusively to explicit
+disposal (`pc demo dispose <round>`).
 
 For real acceptance, first review the config's owner/prefix, pinned baseline hash,
 physical isolated roots, Coordinator identity/brief and derived absolute report
@@ -152,8 +157,8 @@ These reconnectable controls exclude the recorded permission wait from active ti
 they require operator observation and do not claim automatic native prompt detection.
 They cannot resume a human closure pause.
 
-When validating a fix for an old retained scene, use the fresh round's final command
-`./pc demo --config <file> verify <fresh> --resolves <old> --confirm-resolved`.
-It verifies and deletes the authorized old scene while fresh evidence still exists,
-then performs normal fresh-round disposal. If old-scene disposal fails, both remaining
-scenes are retained. Do this before plain final verification auto-deletes the fresh round.
+When validating a fix for an old retained scene, validate the fix in a different
+fresh round with the same baseline, then use
+`./pc demo --config <file> dispose <old> --validated-by <fresh> --confirm-resolved`
+only after explicit operator confirmation that the findings were resolved.
+Verification itself never disposes or deletes scenes.

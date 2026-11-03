@@ -1,8 +1,9 @@
 import { test, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DemoVerifier, type DemoEvidence } from '../../packages/core/src/workflow/demo/verifier.js';
+import { demoArtifacts } from '../../packages/core/src/workflow/demo/artifacts.js';
 import type { DemoRound } from '../../packages/core/src/workflow/demo/round.js';
 
 test('public checker retains premature-start findings even after correct output arrives', async () => {
@@ -161,6 +162,7 @@ test('native inspection rejects invalid raw delivery, provider, execution and ob
       diagnostic('Attributable observation journal with no unresolved observations')?.verdict,
     ).toBe('missing');
     expect(result.defects).toBe('findings');
+    expect(result.clean).toBe(false);
     // A separate collection after replacing all controlled external facts exercises the valid path.
     const clean = JSON.parse(JSON.stringify(registry));
     const attemptDir = join(root, 'attempt');
@@ -267,6 +269,26 @@ test('native inspection rejects invalid raw delivery, provider, execution and ob
         facts: { children: [2, 3] },
       }) + '\n',
     );
+    writeFileSync(
+      join(root, 'gate-authorization.json'),
+      JSON.stringify({
+        id: 'auth',
+        roundId: 'raw-fixture',
+        runId: 'run',
+        issue: 3,
+        stage: 'work',
+        claimed: true,
+        authorizedAt: '2026-01-02T00:00:00Z',
+      }),
+    );
+    writeFileSync(
+      join(root, 'human-closure.json'),
+      JSON.stringify({
+        deliveryVersion: 'v',
+        source: 'human',
+        evidence: 'manual confirmation',
+      }),
+    );
     const good = await nativeDemoEvidence({
       github(path) {
         if (path.endsWith('/fixture/toy')) return { id: 7 };
@@ -295,7 +317,292 @@ test('native inspection rejects invalid raw delivery, provider, execution and ob
     expect(good.source).toBe('controlled');
     expect(good.checks.filter((c) => c.verdict !== 'pass')).toEqual([]);
     expect(good.execution).toBe('released');
+    // On a fresh clean round without previous historical findings, verification is clear and clean
+    const cleanRoot = mkdtempSync(join(tmpdir(), 'checker-clean-'));
+    try {
+      const cleanRound = { ...round, id: 'clean-fixture', root: cleanRoot };
+      const cleanResult = await new DemoVerifier({ collect: async () => good }).verify(cleanRound, 'final');
+      expect(cleanResult.defects).toBe('clear');
+      expect(cleanResult.clean).toBe(true);
+    } finally {
+      rmSync(cleanRoot, { recursive: true, force: true });
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }, 20000);
+
+test('sticky historical findings: failed gate in delivery-boundaries is retained across verification runs', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'sticky-gate-'));
+  try {
+    const round = { id: 'sticky-round', root } as DemoRound;
+    writeFileSync(
+      join(root, 'delivery-boundaries.jsonl'),
+      JSON.stringify({
+        at: '2026-01-01T00:00:00Z',
+        stage: 'worker2',
+        pass: false,
+        error: 'Native dependency direction violated',
+        facts: { children: [2, 3] },
+      }) + '\n',
+    );
+    const evidence: DemoEvidence = {
+      source: 'controlled',
+      references: ['fixture'],
+      checks: [
+        {
+          stage: 'ordering',
+          expected: 'No failed gate boundaries in delivery history',
+          observed: 'Gate 2 failed',
+          verdict: 'finding',
+        },
+      ],
+      business: 'completed',
+      execution: 'released',
+      cleanup: 'pending',
+    };
+    const verifier = new DemoVerifier({ collect: async () => evidence });
+    const first = await verifier.verify(round, 'delivery');
+    expect(first.defects).toBe('findings');
+    expect(first.clean).toBe(false);
+
+    // Later, even if fresh evidence reports pass, earlier finding from verification.jsonl is retained
+    evidence.checks = [
+      {
+        stage: 'ordering',
+        expected: 'No failed gate boundaries in delivery history',
+        observed: 'Gate 2 pass',
+        verdict: 'pass',
+      },
+    ];
+    const second = await verifier.verify(round, 'final');
+    expect(second.defects).toBe('findings');
+    expect(second.clean).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 10000);
+
+test('changed-input detection in temporary validation area without modifying accepted checkout', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'artifacts-val-')));
+  try {
+    const checkout = join(root, 'checkout');
+    mkdirSync(checkout);
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: checkout, encoding: 'utf8' }).trim();
+    git('init', '-b', 'main');
+    git('config', 'user.email', 'test@example.invalid');
+    git('config', 'user.name', 'Test');
+    mkdirSync(join(checkout, 'tests'));
+
+    // Correct generate.py
+    writeFileSync(
+      join(checkout, 'generate.py'),
+      `import sys
+with open('data.tsv', 'w') as f:
+    f.write('id\\tvalue\\n')
+    for i in range(1, 11):
+        f.write(f'{i}\\t{i*10}\\n')
+`,
+    );
+
+    // Hard-coded summarize.py that ignores changed input
+    writeFileSync(
+      join(checkout, 'summarize.py'),
+      `import json
+# Hard-coded ignoring actual file content
+json.dump({'n': 10, 'mean': 55, 'min': 10, 'max': 100}, open('summary.json', 'w'))
+`,
+    );
+
+    // Reader test that tests with input-dependent data
+    writeFileSync(
+      join(checkout, 'tests', 'test_demo.py'),
+      `import unittest, os, json, subprocess
+class TestDemo(unittest.TestCase):
+    def test_reader(self):
+        with open('data.tsv', 'w') as f:
+            f.write('id\\tvalue\\n1\\t4\\n2\\t12\\n')
+        subprocess.check_call(['python3', 'summarize.py'])
+        with open('summary.json') as f:
+            data = json.load(f)
+        self.assertEqual(data['mean'], 8)
+`,
+    );
+
+    // Pre-create data.tsv and summary.json
+    writeFileSync(
+      join(checkout, 'data.tsv'),
+      'id\tvalue\n' + Array.from({ length: 10 }, (_, i) => `${i + 1}\t${(i + 1) * 10}\n`).join(''),
+    );
+    writeFileSync(join(checkout, 'summary.json'), '{"n":10,"mean":55,"min":10,"max":100}');
+
+    git('add', '.');
+    git('commit', '-m', 'delivered files');
+    const sha = git('rev-parse', 'HEAD');
+
+    const round = { id: 'artifact-check', root, checkout } as DemoRound;
+    const checks = await demoArtifacts(round, sha, 'final');
+    // Hard-coded summarize.py should fail changed temporary input check
+    expect(checks.some((c) => c.verdict === 'finding')).toBe(true);
+    expect(checks.find((c) => c.expected.includes('input-dependent'))?.verdict).toBe('finding');
+
+    // Accepted source in checkout MUST be completely untouched!
+    expect(readFileSync(join(checkout, 'summarize.py'), 'utf8')).toContain('Hard-coded');
+    expect(git('status', '--porcelain')).toBe('');
+
+    // Now write a proper summarize.py that really recomputes from data.tsv
+    writeFileSync(
+      join(checkout, 'summarize.py'),
+      `import json
+with open('data.tsv') as f:
+    lines = [l.strip().split('\\t') for l in f if l.strip()]
+header = lines[0]
+rows = [[int(x) for x in r] for r in lines[1:]]
+vals = [r[1] for r in rows]
+result = {
+    'n': len(vals),
+    'mean': sum(vals) // len(vals) if vals else 0,
+    'min': min(vals) if vals else 0,
+    'max': max(vals) if vals else 0,
+}
+with open('summary.json', 'w') as f:
+    json.dump(result, f)
+`,
+    );
+
+    git('add', '.');
+    git('commit', '-m', 'real summarize implementation');
+    const goodSha = git('rev-parse', 'HEAD');
+
+    const goodChecks = await demoArtifacts(round, goodSha, 'final');
+    expect(goodChecks.every((c) => c.verdict === 'pass')).toBe(true);
+    // Checkout still clean
+    expect(git('status', '--porcelain')).toBe('');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30000);
+
+test('verification requests no process-control, cancellation, release or deletion, leaving scene completely intact', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'no-side-effects-')));
+  try {
+    const checkout = join(root, 'checkout');
+    mkdirSync(checkout);
+    writeFileSync(join(checkout, 'marker.txt'), 'preserved');
+    const controlPath = join(root, 'control.json');
+    writeFileSync(
+      controlPath,
+      JSON.stringify({
+        runId: 'run-1',
+        execution: 'running',
+        observations: [],
+      }),
+    );
+    const round = {
+      id: 'round-intact',
+      root,
+      checkout,
+      entry: join(root, 'report.md'),
+    } as DemoRound;
+
+    const evidence: DemoEvidence = {
+      source: 'controlled',
+      references: ['fixture'],
+      checks: [
+        {
+          stage: 'structure',
+          expected: 'Native structure',
+          observed: 'valid',
+          verdict: 'pass',
+        },
+      ],
+      business: 'completed',
+      execution: 'unknown',
+      cleanup: 'pending',
+    };
+
+    const verifier = new DemoVerifier({
+      collect: async () => evidence,
+    });
+
+    const result = await verifier.verify(round, 'final');
+    // Result reports independently
+    expect(result.business).toBe('completed');
+    expect(result.execution).toBe('unknown');
+    expect(result.clean).toBe(false);
+
+    // Scene is completely intact
+    expect(existsSync(join(checkout, 'marker.txt'))).toBe(true);
+    expect(readFileSync(join(checkout, 'marker.txt'), 'utf8')).toBe('preserved');
+    expect(existsSync(controlPath)).toBe(true);
+    // Control was NOT modified or cancelled
+    const controlAfter = JSON.parse(readFileSync(controlPath, 'utf8'));
+    expect(controlAfter.execution).toBe('running');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 10000);
+
+test('business completed with execution active or unknown reports clean: false', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'biz-complete-exec-active-'));
+  try {
+    const round = { id: 'active-exec', root } as DemoRound;
+    const evidence: DemoEvidence = {
+      source: 'native',
+      references: [root],
+      checks: [
+        {
+          stage: 'delivery',
+          expected: 'Deliveries completed',
+          observed: 'both completed',
+          verdict: 'pass',
+        },
+      ],
+      business: 'completed',
+      execution: 'unknown',
+      cleanup: 'pending',
+    };
+
+    const verifier = new DemoVerifier({ collect: async () => evidence });
+    const result = await verifier.verify(round, 'final');
+    expect(result.business).toBe('completed');
+    expect(result.execution).toBe('unknown');
+    expect(result.defects).toBe('clear');
+    expect(result.clean).toBe(false);
+
+    // Once execution is confirmed released, clean becomes true
+    evidence.execution = 'released';
+    const cleanResult = await verifier.verify(round, 'final');
+    expect(cleanResult.execution).toBe('released');
+    expect(cleanResult.clean).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 10000);
+
+test('pc demo verify CLI command is evidence-only with no release, disposal, or resolves options', async () => {
+  const { Command } = await import('commander');
+  const { registerDemoCommands } = await import('../../packages/cli/src/commands/demo.js');
+
+  const demoProgram = new Command();
+  registerDemoCommands(demoProgram);
+  const demoCmd = demoProgram.commands.find((c) => c.name() === 'demo');
+  expect(demoCmd).toBeDefined();
+
+  const verifyCmd = demoCmd!.commands.find((c) => c.name() === 'verify');
+  expect(verifyCmd).toBeDefined();
+
+  // Description must reflect no side effects, release, or disposal
+  expect(verifyCmd!.description()).toContain('without side effects, release, or disposal');
+
+  // Must NOT have disposal or scene release options
+  const optionNames = verifyCmd!.options.map((o) => o.name());
+  expect(optionNames).not.toContain('resolves');
+  expect(optionNames).not.toContain('confirm-resolved');
+  expect(optionNames).not.toContain('release');
+  expect(optionNames).not.toContain('dispose');
+
+  // Must have boundary option
+  expect(optionNames).toContain('boundary');
+});
