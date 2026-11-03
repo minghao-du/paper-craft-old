@@ -94,7 +94,7 @@ export class DemoControl {
     const s = this.status();
     const o = s.observations.find((o) => o.id === id);
     if (!o || !reason.trim()) throw new Error('Expected known observation and disposition reason');
-    o.disposition = reason;
+    o.disposition = { status: 'false_alarm', reason };
     this.save(s);
     return s;
   }
