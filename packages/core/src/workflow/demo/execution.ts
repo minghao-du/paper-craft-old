@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 import { startupRecoveryStatus } from '../runtime/startup-supervisor.js';
 import { startRun, inspectRuns, updateRunRegistry } from '../run/run-driver.js';
-import { managedRunner, cancelAttempt } from '../runtime/runtime.js';
+import { managedRunner, cancelAttempt, reconcileAttempt } from '../runtime/runtime.js';
 import type { DemoExecution } from './control.js';
 /** Existing managed Runtime owns startup, detached recovery and termination evidence. */
 export function nativeDemoExecution(): DemoExecution {
@@ -59,15 +59,17 @@ export function nativeDemoExecution(): DemoExecution {
       );
       return run.id;
     },
-    async stop(round, runId) {
+    async stop(round, runId, completed = false) {
       const config = loadFleetConfig(join(round.checkout, '.epic-config.json'));
       const snapshot = inspectRuns(config);
       const run = snapshot.runs.find((r) => r.id === runId);
       if (!run) return false;
+      if (completed && run.lifecycle !== 'completed') return false;
       // Revoke scheduling authority before terminating any execution.
-      updateRunRegistry(config, (r) => {
-        r.runs.find((x) => x.id === run.id)!.lifecycle = 'blocked';
-      });
+      if (!completed)
+        updateRunRegistry(config, (r) => {
+          r.runs.find((x) => x.id === run.id)!.lifecycle = 'blocked';
+        });
       const attempts = [
         ...(run.priorOrchestrators ?? []),
         ...(run.orchestrator ? [run.orchestrator] : []),
@@ -82,6 +84,7 @@ export function nativeDemoExecution(): DemoExecution {
         }
         if (!(await runner.stopped(a))) await cancelAttempt(a, runner);
         if (!(await runner.stopped(a))) terminated = false;
+        else await reconcileAttempt(a, { termination: runner.stopped.bind(runner) });
       }
       // A stopped process alone cannot release checkout, helper or driver ownership.
       return (

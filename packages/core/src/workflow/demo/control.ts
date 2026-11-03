@@ -7,13 +7,14 @@ import type { DemoRound } from './round.js';
 export interface DemoExecution {
   start(round: DemoRound): Promise<string>;
   watch?(round: DemoRound): void;
-  stop(round: DemoRound, runId?: string): Promise<boolean>;
+  stop(round: DemoRound, runId?: string, completed?: boolean): Promise<boolean>;
 }
 /** Reconnectable controls and observations survive a caller disconnect. */
 export interface DemoControlState {
   runId?: string;
   started?: number;
   stopped: boolean;
+  releasing?: boolean;
   execution: 'unknown' | 'running' | 'released';
   budgetMs: number;
   activeMs: number;
@@ -63,6 +64,7 @@ export class DemoControl {
     if (s.started || s.stopped)
       throw new Error('Round already started or stopped; use a fresh round');
     mkdirSync(join(this.round.config.root, 'execution.lock'));
+    writeFileSync(join(this.round.config.root, 'execution.lock', 'owner'), this.round.id);
     s.started = Date.now();
     s.tick = s.started;
     s.budgetMs = budgetMs;
@@ -112,6 +114,34 @@ export class DemoControl {
     this.save(s);
     return s.activeMs >= s.budgetMs ? this.stop() : s;
   }
+  private releaseLock() {
+    const lock = join(this.round.config.root, 'execution.lock');
+    if (
+      existsSync(join(lock, 'owner')) &&
+      readFileSync(join(lock, 'owner'), 'utf8') === this.round.id
+    )
+      rmSync(lock, { recursive: true });
+  }
+  /** Terminate a completed business Run without recording a user stop or invalidating completion. */
+  async release() {
+    let s = this.status();
+    if (s.stopped || !s.runId) return s;
+    s.releasing = true;
+    s.execution = 'unknown';
+    this.save(s);
+    // The correlated budget watcher exits when release begins; no business scheduling is performed here.
+    for (let i = 0; i < 4; i++) {
+      if (await this.adapter.stop(this.round, s.runId, true)) {
+        s = this.status();
+        s.execution = 'released';
+        this.releaseLock();
+        this.save(s);
+        return s;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    return this.status();
+  }
   /** Stop immediately, retain diagnostics, release the execution lock only with proof. */
   async stop() {
     const s = this.status();
@@ -121,7 +151,7 @@ export class DemoControl {
     try {
       if (await this.adapter.stop(this.round, s.runId)) {
         s.execution = 'released';
-        rmSync(join(this.round.config.root, 'execution.lock'), { recursive: true });
+        this.releaseLock();
       }
     } catch (e) {
       s.error = String(e);
