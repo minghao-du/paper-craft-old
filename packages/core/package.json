@@ -161,6 +161,16 @@
       "paper-craft-source": "./src/workflow/delivery/stage-delivery.ts",
       "types": "./dist/workflow/delivery/stage-delivery.d.ts",
       "default": "./dist/workflow/delivery/stage-delivery.js"
+    },
+    "./workflow/demo": {
+      "paper-craft-source": "./src/workflow/demo/round.ts",
+      "types": "./dist/workflow/demo/round.d.ts",
+      "default": "./dist/workflow/demo/round.js"
+    },
+    "./workflow/demo-native": {
+      "paper-craft-source": "./src/workflow/demo/native.ts",
+      "types": "./dist/workflow/demo/native.d.ts",
+      "default": "./dist/workflow/demo/native.js"
     }
   },
   "files": [
