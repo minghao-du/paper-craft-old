@@ -2198,6 +2198,7 @@ export interface WorkflowRunView {
   priorOrchestrators?: ManagedAttempt[];
   attempts: ManagedAttempt[];
   dispatches: StageDispatch[];
+  receipts: NonNullable<RunRegistry['receipts']>;
   deliveries: NonNullable<RunRegistry['deliveries']>;
   pullRequests: NonNullable<RunRegistry['pullRequests']>;
   resources: NonNullable<RunRegistry['resources']>;
@@ -2211,6 +2212,9 @@ export interface WorkflowRunView {
   execution: 'running' | 'reserved' | 'blocked' | 'completed' | 'unknown' | 'terminated';
   terminated: boolean;
   released: boolean;
+  epicClosure?: WorkflowRun['epicClosure'];
+  pipeline?: PipelineDisposition;
+  report?: import('../delivery/research-report.js').ResearchReport;
 }
 
 /** Result of a verified stopRun operation. */
@@ -2267,6 +2271,7 @@ export function inspectRun(config: FleetConfig, runId: string): WorkflowRunView 
   if (!run) throw new Error('Unknown Run');
 
   const dispatches = (registry.dispatches ?? []).filter((d) => d.runId === run.id);
+  const receipts = (registry.receipts ?? []).filter((r) => r.runId === run.id);
   const attempts = [
     ...(run.priorOrchestrators ?? []),
     ...(run.orchestrator ? [run.orchestrator] : []),
@@ -2324,6 +2329,7 @@ export function inspectRun(config: FleetConfig, runId: string): WorkflowRunView 
     priorOrchestrators: run.priorOrchestrators,
     attempts,
     dispatches,
+    receipts,
     deliveries,
     pullRequests,
     resources,
@@ -2332,6 +2338,9 @@ export function inspectRun(config: FleetConfig, runId: string): WorkflowRunView 
     execution,
     terminated,
     released,
+    epicClosure: run.epicClosure,
+    pipeline: run.pipeline,
+    report: run.report,
   };
 }
 

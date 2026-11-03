@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
-import { inspectRuns } from '../run/run-driver.js';
+import { inspectRunViews } from '../run/run-driver.js';
 import { pipelineAccepted } from '../delivery/epic-finalization.js';
 import type { DemoRound } from './round.js';
 
@@ -63,14 +63,17 @@ export class DemoFinalization {
 }
 
 /** Native inspection of runtime registry, repository, and isolated destination facts. */
-export function nativeDemoFinalization(round: DemoRound): DemoFinalizationAdapter {
+export function nativeDemoFinalization(
+  round: DemoRound,
+  customGh?: (path: string) => ReturnType<typeof JSON.parse>,
+): DemoFinalizationAdapter {
   const config = loadFleetConfig(join(round.checkout, '.epic-config.json'));
   return {
     async inspect(): Promise<DemoFinalizationView> {
       const controlPath = join(round.root, 'control.json');
       const control = existsSync(controlPath) ? JSON.parse(readFileSync(controlPath, 'utf8')) : {};
-      const registry = inspectRuns(config);
-      const run = registry.runs.find((r) => r.id === control.runId);
+      const runViews = inspectRunViews(config);
+      const run = runViews.find((r) => r.id === control.runId);
 
       let head: string;
       try {
@@ -86,12 +89,14 @@ export function nativeDemoFinalization(round: DemoRound): DemoFinalizationAdapte
       if (round.repository && round.parent) {
         try {
           const repo = `${round.repository.owner}/${round.repository.name}`;
-          const parentJson = JSON.parse(
-            execFileSync('gh', ['api', `repos/${repo}/issues/${round.parent}`], {
-              encoding: 'utf8',
-              timeout: 10000,
-            }),
-          );
+          const parentJson = customGh
+            ? customGh(`repos/${repo}/issues/${round.parent}`)
+            : JSON.parse(
+                execFileSync('gh', ['api', `repos/${repo}/issues/${round.parent}`], {
+                  encoding: 'utf8',
+                  timeout: 10000,
+                }),
+              );
           parentClosed = parentJson.state === 'closed';
         } catch {
           parentClosed = run?.epicClosure?.status === 'closed';

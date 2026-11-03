@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
-import { inspectRuns } from '../run/run-driver.js';
+import { inspectRunViews } from '../run/run-driver.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 import type { DemoRound } from './round.js';
 
@@ -78,8 +78,8 @@ export class DemoDelivery {
       let boundRunId = '';
       if (existsSync(workflowConfigPath)) {
         try {
-          const registry = inspectRuns(loadFleetConfig(workflowConfigPath));
-          const bound = registry.runs.find(
+          const runs = inspectRunViews(loadFleetConfig(workflowConfigPath));
+          const bound = runs.find(
             (r) => r.constraints?.kind === 'demo' && r.constraints.roundId === this.round.id && r.lifecycle !== 'completed',
           );
           if (bound) {
@@ -173,8 +173,8 @@ export class DemoDelivery {
       let boundRunId = '';
       if (workflowConfigPath && existsSync(workflowConfigPath)) {
         try {
-          const registry = inspectRuns(loadFleetConfig(workflowConfigPath));
-          const bound = registry.runs.find(
+          const runs = inspectRunViews(loadFleetConfig(workflowConfigPath));
+          const bound = runs.find(
             (r) => r.constraints?.kind === 'demo' && r.constraints.roundId === this.round.id && r.lifecycle !== 'completed',
           );
           if (bound) {
@@ -370,12 +370,23 @@ export async function demoChronology(round: DemoRound) {
       },
     ];
   }
-  const registry = inspectRuns(loadFleetConfig(configPath));
-  const worker2 = (registry.dispatches ?? []).filter(
+  const runs = inspectRunViews(loadFleetConfig(configPath));
+  const dispatches = runs.flatMap((r) => r.dispatches ?? []);
+  const worker2 = dispatches.filter(
     (d) => d.role === 'worker' && events.some((e) => d.subject.endsWith('#' + (e.facts.task2 ?? e.facts.children?.[1]))),
   );
+  const failedGate = events.some((e) => !e.pass);
+  const gate2Pass = events.find((e) => e.stage === 'worker2' && e.pass);
+  const earlyStart =
+    worker2.length > 0 &&
+    worker2.some((d) =>
+      d.attempts.some((a) =>
+        !gate2Pass || Date.parse(a.created) < Date.parse(gate2Pass.at),
+      ),
+    );
   const witnessed =
     worker2.length > 0 &&
+    !earlyStart &&
     worker2.every((d) =>
       d.attempts.every((a) =>
         events.some(
@@ -388,7 +399,7 @@ export async function demoChronology(round: DemoRound) {
       stage: 'ordering',
       expected: 'Witnessed complete handover before Worker 2 dispatch',
       observed: JSON.stringify(events),
-      verdict: events.some((e) => !e.pass)
+      verdict: failedGate || earlyStart
         ? ('finding' as const)
         : witnessed
           ? ('pass' as const)
