@@ -9,7 +9,7 @@ const round: DemoRound = JSON.parse(readFileSync(join(root, 'round.json'), 'utf8
 if (round.root !== root) throw new Error('Watch round ownership mismatch');
 const control = new DemoControl(round, nativeDemoExecution());
 try {
-  while (!control.status().stopped && !control.status().releasing) {
+  while (!control.status().stopped && !control.status().releasing && !control.status().completed) {
     await control.checkpoint(undefined, Date.now(), true);
     await new Promise((r) => setTimeout(r, 1000));
   }

@@ -316,6 +316,7 @@ export async function completeEpic(
               head: run.acceptedHead!,
               evidence: run.archive!,
               confirmed: run.decision!.evidence,
+              status: 'closed',
             };
           });
         save();

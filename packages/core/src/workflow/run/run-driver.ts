@@ -61,7 +61,7 @@ export interface WorkflowRun {
   pipelineApprovals?: Record<string, { source: 'human'; ledger: string; evidence: string }>;
   pipelineMaintenance?: import('../delivery/epic-finalization.js').EpicFinalization['maintenanceDeliveries'];
   report?: import('../delivery/research-report.js').ResearchReport;
-  epicClosure?: { deliveryVersion: string; head: string; evidence: string; confirmed: string };
+  epicClosure?: { deliveryVersion: string; head: string; evidence: string; confirmed: string; status?: 'closed' };
   orchestratorId: string;
   launchStarted?: boolean;
   orchestrator?: ManagedAttempt;
@@ -204,13 +204,23 @@ export async function startRun(
     );
   if (dangerouslySkipPermissions && provider !== 'agy')
     throw new Error('--dangerously-skip-permissions requires --provider agy');
-  if (!constraints && (config as unknown as { demo?: { round?: string; config?: string } }).demo?.round) {
-    const demoInfo = (config as unknown as { demo: { round: string; config?: string } }).demo;
+  if (!constraints && config.demo?.round) {
     constraints = {
       kind: 'demo',
-      roundId: demoInfo.round,
-      demoConfigPath: demoInfo.config,
+      roundId: config.demo.round,
+      demoConfigPath: config.demo.config,
     };
+  }
+  if (!constraints && requirements) {
+    const m = requirements.match(/Diagnostic demo round ([0-9a-f-]{36}|[a-zA-Z0-9_-]+)/);
+    if (m) {
+      const demoConfigMatch = requirements.match(/Demo configuration: (.*?)\./);
+      constraints = {
+        kind: 'demo',
+        roundId: m[1],
+        demoConfigPath: demoConfigMatch ? demoConfigMatch[1] : undefined,
+      };
+    }
   }
   const verifyPermissions = (run: WorkflowRun) => {
     if (dangerouslySkipPermissions && !run.dangerouslySkipPermissions)
@@ -503,6 +513,14 @@ export async function dispatchStage(
         );
       }
     }
+    if (request.role === 'pipeline-audit' || request.role === 'research-state') {
+      if (!owningRun.epicClosure || owningRun.epicClosure.status !== 'closed') {
+        throw new Error('Verified actual Parent closure required before specialist dispatch');
+      }
+      if (owningRun.provider !== 'agy') {
+        throw new Error('Agy specialist dispatch required');
+      }
+    }
     if (request.role === 'worker') {
       const authFile = join(roundRoot, 'gate-authorization.json');
       if (!existsSync(authFile)) {
@@ -706,12 +724,15 @@ export async function dispatchStage(
       throw new Error('Missing mandatory accepted Worker implementation');
     if (
       (request.role === 'pipeline-audit' || request.role === 'pipeline-refactor') &&
-      !run.epicClosure
+      (!run.epicClosure || (run.epicClosure.status !== undefined && run.epicClosure.status !== 'closed'))
     )
       throw new Error('Pipeline requires verified EPIC closure');
     if (
       request.role === 'research-state' &&
-      (!run.epicClosure || !run.pipeline || !pipelineAccepted(run.pipeline))
+      (!run.epicClosure ||
+        (run.epicClosure.status !== undefined && run.epicClosure.status !== 'closed') ||
+        !run.pipeline ||
+        !pipelineAccepted(run.pipeline))
     )
       throw new Error('Report requires accepted Pipeline disposition');
     const predecessor = mandatory[request.stage];
@@ -1893,6 +1914,7 @@ export async function closeStageEpic(
         head: facts.head,
         evidence: facts.evidence,
         confirmed: confirmation.evidence,
+        status: 'closed',
       };
       current.phase = 'post_closure_finalization';
     });
@@ -1982,6 +2004,7 @@ export async function closeStageEpic(
       head,
       evidence,
       confirmed: confirmation.evidence,
+      status: 'closed',
     };
     current.phase = 'post_closure_finalization';
   });
@@ -2000,6 +2023,7 @@ export function dispositionStagePipeline(
     const dispatch = findDispatch(registry, dispatchId);
     if (
       !run.epicClosure ||
+      (run.epicClosure.status !== undefined && run.epicClosure.status !== 'closed') ||
       dispatch.runId !== runId ||
       !['pipeline-audit', 'pipeline-refactor'].includes(dispatch.role) ||
       dispatch.lifecycle !== 'accepted'
@@ -2010,6 +2034,35 @@ export function dispositionStagePipeline(
     const result = JSON.parse(
       readFileSync(receipt.evidence[0].path, 'utf8'),
     ) as PipelineDisposition;
+
+    if (run.constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      const isCleanNoChanges =
+        ['not_applicable', 'completed_no_changes'].includes(result.disposition) &&
+        pipelineAccepted(result) &&
+        result.head === run.epicClosure.head &&
+        Object.values(result.inspectedVersions ?? {}).includes(run.epicClosure.head) &&
+        (receipt.evidence?.length ?? 0) > 0;
+
+      if (!isCleanNoChanges) {
+        if (existsSync(controlFile)) {
+          const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+          control.stopped = true;
+          control.stoppedReason =
+            result.disposition === 'changes_needed'
+              ? 'Pipeline changes require retention; no repair or third delivery'
+              : 'Pipeline disposition invalidates acceptance; retaining diagnostic round';
+          writeFileSync(controlFile, JSON.stringify(control, null, 2));
+        }
+        throw new Error(
+          result.disposition === 'changes_needed'
+            ? 'Pipeline changes require retention; no repair or third delivery'
+            : 'Pipeline disposition blocks reporting',
+        );
+      }
+    }
+
     if (result.head !== run.epicClosure.head || !pipelineAccepted(result))
       throw new Error('Pipeline disposition blocks reporting');
     run.pipeline = result;
@@ -2029,6 +2082,7 @@ export async function publishStageReport(
   const dispatch = findDispatch(snapshot, dispatchId);
   if (
     !run.epicClosure ||
+    (run.epicClosure.status !== undefined && run.epicClosure.status !== 'closed') ||
     !pipelineAccepted(run.pipeline) ||
     dispatch.runId !== runId ||
     dispatch.role !== 'research-state' ||
@@ -2050,6 +2104,36 @@ export async function publishStageReport(
     createHash('sha256').update(readFileSync(result.artifact)).digest('hex') !== result.artifactHash
   )
     throw new Error('Report artifact changed since accepted result');
+
+  if (run.constraints?.kind === 'demo') {
+    const roundRoot = dirname(config.project);
+    const roundFile = join(roundRoot, 'round.json');
+    if (existsSync(roundFile)) {
+      const round = JSON.parse(readFileSync(roundFile, 'utf8'));
+      if (
+        coordinator.identity !== round.config.coordinator ||
+        coordinator.brief !== round.config.brief ||
+        coordinator.entry !== round.entry ||
+        realpathSync(round.research) !== round.research ||
+        dirname(round.entry) !== round.research ||
+        round.entry !== join(round.research, 'report.md')
+      ) {
+        throw new Error('Isolated physical report destination and operator coordinator configuration required');
+      }
+    }
+
+    const artifactContent = readFileSync(result.artifact, 'utf8');
+    const hasSummaryValues =
+      /\b10\b/.test(artifactContent) &&
+      /\b55\b/.test(artifactContent) &&
+      /\b100\b/.test(artifactContent);
+    const hasReferences = /#\d+|PR\s*\d+|Issue\s*\d+/i.test(artifactContent);
+    const hasPipelineConclusion = /(not_applicable|completed_no_changes|pipeline)/i.test(artifactContent);
+
+    if (!hasSummaryValues || !hasReferences || !hasPipelineConclusion) {
+      throw new Error('Demo report does not satisfy required checks, baseline values, or sections');
+    }
+  }
   const observedHead = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: config.project,
     encoding: 'utf8',
@@ -2083,8 +2167,7 @@ export async function publishStageReport(
       const controlFile = join(roundRoot, 'control.json');
       if (existsSync(controlFile)) {
         const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-        control.releasing = true;
-        control.execution = 'released';
+        control.completed = true;
         writeFileSync(controlFile, JSON.stringify(control, null, 2));
       }
     }

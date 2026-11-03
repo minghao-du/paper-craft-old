@@ -100,9 +100,9 @@ After accepted integrated acceptance invoke closure-request ${round.id}, wait wi
 Never invent consent.
 After verified actual closure dispatch real Agy pipeline-audit for bounded applicability and structural inspection.
 Require inspectedVersions to include closure head and actual inspection evidence even for not_applicable/completed_no_changes.
-Use pc demo pipeline with authority and accepted specialist dispatch. changes_needed or defects stop and retain; never repair, create extra Issues or a third PR.
+Use normal Workflow pc workflow orchestrator stage pipeline --config ${workflowConfigPath} --run <run> --authority <authority> --dispatch <id>. changes_needed or defects stop and retain; never repair, create extra Issues or a third PR.
 Then dispatch real Agy research-state to write a short report artifact with all nine Research-State sections, actual commands/results, issue/PR references, accepted versus observed versions, values and limitations.
-Use pc demo publish with authority and accepted research Dispatch; it supplies operator Coordinator identity, isolated entry and confirmed brief to the existing transactional publication contract.
+Use normal Workflow pc workflow orchestrator stage publish --config ${workflowConfigPath} --run <run> --authority <authority> --dispatch <id> --decision <coordinator.json>; it supplies operator Coordinator identity, isolated entry and confirmed brief to the existing transactional publication contract.
 Do not claim completion before verified provenance.
 Human report and stop remain available throughout specialists.
 Agy only.
