@@ -29,6 +29,15 @@ spaced and never automatically replayed; uncertain remote results are queried an
 retained for diagnosis. No provider permission bypass is enabled. Controlled adapter
 tests establish provisioning behavior only, never real GitHub/Agy acceptance.
 
+Use `./pc demo --config <file> verify <round> --boundary <stage>` to inspect
+independent GitHub metadata, merged Git objects and Runtime evidence. Supported
+boundaries are `structure`, `delivery`, `closure`, `finalization`, and `final`
+(the default). Diagnostics persist in `verification.jsonl`; an earlier confirmed
+violation remains a finding after later outputs become correct. Business,
+defect, execution/resource and cleanup results are separate. Missing chronology,
+isolated re-execution, observation or termination evidence prevents a clean
+verdict. A checker result alone does not authorize deletion or prove zero bugs.
+Controlled checker samples never establish native Agy/GitHub acceptance.
 ## Managed execution controls
 
 `pc demo --config <file> start <round> --confirm --budget-minutes 60` starts an independent Agy Orchestrator. No provider fallback or permission bypass is enabled. Reconnect using `status <round>`. Submit suspected problems with `report <round> <text> --evidence <reference>` and stop with `stop <round>`; proof is not required. Observations remain in `control.json` even after business completion. Stopping revokes scheduling authority before cancellation and preserves diagnostics.
