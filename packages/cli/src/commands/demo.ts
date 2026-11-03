@@ -1,4 +1,6 @@
 import { registerDemoVerifier } from './demo-verifier.js';
+import { DemoControl } from '@paper-craft/core/workflow/demo-control';
+import { nativeDemoExecution } from '@paper-craft/core/workflow/demo-execution';
 import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { DemoRounds, type DemoConfig } from '@paper-craft/core/workflow/demo';
@@ -34,5 +36,26 @@ export function registerDemoCommands(program: Command) {
   demo
     .command('status <round>')
     .description('Reconnect to persisted round identity')
-    .action((id) => print(controller().status(id)));
+    .action((id) => {
+      const round = controller().status(id);
+      print({ round, control: new DemoControl(round, nativeDemoExecution()).status() });
+    });
+  const control = (id: string) => new DemoControl(controller().status(id), nativeDemoExecution());
+  demo
+    .command('start <round>')
+    .description('Explicitly start independent managed Agy Orchestrator')
+    .option('--confirm', 'Confirm Agy execution')
+    .option('--budget-minutes <minutes>', 'Active execution budget', '60')
+    .action(async (id, o) =>
+      print(await control(id).start(o.confirm === true, Number(o.budgetMinutes) * 60000)),
+    );
+  demo
+    .command('report <round> <text>')
+    .description('Retain a suspected problem without proof')
+    .option('--evidence <reference>')
+    .action((id, text, o) => print(control(id).report(text, o.evidence)));
+  demo
+    .command('stop <round>')
+    .description('Revoke dispatch and request verified termination; retain evidence')
+    .action(async (id) => print(await control(id).stop()));
 }
