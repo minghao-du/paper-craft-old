@@ -284,6 +284,29 @@ test('Criterion 1 & 2 & 3 & 4: Automatic Gate 2 verifies complete Task 1 handove
     expect(auth.runId).toBe(run.id);
     expect(auth.requiredAncestorSha).toBe(gitShas.task1MergeSha);
     expect(auth.claimed).toBe(false);
+
+    // Verify stage-specific authorizations and authorization history are preserved
+    const g1Path = join(round.root, 'gate-worker1-authorization.json');
+    expect(existsSync(g1Path)).toBe(true);
+    const g1Auth = JSON.parse(readFileSync(g1Path, 'utf8'));
+    expect(g1Auth.issue).toBe(2);
+    expect(g1Auth.roundId).toBe(round.id);
+
+    const g2Path = join(round.root, 'gate-worker2-authorization.json');
+    expect(existsSync(g2Path)).toBe(true);
+    const g2Auth = JSON.parse(readFileSync(g2Path, 'utf8'));
+    expect(g2Auth.issue).toBe(3);
+    expect(g2Auth.roundId).toBe(round.id);
+
+    const authsJsonlPath = join(round.root, 'gate-authorizations.jsonl');
+    expect(existsSync(authsJsonlPath)).toBe(true);
+    const jsonlLines = readFileSync(authsJsonlPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    expect(jsonlLines.length).toBeGreaterThanOrEqual(2);
+    expect(jsonlLines[0].gate).toBe('worker1');
+    expect(jsonlLines[1].gate).toBe('worker2');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -985,7 +1008,7 @@ test('Criterion 2 & 3: nativeDemoDelivery independently verifies GitHub merge, d
       });
     });
 
-    const nativeAdapter = nativeDemoDelivery(round, '', '', mockGh);
+    const nativeAdapter = nativeDemoDelivery(round, mockGh);
     const snap1 = await nativeAdapter.inspect();
     expect(snap1.firstReleased).toBe(true);
     expect(snap1.task1MergeSha).toBe(gitShas.task1MergeSha);

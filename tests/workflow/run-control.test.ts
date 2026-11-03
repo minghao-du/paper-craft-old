@@ -458,7 +458,7 @@ test('CLI stop and release commands execute verified control operations and reje
 
   const runner = {
     interactive: true,
-    name: 'codex',
+    name: 'agy',
     async stopped() {
       return true;
     },
@@ -473,7 +473,7 @@ test('CLI stop and release commands execute verified control operations and reje
       config,
       runner,
       { repository: 'owner/repo', number: 42, kind: 'issue', title: 'cli test', body: 'body' },
-      'codex',
+      'agy',
     );
 
     // Mock attempt directory termination for codex runner (exit-code file)

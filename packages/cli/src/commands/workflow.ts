@@ -381,7 +381,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     try {
       config = loadFleetConfig(options.config);
       current = inspectRuns(config).runs.find((run) => run.id === id);
-      if (!current) throw new Error('Unknown Run');
+      if (!current) throw new Error(`Unknown Run: expected existing run with id ${id}`);
       const runner = managedRunner(current.provider);
       const result = await recoverRun(config, runner, id, {
         replaceOrchestrator: options.replace,
@@ -493,7 +493,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     try {
       config = loadFleetConfig(options.config);
       current = inspectRuns(config).runs.find((run) => run.id === id);
-      if (!current) throw new Error('Unknown Run');
+      if (!current) throw new Error(`Unknown Run: expected existing run with id ${id}`);
       const runner = managedRunner(current.provider);
       const result = await stopRun(config, runner, id, {
         stopped: (attempt) => runner.stopped(attempt),
@@ -556,7 +556,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     try {
       config = loadFleetConfig(options.config);
       current = inspectRuns(config).runs.find((run) => run.id === id);
-      if (!current) throw new Error('Unknown Run');
+      if (!current) throw new Error(`Unknown Run: expected existing run with id ${id}`);
       const runner = managedRunner(current.provider);
       const result = await releaseRun(config, runner, id, {
         stopped: (attempt) => runner.stopped(attempt),

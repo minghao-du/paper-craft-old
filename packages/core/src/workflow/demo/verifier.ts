@@ -264,7 +264,47 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
         );
       }
 
+      const g1File = join(round.root, 'gate-worker1-authorization.json');
+      const g2File = join(round.root, 'gate-worker2-authorization.json');
+      const jsonlFile = join(round.root, 'gate-authorizations.jsonl');
       const gateAuthFile = join(round.root, 'gate-authorization.json');
+
+      let g1Auth: GateAuthorization | undefined;
+      let g2Auth: GateAuthorization | undefined;
+      if (existsSync(g1File)) {
+        try {
+          g1Auth = JSON.parse(readFileSync(g1File, 'utf8'));
+        } catch {
+          /* ignore */
+        }
+      }
+      if (existsSync(g2File)) {
+        try {
+          g2Auth = JSON.parse(readFileSync(g2File, 'utf8'));
+        } catch {
+          /* ignore */
+        }
+      }
+      if (existsSync(jsonlFile)) {
+        try {
+          const list = readFileSync(jsonlFile, 'utf8')
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line));
+          g1Auth ??= list.find(
+            (a: { gate?: string; issue?: number }) =>
+              a.gate === 'worker1' || a.issue === children[0]?.number,
+          );
+          g2Auth ??= list.find(
+            (a: { gate?: string; issue?: number }) =>
+              a.gate === 'worker2' || a.issue === children[1]?.number,
+          );
+        } catch {
+          /* ignore */
+        }
+      }
+
       let gateAuth: GateAuthorization | undefined;
       if (existsSync(gateAuthFile)) {
         try {
@@ -273,19 +313,56 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           /* ignore */
         }
       }
-      const validGateAuth = Boolean(
-        gateAuth &&
-          gateAuth.roundId === round.id &&
-          gateAuth.runId === run?.id &&
-          gateAuth.claimed === true,
-      );
-      check(
-        'attribution',
-        'Retained Gate authorization evidence',
-        gateAuth ? validGateAuth : undefined,
-        gateAuth ?? 'Missing gate-authorization.json',
-        gateAuthFile,
-      );
+
+      if (!g1Auth && !g2Auth && gateAuth) {
+        const validGateAuth = Boolean(
+          gateAuth &&
+            gateAuth.roundId === round.id &&
+            gateAuth.runId === run?.id &&
+            gateAuth.claimed === true,
+        );
+        check(
+          'attribution',
+          'Retained Gate authorization evidence',
+          gateAuth ? validGateAuth : undefined,
+          gateAuth ?? 'Missing gate-authorization.json',
+          gateAuthFile,
+        );
+      } else {
+        const validG1 = Boolean(
+          g1Auth &&
+            g1Auth.roundId === round.id &&
+            g1Auth.runId === run?.id &&
+            g1Auth.claimed === true,
+        );
+        const validG2 = Boolean(
+          g2Auth &&
+            g2Auth.roundId === round.id &&
+            g2Auth.runId === run?.id &&
+            g2Auth.claimed === true,
+        );
+        const validChronology = Boolean(
+          validG1 &&
+            validG2 &&
+            g1Auth?.authorizedAt &&
+            g2Auth?.authorizedAt &&
+            Date.parse(g1Auth.authorizedAt) <= Date.parse(g2Auth.authorizedAt),
+        );
+        check(
+          'attribution',
+          'Retained Gate 1 and Gate 2 authorization history',
+          g1Auth || g2Auth ? validG1 && validG2 : undefined,
+          { gate1: g1Auth, gate2: g2Auth },
+          existsSync(jsonlFile) ? jsonlFile : g1File,
+        );
+        check(
+          'ordering',
+          'Gate 1 authorized before Gate 2',
+          g1Auth && g2Auth ? validChronology : undefined,
+          { gate1AuthorizedAt: g1Auth?.authorizedAt, gate2AuthorizedAt: g2Auth?.authorizedAt },
+          existsSync(jsonlFile) ? jsonlFile : g2File,
+        );
+      }
 
       const deliveries = run?.deliveries ?? [];
       const pullRequests = run?.pullRequests ?? [];

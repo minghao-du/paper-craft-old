@@ -65,7 +65,11 @@ export async function reconcileStartup(
   let waiting = false;
   const snapshot = inspectRuns(config);
   const owner = snapshot.runs.find((r) => r.id === runId);
-  if (!owner || owner.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
+  if (!owner) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
+  if (owner.provider !== runner.name)
+    throw new Error(
+      `Run provider mismatch: expected provider ${owner.provider}, but received ${runner.name}`,
+    );
   if (owner.lifecycle === 'completed') return false;
   verifyRunRequirements(owner);
   if (owner.constraints?.kind === 'demo') {
