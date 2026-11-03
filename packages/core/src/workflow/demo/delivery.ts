@@ -52,11 +52,6 @@ export interface DemoDeliverySnapshot {
 /** External GitHub/Runtime facts; controlled adapters cannot establish live acceptance. */
 export interface DemoDeliveryAdapter {
   inspect(): Promise<DemoDeliverySnapshot>;
-  close(confirmation: {
-    deliveryVersion: string;
-    source: 'human';
-    evidence: string;
-  }): Promise<void>;
   createChildren?(tasks?: { title: string; body: string }[]): Promise<{ task1: number; task2: number }>;
 }
 /** Persisted public gates support reconnecting without continuing agent polling. */
@@ -329,14 +324,18 @@ export class DemoDelivery {
     const facts = await this.gate('closure');
     writeFileSync(
       join(this.round.root, 'closure-request.json'),
-      JSON.stringify({ deliveryVersion: facts.version }),
+      JSON.stringify({ deliveryVersion: facts.version }, null, 2),
     );
     return facts;
   }
   /** Only explicitly invoked human control creates consent, bound to the displayed version. */
   async confirm(version: string, confirmed: boolean) {
     const facts = await this.gate('closure');
-    const request = JSON.parse(readFileSync(join(this.round.root, 'closure-request.json'), 'utf8'));
+    const reqFile = join(this.round.root, 'closure-request.json');
+    if (!existsSync(reqFile)) {
+      throw new Error('Closure request required before human confirmation');
+    }
+    const request = JSON.parse(readFileSync(reqFile, 'utf8'));
     if (!confirmed || request.deliveryVersion !== version || facts.version !== version)
       throw new Error('Expected explicit human confirmation of current requested delivery version');
     const consent = {
@@ -344,16 +343,8 @@ export class DemoDelivery {
       source: 'human' as const,
       evidence: `Operator pc demo confirm for round ${this.round.id} at ${new Date().toISOString()}`,
     };
-    writeFileSync(join(this.round.root, 'human-closure.json'), JSON.stringify(consent));
+    writeFileSync(join(this.round.root, 'human-closure.json'), JSON.stringify(consent, null, 2));
     return consent;
-  }
-  /** Orchestrator invokes actual close after rechecking current consent; adapter verifies the existing closure gate. */
-  async close() {
-    const facts = await this.gate('closure');
-    const consent = JSON.parse(readFileSync(join(this.round.root, 'human-closure.json'), 'utf8'));
-    if (consent.source !== 'human' || consent.deliveryVersion !== facts.version)
-      throw new Error('Stale or missing human closure consent');
-    await this.adapter.close(consent);
   }
 }
 /** Historical checks use durable observed boundary snapshots, never eventual output alone. */

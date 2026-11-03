@@ -8,6 +8,10 @@ Record explicit human confirmation, close and archive an accepted EPIC
 Options:
   --repository <owner/name>    Target repository
   --human-confirmation <text>  Exact explicit human closure confirmation
+  --confirmation-file <file>   Human confirmation JSON file
+  --authority <attempt>        Active Orchestrator authority
+  --dispatch <id>              Accepted integrated acceptance Dispatch
+  --run <id>                   Owning Run identity
   --config <file>              Authoritative Fleet configuration (default:
                                ".epic-config.json")
   -h, --help                   display help for command

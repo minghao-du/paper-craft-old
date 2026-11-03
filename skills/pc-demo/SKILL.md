@@ -81,8 +81,13 @@ After Integrated Acceptance, call `closure-request <round>` to present the exact
 delivery fingerprint and exclude human waiting from the active budget. The human
 reconnects with `confirm <round> <version> --confirm`. This only creates consent;
 changed deliveries require a fresh request and fresh confirmation. The Orchestrator
-then calls `close <round> --authority <attempt> --dispatch <id>` to recheck consent,
-actually close GitHub Parent and run the existing authoritative closure gate.
+then closes the Parent through normal Workflow:
+`pc workflow orchestrator close-epic <parent> --config <checkout>/.epic-config.json --confirmation-file <round>/human-closure.json`.
+Normal Workflow verifies single Run authority, current professional acceptance,
+complete child deliveries, and matching human evidence before any external side effect,
+performs the actual GitHub close, verifies closed state, reconciles uncertain results,
+records the accepted version, and opens post-closure finalization. Demo only manages
+closure request, human consent, and budget wait controls; `pc demo close` is removed.
 Never write human-closure.json from agent output or invent human consent.
 
 The native verifier reads retained gate snapshots and compares the Worker 2

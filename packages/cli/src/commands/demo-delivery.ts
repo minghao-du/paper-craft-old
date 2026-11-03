@@ -48,8 +48,9 @@ export function registerDemoDelivery(demo: Command) {
     .description('Show integrated delivery version and pause active budget for human judgment')
     .action(async (id) => {
       const s = service(id);
-      print(await s.delivery.request());
-      await s.control.checkpoint('human');
+      const facts = await s.delivery.request();
+      print(facts);
+      await s.control.humanWait(`Closure request for round ${id} delivery version ${facts.version}`);
     });
   demo
     .command('confirm <round> <version>')
@@ -58,15 +59,8 @@ export function registerDemoDelivery(demo: Command) {
     .action(async (id, version, o) => {
       const s = service(id);
       print(await s.delivery.confirm(version, o.confirm === true));
-      await s.control.checkpoint();
-    });
-  demo
-    .command('close <round>')
-    .description('Orchestrator actually closes Parent and invokes existing closure verification')
-    .requiredOption('--authority <attempt>', 'Active managed Orchestrator authority')
-    .requiredOption('--dispatch <id>', 'Accepted integrated acceptance Dispatch')
-    .action(async (id, o) => {
-      await service(id, o.authority, o.dispatch).delivery.close();
-      print({ closed: true });
+      if (s.control.status().wait === 'human') {
+        await s.control.humanResume();
+      }
     });
 }
