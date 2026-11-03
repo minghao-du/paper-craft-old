@@ -160,6 +160,25 @@ regression. It retains the temporary evidence directory and makes no model or
 GitHub calls. This proves controlled CLI lifecycle behavior, not native execution
 for every role or scientific validity.
 
+## Safe Stop and Completed-Run Release
+
+An operator or automated supervisor may halt an active Run or release a completed Run using public workflow services and CLI:
+
+```bash
+pc workflow orchestrator stop <run-id> --config <config>
+pc workflow orchestrator release <run-id> --config <config>
+```
+
+- **Stop (`stopRun` / `pc workflow orchestrator stop <run>`)**:
+  Revokes further scheduling authority and pending activation before requesting cancellation of owned executions.
+  Accepted deliverables, receipts, acknowledgements and retained business evidence are never rewritten or erased.
+  Cancellation acknowledgements alone do not establish release. Termination of every owned current/historical attempt and background startup helper must be independently verified; unknown or failed termination remains visible as a blocker and prevents resource reuse.
+- **Completed-Run release (`releaseRun` / `pc workflow orchestrator release <run>`)**:
+  A distinct completed-Run operation that terminates remaining executions and helpers without recording user interruption or changing completed business success into failure.
+  Releasing checkouts and resources requires satisfying normal Workflow preservation and cleanup prerequisites; neither stop nor completed release may silently bypass them.
+- **Idempotence and authority**:
+  Repeated stop or release requests reconcile existing owned state without launching replacements, deleting scenes or claiming another Run's resources. The Run retains its single active managed Orchestrator authority, fixed provider and configured physical ownership boundaries; Fleet does not become a scheduling agent.
+
 ## Opt-in native scheduler demonstration
 
 Run `pnpm exec tsx scripts/demos/workflow-live-demo.ts <codex|claude|agy>` explicitly to

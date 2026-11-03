@@ -3,6 +3,8 @@ import {
   startRun,
   inspectRuns,
   recoverRun,
+  stopRun,
+  releaseRun,
   orchestratorForSubject,
   type WorkflowRun,
   type RunRegistry,
@@ -454,6 +456,132 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       run(() => {
         throw error;
       });
+    }
+  });
+  configured(
+    orchestrator
+      .command('stop <run>')
+      .description('Revoke scheduling and terminate owned executions; retain completed business evidence')
+      .option('--detailed', 'Return the complete current structured result; logs remain referenced'),
+  ).action(async (id: string, options: Options) => {
+    let config: FleetConfig | undefined;
+    let current: WorkflowRun | undefined;
+    try {
+      config = loadFleetConfig(options.config);
+      current = inspectRuns(config).runs.find((run) => run.id === id);
+      if (!current) throw new Error('Unknown Run');
+      const runner = managedRunner(current.provider);
+      const result = await stopRun(config, runner, id, {
+        stopped: (attempt) => runner.stopped(attempt),
+      });
+      current = inspectRuns(config).runs.find((entry) => entry.id === id)!;
+      output(
+        {
+          ...result,
+          blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
+          inspection: await inspection(current, config, !!options.detailed),
+          outcome: result.released
+            ? 'succeeded'
+            : result.terminated
+              ? 'succeeded'
+              : 'blocked',
+        },
+        opts.human(),
+      );
+      if (!result.terminated || result.blockers.length) process.exitCode = 2;
+    } catch (error) {
+      if (config) {
+        try {
+          current = inspectRuns(config).runs.find((entry) => entry.id === id) ?? current;
+        } catch {
+          /* Retain the last verified state. */
+        }
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      output(
+        {
+          outcome: 'failed',
+          status: 'unknown',
+          ...(current && config
+            ? {
+                inspection: await inspection(current, config, !!options.detailed),
+                observation: current.orchestrator?.observation,
+                evidence: current.orchestrator?.evidence,
+              }
+            : {}),
+          ...diagnosticError(config, message, {
+            command: 'stop',
+            run: id,
+            attempt: current?.orchestrator?.id,
+          }),
+          ...(options.detailed ? { error: message } : {}),
+        },
+        opts.human(),
+      );
+      process.exitCode = 2;
+    }
+  });
+  configured(
+    orchestrator
+      .command('release <run>')
+      .description('Terminate remaining executions and release resources for a completed Run')
+      .option('--detailed', 'Return the complete current structured result; logs remain referenced'),
+  ).action(async (id: string, options: Options) => {
+    let config: FleetConfig | undefined;
+    let current: WorkflowRun | undefined;
+    try {
+      config = loadFleetConfig(options.config);
+      current = inspectRuns(config).runs.find((run) => run.id === id);
+      if (!current) throw new Error('Unknown Run');
+      const runner = managedRunner(current.provider);
+      const result = await releaseRun(config, runner, id, {
+        stopped: (attempt) => runner.stopped(attempt),
+      });
+      current = inspectRuns(config).runs.find((entry) => entry.id === id)!;
+      output(
+        {
+          ...result,
+          blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
+          inspection: await inspection(current, config, !!options.detailed),
+          outcome: result.released
+            ? 'succeeded'
+            : result.terminated
+              ? 'succeeded'
+              : 'blocked',
+        },
+        opts.human(),
+      );
+      if (!result.terminated || result.blockers.length) process.exitCode = 2;
+    } catch (error) {
+      if (config) {
+        try {
+          current = inspectRuns(config).runs.find((entry) => entry.id === id) ?? current;
+        } catch {
+          /* Retain the last verified state. */
+        }
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      output(
+        {
+          outcome: 'failed',
+          status: 'unknown',
+          ...(current && config
+            ? {
+                inspection: await inspection(current, config, !!options.detailed),
+                observation: current.orchestrator?.observation,
+                evidence: current.orchestrator?.evidence,
+              }
+            : {}),
+          ...diagnosticError(config, message, {
+            command: 'release',
+            run: id,
+            attempt: current?.orchestrator?.id,
+          }),
+          ...(options.detailed ? { error: message } : {}),
+        },
+        opts.human(),
+      );
+      process.exitCode = 2;
     }
   });
   configured(

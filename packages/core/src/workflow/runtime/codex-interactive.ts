@@ -91,7 +91,7 @@ export class InteractiveCodexRunner implements RunnerAdapter {
             : 'unknown'
         : 'absent';
     } catch {
-      return 'unknown';
+      return 'absent';
     }
   }
   async stopped(attempt: ManagedAttempt): Promise<boolean> {
@@ -346,14 +346,22 @@ export class InteractiveCodexRunner implements RunnerAdapter {
     if (!attempt.address?.startsWith('tmux:'))
       throw new Error('Exact Codex terminal address required');
     const pane = attempt.address.slice(5);
-    execFileSync('tmux', ['send-keys', '-t', pane, 'C-c']);
+    try {
+      execFileSync('tmux', ['send-keys', '-t', pane, 'C-c'], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch {}
     let nextInterrupt = Date.now() + 1000;
     const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
       if (await this.stopped(attempt))
         return { evidence: 'Codex exited and terminal termination verified' };
       if (Date.now() >= nextInterrupt && this.pane(attempt) === 'live') {
-        execFileSync('tmux', ['send-keys', '-t', pane, 'C-c']);
+        try {
+          execFileSync('tmux', ['send-keys', '-t', pane, 'C-c'], {
+            stdio: ['ignore', 'pipe', 'ignore'],
+          });
+        } catch {}
         nextInterrupt = Date.now() + 1000;
       }
       await new Promise((r) => setTimeout(r, 100));
