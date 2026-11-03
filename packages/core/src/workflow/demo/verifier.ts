@@ -1,0 +1,459 @@
+/** Independent round inspection. Controlled samples exercise detection, never live acceptance. */
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import type { DemoRound } from './round.js';
+import { inspectRuns } from '../run/run-driver.js';
+import { loadFleetConfig } from '../fleet/fleet-config.js';
+import { AgyRunner, inspectAttemptControl } from '../runtime/runtime.js';
+
+/** A diagnostic retains the fact, expectation and source instead of only a boolean. */
+export interface DemoCheck {
+  stage: string;
+  expected: string;
+  observed: string;
+  verdict: 'pass' | 'finding' | 'missing';
+  reference?: string;
+}
+/** Independent dimensions never reinterpret Run completion as resource release. */
+export interface DemoEvidence {
+  source: 'native' | 'controlled';
+  references: string[];
+  checks: DemoCheck[];
+  business: 'pending' | 'completed' | 'failed' | 'stopped';
+  execution: 'released' | 'unknown';
+  cleanup: 'pending' | 'retained' | 'completed' | 'failed';
+}
+/** Only collection adapters may replace external facts in cheap offline checker tests. */
+export interface DemoEvidenceReader {
+  collect(round: DemoRound, boundary: string): Promise<DemoEvidence>;
+}
+/** Report is diagnostic evidence, not an authorization to delete resources. */
+export interface DemoVerification extends DemoEvidence {
+  boundary: string;
+  defects: 'clear' | 'findings' | 'inconclusive';
+  checksNotRun: string[];
+  limitations: string[];
+}
+/** Public persisted verification entry point; earlier violations cannot be erased by later success. */
+export class DemoVerifier {
+  constructor(readonly reader: DemoEvidenceReader = nativeDemoEvidence()) {}
+  /** Inspect at a stage boundary or at the end and retain every diagnostic. */
+  async verify(round: DemoRound, boundary = 'final'): Promise<DemoVerification> {
+    const history = join(round.root, 'verification.jsonl');
+    const previous: DemoVerification[] = existsSync(history)
+      ? readFileSync(history, 'utf8')
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+      : [];
+    let evidence: DemoEvidence;
+    try {
+      evidence = await this.reader.collect(round, boundary);
+    } catch (error) {
+      evidence = {
+        source: 'native',
+        references: [round.root],
+        checks: [
+          {
+            stage: boundary,
+            expected: 'Readable independent evidence',
+            observed: String(error),
+            verdict: 'missing',
+            reference: round.root,
+          },
+        ],
+        business: 'pending',
+        execution: 'unknown',
+        cleanup: 'retained',
+      };
+    }
+    const checks = [
+      ...previous.flatMap((result) => result.checks.filter((check) => check.verdict === 'finding')),
+      ...evidence.checks,
+    ];
+    const checksNotRun = checks.filter((c) => c.verdict === 'missing').map((c) => c.expected);
+    if (!checks.length) checksNotRun.push('No independent checks were collected');
+    const result: DemoVerification = {
+      ...evidence,
+      checks,
+      boundary,
+      checksNotRun,
+      defects: checks.some((c) => c.verdict === 'finding')
+        ? 'findings'
+        : checksNotRun.length
+          ? 'inconclusive'
+          : 'clear',
+      limitations: [
+        'A pass cannot prove absence of all bugs.',
+        ...(evidence.source === 'controlled'
+          ? ['Controlled checker sample: not live Agy/GitHub acceptance.']
+          : []),
+      ],
+    };
+    appendFileSync(history, JSON.stringify(result) + '\n');
+    return result;
+  }
+}
+/** Additional independent readers supplied by delivery and isolated-validation integration.
+ * Readers must inspect source evidence, never copy agent assertions or cached verdicts.
+ * Chronology inspects historical dispatch/acceptance/release facts; artifacts executes
+ * immutable merged scripts/tests in an owned temporary directory with changed input.
+ */
+export interface DemoBoundaryReaders {
+  /** GitHub system boundary; controlled raw metadata is not live acceptance. */
+  github?(path: string): ReturnType<typeof JSON.parse>;
+  chronology?(round: DemoRound): Promise<DemoCheck[]>;
+  artifacts?(round: DemoRound): Promise<DemoCheck[]>;
+}
+/** Read actual GitHub metadata, immutable Git objects and public managed-runtime state. */
+export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvidenceReader {
+  return {
+    async collect(round, boundary) {
+      if (!round.repository || !round.parent)
+        throw new Error('Provisioned repository and Parent required');
+      const repo = `${round.repository.owner}/${round.repository.name}`;
+      const gh =
+        readers.github ??
+        ((path: string) =>
+          JSON.parse(
+            execFileSync('gh', ['api', path], {
+              encoding: 'utf8',
+              timeout: 30000,
+              maxBuffer: 4 * 1024 * 1024,
+            }),
+          ));
+      const git = (...args: string[]) =>
+        execFileSync('git', args, { cwd: round.checkout, encoding: 'utf8', timeout: 10000 }).trim();
+      const checks: DemoCheck[] = [];
+      const check = (
+        stage: string,
+        expected: string,
+        pass: boolean | undefined,
+        observed: unknown,
+        reference = repo,
+      ) =>
+        checks.push({
+          stage,
+          expected,
+          observed: JSON.stringify(observed),
+          verdict: pass === undefined ? 'missing' : pass ? 'pass' : 'finding',
+          reference,
+        });
+      const identity = gh(`repos/${repo}`);
+      check(
+        'ownership',
+        'Recorded GitHub repository identity',
+        identity.id === round.repository.id,
+        identity.id,
+      );
+      const children: { number: number }[] = gh(
+        `repos/${repo}/issues/${round.parent}/sub_issues?per_page=100`,
+      );
+      check('structure', 'Exactly two native child tasks', children.length === 2, children);
+      if (children.length === 2) {
+        const blockers: { number: number }[] = gh(
+          `repos/${repo}/issues/${children[1].number}/dependencies/blocked_by`,
+        );
+        check(
+          'structure',
+          'Second child natively blocked by first',
+          blockers.length === 1 && blockers[0].number === children[0].number,
+          blockers,
+        );
+      }
+      const prs: {
+        number: number;
+        merged_at: string | null;
+        merge_commit_sha: string;
+        head: { sha: string };
+      }[] = gh(`repos/${repo}/pulls?state=all&per_page=100`);
+      check(
+        'delivery',
+        'Exactly two task PRs',
+        prs.length === 2,
+        prs.map((p) => p.number),
+      );
+      const config = loadFleetConfig(join(round.checkout, '.epic-config.json'));
+      const registry = inspectRuns(config);
+      const runs = registry.runs.filter(
+        (r) => r.subject.repository === repo && r.subject.number === round.parent,
+      );
+      check(
+        'runtime',
+        'One attributable Agy Run',
+        runs.length === 1 && runs[0].provider === 'agy',
+        runs.map((r) => ({ id: r.id, provider: r.provider })),
+      );
+      const run = runs[0];
+      const dispatches = (registry.dispatches ?? []).filter((d) => d.runId === run?.id);
+      for (const d of dispatches) {
+        check(
+          'attribution',
+          'Agy dispatch and stage-matched accepted Receipt',
+          d.provider === 'agy' &&
+            d.attempts.length === 1 &&
+            (registry.receipts ?? []).some(
+              (r) =>
+                r.id === d.acceptedReceipt &&
+                r.dispatchId === d.id &&
+                r.runId === d.runId &&
+                r.role === d.role &&
+                r.stage === d.stage &&
+                r.provider === 'agy' &&
+                r.subject === d.subject &&
+                r.inputRevision === d.inputRevision &&
+                d.attempts.some((a) => a.id === r.attemptId),
+            ),
+          d.id,
+        );
+      }
+      const deliveries = (registry.deliveries ?? []).filter((d) => d.runId === run?.id);
+      for (const pr of prs) {
+        const delivery = deliveries.find((d) => d.pr === pr.number);
+        const recorded = (registry.pullRequests ?? []).find(
+          (p) => p.runId === run?.id && p.pr === pr.number,
+        );
+        check(
+          'landing',
+          'Merged tested/reviewed HEAD with Final Records and release',
+          Boolean(
+            pr.merged_at &&
+            delivery?.recorded &&
+            delivery.released &&
+            delivery.archive &&
+            delivery.checkedHead === pr.head.sha &&
+            recorded?.checkedHead === pr.head.sha &&
+            recorded.mergeCommit === pr.merge_commit_sha,
+          ),
+          { pr: pr.number, delivery, recorded },
+        );
+        if (delivery?.archive)
+          check(
+            'landing',
+            'Preserved delivery archive exists',
+            existsSync(delivery.archive),
+            delivery.archive,
+          );
+      }
+      if (readers.chronology) checks.push(...(await readers.chronology(round)));
+      else
+        check(
+          'ordering',
+          'Independent historical Worker 2 start after full Worker 1 handover',
+          undefined,
+          'Chronology evidence required; final delivery state is insufficient',
+        );
+      const merged = prs
+        .filter((p) => p.merged_at)
+        .sort((a, b) => String(a.merged_at).localeCompare(String(b.merged_at)));
+      if (merged.length === 2) {
+        const first = merged[0].merge_commit_sha,
+          last = merged[1].merge_commit_sha;
+        const worker2 = dispatches.find(
+          (d) => d.role === 'worker' && d.subject.endsWith(`#${children[1]?.number}`),
+        );
+        let contains = false;
+        if (worker2) {
+          try {
+            git('merge-base', '--is-ancestor', first, worker2.inputRevision);
+            contains = true;
+          } catch {
+            /* independently detected non-ancestor */
+          }
+        }
+        check(
+          'ordering',
+          'Worker 2 starting revision contains merged PR 1',
+          contains,
+          worker2?.inputRevision,
+        );
+        const tsv = execFileSync('git', ['show', `${last}:data.tsv`], {
+          cwd: round.checkout,
+          encoding: 'utf8',
+          timeout: 10000,
+        }).replace(/\n$/, '');
+        check(
+          'artifacts',
+          'Exact ten-row id/value TSV',
+          tsv ===
+            'id\tvalue\n1\t10\n2\t20\n3\t30\n4\t40\n5\t50\n6\t60\n7\t70\n8\t80\n9\t90\n10\t100',
+          tsv,
+          last,
+        );
+        const summary = JSON.parse(git('show', `${last}:summary.json`));
+        check(
+          'artifacts',
+          'Only n=10 mean=55 min=10 max=100',
+          Object.keys(summary).length === 4 &&
+            summary.n === 10 &&
+            summary.mean === 55 &&
+            summary.min === 10 &&
+            summary.max === 100,
+          summary,
+          last,
+        );
+      }
+      if (readers.artifacts) checks.push(...(await readers.artifacts(round)));
+      else
+        check(
+          'artifacts',
+          'Isolated script re-execution and changed-input computation',
+          undefined,
+          'Requires isolated validation; committed outputs alone are insufficient',
+        );
+      const parent = gh(`repos/${repo}/issues/${round.parent}`);
+      check(
+        'closure',
+        'Actual closed Parent with delivery-bound human confirmation',
+        Boolean(
+          parent.state === 'closed' &&
+          run?.epicClosure?.deliveryVersion &&
+          run.epicClosure.head === git('rev-parse', 'HEAD'),
+        ),
+        { state: parent.state, closure: run?.epicClosure },
+      );
+      const report = run?.report;
+      check(
+        'finalization',
+        'Accepted Pipeline disposition',
+        Boolean(
+          run?.pipeline &&
+          ['not_applicable', 'completed_no_changes', 'completed'].includes(
+            run.pipeline.disposition,
+          ),
+        ),
+        run?.pipeline,
+      );
+      let reportValid = false;
+      if (report && report.path === round.entry && existsSync(round.entry))
+        reportValid =
+          createHash('sha256').update(readFileSync(round.entry)).digest('hex') === report.hash &&
+          Boolean(report.receipt && report.revision);
+      check(
+        'publication',
+        'Isolated transactional Research-State publication with matching hash',
+        reportValid,
+        report,
+      );
+      const attempts = [
+        ...(run?.priorOrchestrators ?? []),
+        ...(run?.orchestrator ? [run.orchestrator] : []),
+        ...dispatches.flatMap((d) => d.attempts),
+      ];
+      let released = attempts.length > 0;
+      const runner = new AgyRunner();
+      for (const attempt of attempts) {
+        const control = inspectAttemptControl(attempt);
+        const stopped = await runner.termination(attempt);
+        if (!stopped || control.execution?.status !== 'terminated') released = false;
+      }
+      if ((registry.resources ?? []).some((resource) => resource.runId === run?.id))
+        released = false;
+      check(
+        'execution',
+        'All historical executions terminated and ownership released',
+        released,
+        attempts.map((a) => a.id),
+      );
+      const controlPath = join(round.root, 'control.json');
+      const control:
+        | {
+            runId?: string;
+            stopped?: boolean;
+            execution?: string;
+            observations?: {
+              id: string;
+              disposition?: { reason?: string; status?: string } | string;
+            }[];
+          }
+        | undefined = existsSync(controlPath)
+        ? JSON.parse(readFileSync(controlPath, 'utf8'))
+        : undefined;
+      check(
+        'observations',
+        'Attributable observation journal with no unresolved observations',
+        control
+          ? control.runId !== run?.id
+            ? false
+            : (control.observations ?? []).every(
+                  (o) =>
+                    typeof o.disposition === 'object' &&
+                    o.disposition.status === 'false_alarm' &&
+                    Boolean(o.disposition.reason?.trim()),
+                )
+              ? true
+              : undefined
+          : undefined,
+        control,
+        controlPath,
+      );
+      // Helpers and external occupancy must be proved by the aggregate stop contract as well.
+      if (control?.execution !== 'released') released = false;
+      check(
+        'execution',
+        'Aggregate helper and ownership release',
+        control ? control.execution === 'released' : undefined,
+        control?.execution,
+        controlPath,
+      );
+      const stages: Record<string, string[]> = {
+        structure: ['ownership', 'structure', 'observations'],
+        delivery: [
+          'ownership',
+          'structure',
+          'delivery',
+          'attribution',
+          'landing',
+          'ordering',
+          'artifacts',
+          'observations',
+        ],
+        closure: [
+          'ownership',
+          'structure',
+          'delivery',
+          'attribution',
+          'landing',
+          'ordering',
+          'artifacts',
+          'closure',
+          'observations',
+        ],
+        finalization: [
+          'ownership',
+          'structure',
+          'delivery',
+          'attribution',
+          'landing',
+          'ordering',
+          'artifacts',
+          'closure',
+          'finalization',
+          'publication',
+          'observations',
+        ],
+      };
+      if (boundary !== 'final' && !stages[boundary])
+        throw new Error(
+          'Expected structure, delivery, closure, finalization or final verification boundary',
+        );
+      return {
+        source: 'native',
+        references: [repo, config.file],
+        checks:
+          boundary === 'final' ? checks : checks.filter((c) => stages[boundary].includes(c.stage)),
+        business:
+          run?.lifecycle === 'completed'
+            ? 'completed'
+            : run?.lifecycle === 'blocked'
+              ? 'failed'
+              : 'pending',
+        execution: released ? 'released' : 'unknown',
+        cleanup: 'pending',
+      };
+    },
+  };
+}

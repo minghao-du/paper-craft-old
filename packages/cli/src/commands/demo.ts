@@ -1,3 +1,4 @@
+import { registerDemoVerifier } from './demo-verifier.js';
 import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { DemoRounds, type DemoConfig } from '@paper-craft/core/workflow/demo';
@@ -11,6 +12,7 @@ export function registerDemoCommands(program: Command) {
       '--config <file>',
       'Demo JSON: physical root, owner, prefix, coordinator, brief',
     );
+  registerDemoVerifier(demo);
   const controller = () =>
     new DemoRounds(
       JSON.parse(readFileSync(demo.opts().config, 'utf8')) as DemoConfig,

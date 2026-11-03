@@ -28,3 +28,13 @@ GitHub policy, permission and throttling failures block provisioning. Writes are
 spaced and never automatically replayed; uncertain remote results are queried and
 retained for diagnosis. No provider permission bypass is enabled. Controlled adapter
 tests establish provisioning behavior only, never real GitHub/Agy acceptance.
+
+Use `./pc demo --config <file> verify <round> --boundary <stage>` to inspect
+independent GitHub metadata, merged Git objects and Runtime evidence. Supported
+boundaries are `structure`, `delivery`, `closure`, `finalization`, and `final`
+(the default). Diagnostics persist in `verification.jsonl`; an earlier confirmed
+violation remains a finding after later outputs become correct. Business,
+defect, execution/resource and cleanup results are separate. Missing chronology,
+isolated re-execution, observation or termination evidence prevents a clean
+verdict. A checker result alone does not authorize deletion or prove zero bugs.
+Controlled checker samples never establish native Agy/GitHub acceptance.

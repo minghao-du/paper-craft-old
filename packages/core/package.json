@@ -171,6 +171,11 @@
       "paper-craft-source": "./src/workflow/demo/native.ts",
       "types": "./dist/workflow/demo/native.d.ts",
       "default": "./dist/workflow/demo/native.js"
+    },
+    "./workflow/demo-verifier": {
+      "paper-craft-source": "./src/workflow/demo/verifier.ts",
+      "types": "./dist/workflow/demo/verifier.d.ts",
+      "default": "./dist/workflow/demo/verifier.js"
     }
   },
   "files": [
