@@ -1,3 +1,5 @@
+import { demoArtifacts } from './artifacts.js';
+import { demoChronology } from './delivery.js';
 import { pipelineAccepted } from '../delivery/epic-finalization.js';
 /** Independent round inspection. Controlled samples exercise detection, never live acceptance. */
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
@@ -7,7 +9,7 @@ import { createHash } from 'node:crypto';
 import type { DemoRound } from './round.js';
 import { inspectRuns } from '../run/run-driver.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
-import { AgyRunner, inspectAttemptControl } from '../runtime/runtime.js';
+import { type ManagedAttempt, AgyRunner, inspectAttemptControl } from '../runtime/runtime.js';
 
 /** A diagnostic retains the fact, expectation and source instead of only a boolean. */
 export interface DemoCheck {
@@ -106,11 +108,14 @@ export class DemoVerifier {
 export interface DemoBoundaryReaders {
   /** GitHub system boundary; controlled raw metadata is not live acceptance. */
   github?(path: string): ReturnType<typeof JSON.parse>;
+  /** External process observation; controlled values cannot establish live acceptance. */
+  termination?(attempt: ManagedAttempt): Promise<boolean>;
   chronology?(round: DemoRound): Promise<DemoCheck[]>;
-  artifacts?(round: DemoRound): Promise<DemoCheck[]>;
+  artifacts?(round: DemoRound, revision?: string): Promise<DemoCheck[]>;
 }
 /** Read actual GitHub metadata, immutable Git objects and public managed-runtime state. */
 export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvidenceReader {
+  readers = { chronology: demoChronology, artifacts: demoArtifacts, ...readers };
   return {
     async collect(round, boundary) {
       if (!round.repository || !round.parent)
@@ -190,6 +195,16 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
       );
       const run = runs[0];
       const dispatches = (registry.dispatches ?? []).filter((d) => d.runId === run?.id);
+      const workerSubjects = new Set(
+        dispatches.filter((d) => d.role === 'worker').map((d) => d.subject),
+      );
+      check(
+        'delivery',
+        'Exactly two child Worker task identities',
+        workerSubjects.size === 2 &&
+          children.every((c) => workerSubjects.has(`${repo}#${c.number}`)),
+        [...workerSubjects],
+      );
       for (const d of dispatches) {
         check(
           'attribution',
@@ -239,7 +254,8 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
             delivery.archive,
           );
       }
-      if (readers.chronology) checks.push(...(await readers.chronology(round)));
+      if (boundary !== 'structure' && readers.chronology)
+        checks.push(...(await readers.chronology(round)));
       else
         check(
           'ordering',
@@ -250,7 +266,7 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
       const merged = prs
         .filter((p) => p.merged_at)
         .sort((a, b) => String(a.merged_at).localeCompare(String(b.merged_at)));
-      if (merged.length === 2) {
+      if (boundary !== 'structure' && merged.length === 2) {
         const first = merged[0].merge_commit_sha,
           last = merged[1].merge_commit_sha;
         const worker2 = dispatches.find(
@@ -297,7 +313,13 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           last,
         );
       }
-      if (readers.artifacts) checks.push(...(await readers.artifacts(round)));
+      if (boundary !== 'structure' && readers.artifacts)
+        checks.push(
+          ...(await readers.artifacts(
+            round,
+            merged.length === 2 ? merged[1].merge_commit_sha : undefined,
+          )),
+        );
       else
         check(
           'artifacts',
@@ -352,7 +374,9 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
       const runner = new AgyRunner();
       for (const attempt of attempts) {
         const control = inspectAttemptControl(attempt);
-        const stopped = await runner.termination(attempt);
+        const stopped = await (readers.termination
+          ? readers.termination(attempt)
+          : runner.termination(attempt));
         if (!stopped || control.execution?.status !== 'terminated') released = false;
       }
       if ((registry.resources ?? []).some((resource) => resource.runId === run?.id))
@@ -446,7 +470,7 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
           'Expected structure, delivery, closure, finalization or final verification boundary',
         );
       return {
-        source: 'native',
+        source: readers.github || readers.termination ? 'controlled' : 'native',
         references: [repo, config.file],
         checks:
           boundary === 'final' ? checks : checks.filter((c) => stages[boundary].includes(c.stage)),

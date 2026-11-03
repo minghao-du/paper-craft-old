@@ -61,6 +61,10 @@ export function registerDemoCommands(program: Command) {
     .option('--evidence <reference>')
     .action((id, text, o) => print(control(id).report(text, o.evidence)));
   demo
+    .command('resolve-observation <round> <observation> <reason>')
+    .description('Record a reasoned false-alarm disposition')
+    .action((id, observation, reason) => print(control(id).resolve(observation, reason)));
+  demo
     .command('stop <round>')
     .description('Revoke dispatch and request verified termination; retain evidence')
     .action(async (id) => print(await control(id).stop()));

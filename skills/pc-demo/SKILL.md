@@ -42,7 +42,7 @@ Controlled checker samples never establish native Agy/GitHub acceptance.
 
 `pc demo --config <file> start <round> --confirm --budget-minutes 60` starts an independent Agy Orchestrator. No provider fallback or permission bypass is enabled. Reconnect using `status <round>`. Submit suspected problems with `report <round> <text> --evidence <reference>` and stop with `stop <round>`; proof is not required. Observations remain in `control.json` even after business completion. Stopping revokes scheduling authority before cancellation and preserves diagnostics.
 
-A detached demo watchdog enforces the active budget after launcher disconnect. Human/permission waiting must be recorded at verified boundaries through the public control checkpoint; the watchdog does not infer waiting from missing output. Native stop cannot prove aggregate detached-helper/ownership release and therefore retains unknown occupancy; do not reuse or delete these resources based on a stop response. Missing release proof is a blocker, never a successful stop or demo pass. Generic runtime recovery remains outside this demo control boundary; do not invoke recovery/retry on a stopped demo Run. Usage is unavailable unless separately evidenced by the provider.
+A detached demo watchdog enforces the active budget after launcher disconnect. Human/permission waiting must be recorded at verified boundaries through the public control checkpoint; the watchdog does not infer waiting from missing output. Native stop requires verified historical attempt, detached-helper and ownership release; missing proof retains unknown occupancy; do not reuse or delete these resources based on a stop response. Missing release proof is a blocker, never a successful stop or demo pass. Generic runtime recovery remains outside this demo control boundary; do not invoke recovery/retry on a stopped demo Run. Usage is unavailable unless separately evidenced by the provider.
 
 Run `./pc demo --config <file> dispose <round>` after final business completion.
 It recollects independent evidence, terminates owned executions without changing
@@ -100,3 +100,33 @@ only the isolated manifest entry; the existing transactional writer validates
 sections and records provenance. A diagnostic report on a blocked round does not
 count as this publication. Problem reporting and stop remain available during
 both specialists; no automatic stage retry is permitted.
+
+## Whole-round verification
+
+The task programs use default relative paths: `python3 generate.py` writes
+`data.tsv`; `python3 summarize.py` reads it and writes `summary.json`. The final
+checker exports immutable merged Git source into a temporary validation directory,
+runs `python3 -m unittest discover -s tests`, reruns both programs, then changes
+the temporary TSV and checks recomputation. Accepted source is never modified.
+
+Run `./pc demo --config <file> verify <round>` after business completion. Final
+verification requests verified execution release, displays independent results,
+and automatically disposes a clean scene. Earlier-stage inspection uses
+`verify <round> --boundary structure|delivery|closure|finalization`; `delivery`
+means both deliveries have completed. Findings and unknown occupancy retain the
+scene. `dispose` supports the same final checks and retained-scene authorization.
+
+For real acceptance, first review the config's owner/prefix, pinned baseline hash,
+physical isolated roots, Coordinator identity/brief and derived absolute report
+entry. Check Agy, Python, Git, GitHub authentication, repository creation/deletion
+permissions and policy/rate limits. Review all intended writes and eligible
+deletion, provision with explicit consent, then separately start with explicit
+consent and an active budget (default 60 minutes). Follow status, report/stop and
+version-bound human confirmation controls above; after publication perform final
+verification. Never call a controlled test or an unperformed/blocked real run a
+live pass. Stop and preserve environment failures and defects without repairs or
+stage retries. Usage unavailable from the provider remains unavailable; human
+waits do not consume active execution budget. Successful detection cannot prove
+absence of all defects. Deletion excludes provider history and external copies.
+
+Use `resolve-observation <round> <observation> <reason>` only to record a supported false alarm with its reason. An unresolved observation blocks clean disposal.
