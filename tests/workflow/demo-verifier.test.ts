@@ -161,6 +161,140 @@ test('native inspection rejects invalid raw delivery, provider, execution and ob
       diagnostic('Attributable observation journal with no unresolved observations')?.verdict,
     ).toBe('missing');
     expect(result.defects).toBe('findings');
+    // A separate collection after replacing all controlled external facts exercises the valid path.
+    const clean = JSON.parse(JSON.stringify(registry));
+    const attemptDir = join(root, 'attempt');
+    mkdirSync(attemptDir);
+    writeFileSync(
+      join(attemptDir, 'control.json'),
+      JSON.stringify({ execution: { status: 'terminated' } }),
+    );
+    const attempt = {
+      id: 'a',
+      role: 'worker',
+      directory: attemptDir,
+      created: '2026-01-03T00:00:00Z',
+    };
+    const worker = {
+      ...clean.dispatches[0],
+      provider: 'agy',
+      inputRevision: merged,
+      attempts: [attempt],
+      acceptedReceipt: 'receipt',
+    };
+    const worker1 = {
+      ...worker,
+      id: 'worker1',
+      subject: 'fixture/toy#2',
+      acceptedReceipt: 'receipt1',
+    };
+    clean.dispatches = [worker1, worker];
+    clean.resources = [];
+    clean.receipts = [
+      {
+        id: 'receipt',
+        dispatchId: worker.id,
+        runId: 'run',
+        role: worker.role,
+        stage: worker.stage,
+        provider: 'agy',
+        subject: worker.subject,
+        inputRevision: merged,
+        attemptId: 'a',
+      },
+    ];
+    clean.receipts.push({
+      ...clean.receipts[0],
+      id: 'receipt1',
+      dispatchId: 'worker1',
+      subject: 'fixture/toy#2',
+    });
+    const archive = join(root, 'archive');
+    mkdirSync(archive);
+    clean.deliveries = [1, 2].map((pr) => ({
+      runId: 'run',
+      pr,
+      recorded: true,
+      released: true,
+      archive,
+      checkedHead: merged,
+    }));
+    clean.pullRequests = [1, 2].map((pr) => ({
+      runId: 'run',
+      pr,
+      checkedHead: merged,
+      mergeCommit: merged,
+    }));
+    clean.runs[0].provider = 'agy';
+    clean.runs[0].epicClosure = { head: merged, deliveryVersion: 'v' };
+    clean.runs[0].pipeline = {
+      head: merged,
+      status: 'completed',
+      evidence: ['audit'],
+      blockers: [],
+      scope: ['toy'],
+      checks: ['inspect'],
+      artifacts: [],
+      limitations: [],
+      disposition: 'completed_no_changes',
+      inspectedVersions: { integrated: merged },
+      findings: [],
+      maintenance: [],
+    };
+    writeFileSync(round.entry, 'controlled report');
+    const hash = createHash('sha256').update('controlled report').digest('hex');
+    const receipt = join(root, 'report-receipt.json');
+    writeFileSync(receipt, JSON.stringify({ path: round.entry, hash }));
+    clean.runs[0].report = {
+      path: round.entry,
+      hash,
+      receipt,
+      revision: 'r',
+      acceptedVersions: { integrated: merged },
+      observedVersions: { integrated: merged },
+    };
+    writeFileSync(registryPath, JSON.stringify(clean));
+    writeFileSync(
+      join(root, 'control.json'),
+      JSON.stringify({ runId: 'run', execution: 'released', observations: [] }),
+    );
+    writeFileSync(
+      join(root, 'delivery-boundaries.jsonl'),
+      JSON.stringify({
+        at: '2026-01-02T00:00:00Z',
+        stage: 'worker2',
+        pass: true,
+        facts: { children: [2, 3] },
+      }) + '\n',
+    );
+    const good = await nativeDemoEvidence({
+      github(path) {
+        if (path.endsWith('/fixture/toy')) return { id: 7 };
+        if (path.includes('/sub_issues')) return [{ number: 2 }, { number: 3 }];
+        if (path.includes('/blocked_by')) return [{ number: 2 }];
+        if (path.includes('/pulls?'))
+          return [1, 2].map((number) => ({
+            number,
+            merged_at: `2026-01-0${number}`,
+            merge_commit_sha: merged,
+            head: { sha: merged },
+          }));
+        return { state: 'closed' };
+      },
+      termination: async () => true,
+      // Artifact execution has its own actual-Git regression; no model execution is claimed here.
+      artifacts: async () => [
+        {
+          stage: 'artifacts',
+          expected: 'controlled external artifact result',
+          observed: 'controlled',
+          verdict: 'pass',
+        },
+      ],
+    }).collect(round, 'final');
+    expect(good.source).toBe('controlled');
+    expect(good.checks.filter((c) => c.verdict !== 'pass')).toEqual([]);
+    expect(good.execution).toBe('released');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
