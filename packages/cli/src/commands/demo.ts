@@ -1,3 +1,4 @@
+import { registerDemoFinalization } from './demo-finalization.js';
 import { registerDemoDisposition } from './demo-disposition.js';
 import { registerDemoDelivery } from './demo-delivery.js';
 import { registerDemoVerifier } from './demo-verifier.js';
@@ -19,6 +20,7 @@ export function registerDemoCommands(program: Command) {
   registerDemoVerifier(demo);
   registerDemoDisposition(demo);
   registerDemoDelivery(demo);
+  registerDemoFinalization(demo);
   const controller = () =>
     new DemoRounds(
       JSON.parse(readFileSync(demo.opts().config, 'utf8')) as DemoConfig,

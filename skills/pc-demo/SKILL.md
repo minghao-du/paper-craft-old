@@ -80,3 +80,23 @@ Never write human-closure.json from agent output or invent human consent.
 The native verifier reads retained gate snapshots and compares the Worker 2
 Attempt creation times with the witnessed handover. Missing historical observations
 remain inconclusive. Correct eventual artifacts cannot erase a failed gate.
+
+After verified actual Parent closure, the Orchestrator dispatches a real Agy
+`pipeline-audit` specialist through the existing Workflow CLI. Require actual
+inspection evidence and delivered `inspectedVersions` for `not_applicable` or
+`completed_no_changes`. Accept the result through
+`./pc demo --config <file> pipeline <round> --authority <attempt> --dispatch <id>`.
+Any required changes stop this diagnostic round; preserve findings without repair,
+additional task Issues, or a third PR.
+
+On the accepted no-change path dispatch the real `research-state` role. Its report
+artifact must contain all nine sections required by `/pc-research-state`, actual
+commands and results, Issue/PR references, four summary values, accepted and
+observed versions, Pipeline conclusion and limitations. Keep content brief; no
+scientific inference is justified by this infrastructure task. Accept its result,
+then invoke `./pc demo --config <file> publish <round> --authority <attempt>
+--dispatch <id>`. This uses the operator-configured Coordinator identity/brief and
+only the isolated manifest entry; the existing transactional writer validates
+sections and records provenance. A diagnostic report on a blocked round does not
+count as this publication. Problem reporting and stop remain available during
+both specialists; no automatic stage retry is permitted.
