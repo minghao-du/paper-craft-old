@@ -19,7 +19,12 @@ export interface DemoControlState {
   activeMs: number;
   tick: number;
   wait?: 'human' | 'permission';
-  observations: { id: string; text: string; evidence?: string; disposition?: string }[];
+  observations: {
+    id: string;
+    text: string;
+    evidence?: string;
+    disposition?: { status: 'false_alarm'; reason: string };
+  }[];
   error?: string;
   usage: 'unavailable';
 }
