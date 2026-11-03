@@ -52,7 +52,6 @@ export interface DemoDeliverySnapshot {
 /** External GitHub/Runtime facts; controlled adapters cannot establish live acceptance. */
 export interface DemoDeliveryAdapter {
   inspect(): Promise<DemoDeliverySnapshot>;
-  createChildren?(tasks?: { title: string; body: string }[]): Promise<{ task1: number; task2: number }>;
 }
 /** Persisted public gates support reconnecting without continuing agent polling. */
 export class DemoDelivery {
@@ -302,22 +301,6 @@ export class DemoDelivery {
     if (!pass)
       throw new Error('Native structure or complete sequential delivery prerequisite failed');
     return facts;
-  }
-
-  /** Normal Workflow creates exactly two native children with task 2 natively blocked by task 1. */
-  async createChildren(tasks?: { title: string; body: string }[]) {
-    if (!this.adapter.createChildren) {
-      throw new Error('Adapter does not support child creation');
-    }
-    const created = await this.adapter.createChildren(tasks);
-    const taskIdentities: DemoTaskIdentities = {
-      roundId: this.round.id,
-      parent: this.round.parent ?? 1,
-      task1: created.task1,
-      task2: created.task2,
-    };
-    writeFileSync(join(this.round.root, 'demo-tasks.json'), JSON.stringify(taskIdentities, null, 2));
-    return created;
   }
   /** Present the actual version before accepting a human decision. */
   async request() {
