@@ -21,11 +21,20 @@ export function registerDemoDelivery(demo: Command) {
   };
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
   demo
+    .command('create-children <round>')
+    .description('Normal Workflow creates the two native child tasks from the EPIC plan')
+    .action(async (id) => {
+      print(await service(id).delivery.createChildren());
+    });
+  demo
     .command('gate <round> <stage>')
-    .description('Orchestrator checks worker1/worker2 prerequisites before dispatch')
-    .action(async (id, stage) => {
+    .description('Orchestrator checks worker1/worker2 prerequisites and authorizes worker dispatch')
+    .option('--stage-name <name>', 'Worker stage name to authorize (default: implementation)')
+    .option('--brief <file>', 'Evaluated task brief file')
+    .action(async (id, stage, o) => {
       if (!['worker1', 'worker2'].includes(stage)) throw new Error('Expected worker1 or worker2');
-      print(await service(id).delivery.gate(stage));
+      const brief = o.brief ? readFileSync(o.brief, 'utf8') : undefined;
+      print(await service(id).delivery.gate(stage, { stageName: o.stageName, brief }));
     });
   demo
     .command('closure-request <round>')

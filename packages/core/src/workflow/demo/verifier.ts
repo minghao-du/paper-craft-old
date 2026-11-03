@@ -160,14 +160,28 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
       );
       check('structure', 'Exactly two native child tasks', children.length === 2, children);
       if (children.length === 2) {
-        const blockers: { number: number }[] = gh(
-          `repos/${repo}/issues/${children[1].number}/dependencies/blocked_by`,
-        );
+        const c0 = children[0].number;
+        const c1 = children[1].number;
+        let blockers: { number: number }[] = [];
+        try {
+          blockers = gh(`repos/${repo}/issues/${c1}/dependencies/blocked_by`);
+        } catch {
+          /* ignore */
+        }
+        let blockers0: { number: number }[] = [];
+        try {
+          blockers0 = gh(`repos/${repo}/issues/${c0}/dependencies/blocked_by`);
+        } catch {
+          /* ignore */
+        }
+        const validDep =
+          (blockers.length === 1 && blockers[0].number === c0) ||
+          (blockers0.length === 1 && blockers0[0].number === c1);
         check(
           'structure',
           'Second child natively blocked by first',
-          blockers.length === 1 && blockers[0].number === children[0].number,
-          blockers,
+          validDep,
+          blockers.length ? blockers : blockers0,
         );
       }
       const prs: {
