@@ -15,7 +15,7 @@ import {
   readdirSync,
   realpathSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { claimDriver } from './driver-lock.js';
 import { stateDirectory } from '../handoff.js';
 import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
@@ -38,6 +38,14 @@ import type { IssueInput } from '../delivery/issue-driver.js';
 export interface RunSubject extends IssueInput {
   kind: 'issue' | 'epic';
 }
+/** Minimal per-Run constraint contract; fixed at intake and immutable across reconnects. */
+export interface RunConstraints {
+  kind: 'demo';
+  roundId: string;
+  demoConfigPath?: string;
+  boundAt?: string;
+}
+
 /** One requested workflow with a fixed provider and dedicated execution identity. */
 export interface WorkflowRun {
   id: string;
@@ -48,6 +56,7 @@ export interface WorkflowRun {
   policy: { name: string; revision: number };
   lifecycle: 'reserved' | 'running' | 'blocked' | 'completed';
   phase?: 'post_closure_finalization' | 'completed';
+  constraints?: RunConstraints;
   pipeline?: PipelineDisposition;
   pipelineApprovals?: Record<string, { source: 'human'; ledger: string; evidence: string }>;
   pipelineMaintenance?: import('../delivery/epic-finalization.js').EpicFinalization['maintenanceDeliveries'];
@@ -179,6 +188,7 @@ export async function startRun(
   provider: string,
   requirements?: string,
   dangerouslySkipPermissions?: boolean,
+  constraints?: RunConstraints,
 ): Promise<WorkflowRun> {
   if (
     !/^[\w.-]+\/[\w.-]+$/.test(subject.repository) ||
@@ -194,9 +204,26 @@ export async function startRun(
     );
   if (dangerouslySkipPermissions && provider !== 'agy')
     throw new Error('--dangerously-skip-permissions requires --provider agy');
+  if (!constraints && (config as unknown as { demo?: { round?: string; config?: string } }).demo?.round) {
+    const demoInfo = (config as unknown as { demo: { round: string; config?: string } }).demo;
+    constraints = {
+      kind: 'demo',
+      roundId: demoInfo.round,
+      demoConfigPath: demoInfo.config,
+    };
+  }
   const verifyPermissions = (run: WorkflowRun) => {
     if (dangerouslySkipPermissions && !run.dangerouslySkipPermissions)
       throw new Error('Permission mode conflicts with the existing Run; reuse its stored mode');
+  };
+  const verifyConstraints = (run: WorkflowRun) => {
+    if (run.constraints && constraints) {
+      if (
+        run.constraints.kind !== constraints.kind ||
+        run.constraints.roundId !== constraints.roundId
+      )
+        throw new Error('Constraints conflict with existing Run; reuse stored constraints');
+    }
   };
   requireInteractive(runner);
   await runner.preflight();
@@ -210,6 +237,7 @@ export async function startRun(
   if (reconnect) {
     verifyPermissions(reconnect);
     verifyRunRequirements(reconnect, requirements);
+    verifyConstraints(reconnect);
     if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
       throw new Error('Existing Run provider or scope conflict');
     ensureStartupRecovery(config, runner, reconnect.id);
@@ -231,6 +259,7 @@ export async function startRun(
     if (owningRun && owningRun.subject.number !== subject.number) {
       verifyPermissions(owningRun);
       verifyRunRequirements(owningRun, requirements);
+      verifyConstraints(owningRun);
       if (owningRun.provider !== provider)
         throw new Error('Existing child execution provider conflict');
       ensureStartupRecovery(config, runner, owningRun.id);
@@ -250,11 +279,59 @@ export async function startRun(
     if (existing) {
       verifyPermissions(existing);
       verifyRunRequirements(existing, requirements);
+      verifyConstraints(existing);
       if (existing.provider !== provider || existing.subject.kind !== subject.kind)
         throw new Error('Existing Run provider or scope conflict');
       ensureStartupRecovery(config, runner, existing.id);
       return existing;
     }
+
+    if (constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const roundFile = join(roundRoot, 'round.json');
+      if (!existsSync(roundFile)) {
+        throw new Error(`Demo round ${constraints.roundId} manifest not found`);
+      }
+      const round = JSON.parse(readFileSync(roundFile, 'utf8'));
+      if (round.id !== constraints.roundId) {
+        throw new Error(`Demo round ID mismatch: expected ${constraints.roundId}, found ${round.id}`);
+      }
+      const expectedRepo = `${round.repository?.owner}/${round.repository?.name}`;
+      if (subject.repository !== expectedRepo) {
+        throw new Error(
+          `Repository mismatch for demo round: expected ${expectedRepo}, received ${subject.repository}`,
+        );
+      }
+      if (subject.number !== round.parent) {
+        throw new Error(
+          `Parent mismatch for demo round: expected ${round.parent}, received ${subject.number}`,
+        );
+      }
+      if (provider !== 'agy') {
+        throw new Error(`Provider mismatch for demo round: expected agy, received ${provider}`);
+      }
+      if (config.project !== round.checkout || config.root !== round.worktrees) {
+        throw new Error('Configuration path mismatch for demo round');
+      }
+      const controlFile = join(roundRoot, 'control.json');
+      if (!existsSync(controlFile)) {
+        throw new Error(`Demo round ${round.id} is not armed; run pc demo arm first`);
+      }
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      if (!control.armed) {
+        throw new Error(`Demo round ${round.id} is not armed; run pc demo arm first`);
+      }
+      if (control.stopped) {
+        throw new Error(`Demo round ${round.id} is stopped; cannot start Run`);
+      }
+      if (control.activeMs >= control.budgetMs) {
+        throw new Error(`Demo round ${round.id} budget expired; cannot start Run`);
+      }
+      if (control.runId) {
+        throw new Error(`Demo round ${round.id} already bound to Run ${control.runId}`);
+      }
+    }
+
     const id = randomUUID();
     const directory = join(home(config), 'runs', id);
     mkdirSync(directory, { recursive: true });
@@ -269,6 +346,9 @@ export async function startRun(
       policy: { name: 'managed-run', revision: 1 },
       lifecycle: 'reserved',
       ...(requirements === undefined ? {} : { requirements }),
+      ...(constraints === undefined
+        ? {}
+        : { constraints: { ...constraints, boundAt: new Date().toISOString() } }),
       orchestratorId: id,
       launchStarted: false,
       brief: { path, hash: createHash('sha256').update(brief).digest('hex') },
@@ -276,6 +356,16 @@ export async function startRun(
     registry.runs.push(run);
     reserveSubject(registry, run.id, `${subject.repository}#${subject.number}`);
     save(config, registry);
+
+    if (constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      control.runId = id;
+      control.execution = 'running';
+      writeFileSync(controlFile, JSON.stringify(control, null, 2));
+    }
+
     // The durable reservation survives a crash or failed launch and blocks replacement.
     try {
       run.launchStarted = true;
@@ -402,6 +492,34 @@ export async function dispatchStage(
   await runner.preflight();
   const snapshot = inspectRuns(config);
   const owningRun = authorize(snapshot, request.runId, request.authority);
+  if (owningRun.constraints?.kind === 'demo') {
+    const roundRoot = dirname(config.project);
+    const controlFile = join(roundRoot, 'control.json');
+    if (existsSync(controlFile)) {
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      if (control.stopped || control.releasing || control.activeMs >= control.budgetMs) {
+        throw new Error(
+          `Demo round ${owningRun.constraints.roundId} is stopped or expired; cannot dispatch stage`,
+        );
+      }
+    }
+    if (request.role === 'worker') {
+      const boundaryFile = join(roundRoot, 'delivery-boundaries.jsonl');
+      const boundaries = existsSync(boundaryFile)
+        ? readFileSync(boundaryFile, 'utf8')
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line))
+        : [];
+      const hasGatePass = boundaries.some((b: { pass?: boolean }) => b.pass === true);
+      if (!hasGatePass) {
+        throw new Error(
+          `Worker dispatch denied: matching Gate authorization required for demo round ${owningRun.constraints.roundId}`,
+        );
+      }
+    }
+  }
   if (!request.brief.trim()) throw new Error('Incomplete stage inputs');
   request = { ...request, brief: assignmentWithRequirements(owningRun, request.brief) };
   const checkout = workflowSource(config, request.checkout ?? config.project);
@@ -434,6 +552,34 @@ export async function dispatchStage(
     if (registry.revision !== snapshot.revision)
       throw new Error('Execution ownership changed during termination verification; retry');
     const run = authorize(registry, request.runId, request.authority);
+    if (run.constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      if (existsSync(controlFile)) {
+        const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+        if (control.stopped || control.releasing || control.activeMs >= control.budgetMs) {
+          throw new Error(
+            `Demo round ${run.constraints.roundId} is stopped or expired; cannot dispatch stage`,
+          );
+        }
+      }
+      if (request.role === 'worker') {
+        const boundaryFile = join(roundRoot, 'delivery-boundaries.jsonl');
+        const boundaries = existsSync(boundaryFile)
+          ? readFileSync(boundaryFile, 'utf8')
+              .trim()
+              .split('\n')
+              .filter(Boolean)
+              .map((line) => JSON.parse(line))
+          : [];
+        const hasGatePass = boundaries.some((b: { pass?: boolean }) => b.pass === true);
+        if (!hasGatePass) {
+          throw new Error(
+            `Worker dispatch denied: matching Gate authorization required for demo round ${run.constraints.roundId}`,
+          );
+        }
+      }
+    }
     if (runner.name !== run.provider) throw new Error('Run provider mismatch');
     assertStageRole(request.stage, request.role, `Run ${request.runId}`);
     if (!request.brief.trim() || !request.inputRevision || !request.stage || !request.subject)
@@ -760,6 +906,33 @@ export async function retryStage(
   const attempt = updateRunRegistry(config, (registry) => {
     const current = findDispatch(registry, dispatchId);
     authorize(registry, dispatch.runId, authority);
+    if (run.constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      if (existsSync(controlFile)) {
+        const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+        if (control.stopped || control.releasing || control.activeMs >= control.budgetMs) {
+          throw new Error(
+            `Demo round ${run.constraints.roundId} is stopped or expired; cannot retry stage`,
+          );
+        }
+      }
+      if (current.role === 'worker') {
+        const boundaryFile = join(roundRoot, 'delivery-boundaries.jsonl');
+        const boundaries = existsSync(boundaryFile)
+          ? readFileSync(boundaryFile, 'utf8')
+              .trim()
+              .split('\n')
+              .filter(Boolean)
+              .map((line) => JSON.parse(line))
+          : [];
+        if (!boundaries.some((b: { pass?: boolean }) => b.pass === true)) {
+          throw new Error(
+            `Worker dispatch denied: matching Gate authorization required for demo round ${run.constraints.roundId}`,
+          );
+        }
+      }
+    }
     if (
       registry.revision !== snapshot.revision ||
       current.acceptedReceipt ||
@@ -862,6 +1035,11 @@ export async function recoverRun(
   const run = snapshot.runs.find((r) => r.id === runId);
   if (!run || run.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
   verifyRunRequirements(run);
+  if (run.constraints?.kind === 'demo') {
+    if (options.replaceOrchestrator) {
+      throw new Error(`Replacement Orchestrator not authorized for demo-constrained Run ${run.id}`);
+    }
+  }
   if (run.lifecycle === 'completed')
     throw new Error('Completed Run authority has ended; start a new Run after resolving occupancy');
   if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
@@ -892,6 +1070,20 @@ export async function recoverRun(
     return recoverRun(config, runner, runId);
   }
   const blockers: string[] = [];
+  if (run.constraints?.kind === 'demo') {
+    const roundRoot = dirname(config.project);
+    const controlFile = join(roundRoot, 'control.json');
+    if (existsSync(controlFile)) {
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      if (control.stopped || control.activeMs >= control.budgetMs) {
+        blockers.push(`Demo round ${run.constraints.roundId} is stopped or expired`);
+        updateRunRegistry(config, (registry) => {
+          const r = registry.runs.find((x) => x.id === runId);
+          if (r) r.lifecycle = 'blocked';
+        });
+      }
+    }
+  }
   const pendingDispatches: string[] = [];
   const recovered = new Map<
     string,
@@ -1651,6 +1843,16 @@ export async function publishStageReport(
     current.report = report;
     current.phase = 'completed';
     current.lifecycle = 'completed';
+    if (current.constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      if (existsSync(controlFile)) {
+        const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+        control.releasing = true;
+        control.execution = 'released';
+        writeFileSync(controlFile, JSON.stringify(control, null, 2));
+      }
+    }
   });
   return report;
 }
@@ -1671,6 +1873,7 @@ export interface WorkflowRunView {
   provider: string;
   lifecycle: WorkflowRun['lifecycle'];
   phase?: WorkflowRun['phase'];
+  constraints?: RunConstraints;
   subject: RunSubject;
   orchestratorId: string;
   orchestrator?: ManagedAttempt;
@@ -1796,6 +1999,7 @@ export function inspectRun(config: FleetConfig, runId: string): WorkflowRunView 
     provider: run.provider,
     lifecycle: run.lifecycle,
     phase: run.phase,
+    constraints: run.constraints,
     subject: run.subject,
     orchestratorId: run.orchestratorId,
     orchestrator: run.orchestrator,

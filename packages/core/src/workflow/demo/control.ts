@@ -5,12 +5,12 @@ import { randomUUID } from 'node:crypto';
 import type { DemoRound } from './round.js';
 /** External execution boundary; controlled adapters never establish live acceptance. */
 export interface DemoExecution {
-  start(round: DemoRound): Promise<string>;
   watch?(round: DemoRound): void;
   stop(round: DemoRound, runId?: string, completed?: boolean): Promise<boolean>;
 }
 /** Reconnectable controls and observations survive a caller disconnect. */
 export interface DemoControlState {
+  armed?: boolean;
   runId?: string;
   started?: number;
   stopped: boolean;
@@ -42,6 +42,7 @@ export class DemoControl {
     return existsSync(p)
       ? JSON.parse(readFileSync(p, 'utf8'))
       : {
+          armed: false,
           stopped: false,
           execution: 'unknown',
           budgetMs: 3600000,
@@ -77,46 +78,43 @@ export class DemoControl {
       rmSync(lock, { recursive: true });
     }
   }
-  /** Explicit start, one execution across the configured round home, never retry. */
-  async start(confirmed: boolean, budgetMs = 3600000) {
-    if (!confirmed || !Number.isFinite(budgetMs) || budgetMs <= 0)
-      throw new Error('Expected explicit start confirmation and positive execution budget');
+  /** Arm the round, starting budget accounting and detached watchdog immediately; creates no Run. */
+  async arm(budgetMs = 3600000) {
+    if (!Number.isFinite(budgetMs) || budgetMs <= 0)
+      throw new Error('Expected positive execution budget');
+    if (this.round.phase !== 'provisioned' || this.round.ownershipUncertain)
+      throw new Error('Expected fully owned provisioned round to arm');
     let s = this.status();
-    if (s.started || s.stopped)
-      throw new Error('Round already started or stopped; use a fresh round');
+    if (s.armed || s.started || s.stopped)
+      throw new Error('Round already armed or stopped; use a fresh round');
     mkdirSync(join(this.round.config.root, 'execution.lock'));
     writeFileSync(join(this.round.config.root, 'execution.lock', 'owner'), this.round.id);
-    s.started = Date.now();
-    s.tick = s.started;
-    s.budgetMs = budgetMs;
-    this.mutate((current) => {
-      current.started = s.started;
-      current.tick = s.tick;
+    const now = Date.now();
+    s = this.mutate((current) => {
+      current.armed = true;
+      current.started = now;
+      current.tick = now;
       current.budgetMs = budgetMs;
+      current.activeMs = 0;
+      current.stopped = false;
+      current.execution = 'unknown';
     });
-    try {
-      const runId = await this.adapter.start(this.round);
-      s = this.status();
+    this.adapter.watch?.(this.round);
+    return s;
+  }
+
+  /** Uniquely and durably bind this armed round to a Run before managed execution. */
+  bindRun(runId: string) {
+    if (!runId || typeof runId !== 'string') throw new Error('Expected valid Run identity');
+    return this.mutate((s) => {
+      if (s.stopped) throw new Error(`Round is stopped; cannot bind Run ${runId}`);
+      if (!s.armed) throw new Error(`Round is not armed; cannot bind Run ${runId}`);
+      if (s.activeMs >= s.budgetMs) throw new Error(`Round budget expired; cannot bind Run ${runId}`);
+      if (s.runId && s.runId !== runId)
+        throw new Error(`Round already bound to Run ${s.runId}`);
       s.runId = runId;
-      if (s.stopped) {
-        this.mutate((current) => {
-          current.runId = runId;
-        });
-        return this.stop();
-      }
-      s = this.mutate((current) => {
-        current.runId = runId;
-        if (!current.stopped) current.execution = 'running';
-      });
-      this.adapter.watch?.(this.round);
-      return s;
-    } catch (e) {
-      this.mutate((current) => {
-        current.error = String(e);
-        current.stopped = true;
-      });
-      throw e;
-    }
+      s.execution = 'running';
+    });
   }
   /** Record an observation without requiring proof or stopping execution. */
   report(text: string, evidence?: string) {
@@ -158,6 +156,9 @@ export class DemoControl {
   /** Resume only the permission pause, preserving any separate closure wait. */
   async permissionResume() {
     if (this.status().wait !== 'permission') throw new Error('No permission wait to resume');
+    this.mutate((s) => {
+      s.permissionEvidence = undefined;
+    });
     return this.checkpoint();
   }
   private releaseLock() {

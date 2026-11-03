@@ -48,12 +48,11 @@ export function registerDemoCommands(program: Command) {
     });
   const control = (id: string) => new DemoControl(controller().status(id), nativeDemoExecution());
   demo
-    .command('start <round>')
-    .description('Explicitly start independent managed Agy Orchestrator')
-    .option('--confirm', 'Confirm Agy execution')
-    .option('--budget-minutes <minutes>', 'Active execution budget', '60')
+    .command('arm <round>')
+    .description('Arm budget accounting and detached watchdog for a fresh round')
+    .option('--budget-minutes <minutes>', 'Active execution budget in minutes', '60')
     .action(async (id, o) =>
-      print(await control(id).start(o.confirm === true, Number(o.budgetMinutes) * 60000)),
+      print(await control(id).arm(Number(o.budgetMinutes) * 60000)),
     );
   demo
     .command('report <round> <text>')

@@ -8,18 +8,20 @@ test('reconnected control retains observations and unknown stop occupancy', asyn
   const round = {
     root,
     id: 'test',
+    phase: 'provisioned',
     config: { root },
   } as unknown as import('../../packages/core/src/workflow/demo/round.js').DemoRound;
-  const adapter = { start: async () => 'run', stop: async () => false };
+  const adapter = { stop: async () => false };
   try {
     const c = new DemoControl(round, adapter);
-    await c.start(true);
+    await c.arm();
+    c.bindRun('run');
     c.report('Unexpected output', 'log');
     const reconnect = new DemoControl(round, adapter);
     expect(reconnect.status().observations[0].text).toBe('Unexpected output');
     expect((await reconnect.stop()).execution).toBe('unknown');
     expect(reconnect.status().stopped).toBe(true);
-    await expect(reconnect.start(true)).rejects.toThrow();
+    await expect(reconnect.arm()).rejects.toThrow();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -30,11 +32,12 @@ test('active budget excludes human waiting and expires through stop', async () =
   const round = {
     root,
     id: 'test',
+    phase: 'provisioned',
     config: { root },
   } as unknown as import('../../packages/core/src/workflow/demo/round.js').DemoRound;
-  const c = new DemoControl(round, { start: async () => 'run', stop: async () => true });
+  const c = new DemoControl(round, { stop: async () => true });
   try {
-    const s = await c.start(true, 1000);
+    const s = await c.arm(1000);
     await c.checkpoint('human', s.tick + 500);
     await c.checkpoint(undefined, s.tick + 100000);
     expect(c.status().activeMs).toBe(500);
@@ -46,26 +49,22 @@ test('active budget excludes human waiting and expires through stop', async () =
   }
 });
 
-test('async start failure preserves observations submitted while startup waits', async () => {
+test('bind failure preserves observations submitted while round is active', async () => {
   const root = mkdtempSync(join(tmpdir(), 'demo-race-'));
   const round = {
     root,
     id: 'race',
+    phase: 'provisioned',
     config: { root },
   } as unknown as import('../../packages/core/src/workflow/demo/round.js').DemoRound;
-  let fail!: (e: Error) => void;
   const c = new DemoControl(round, {
-    start: () =>
-      new Promise<string>((_, reject) => {
-        fail = reject;
-      }),
     stop: async () => false,
   });
   try {
-    const pending = c.start(true);
+    await c.arm();
     c.report('observed during startup');
-    fail(new Error('startup failed'));
-    await expect(pending).rejects.toThrow('startup failed');
+    c.bindRun('run-1');
+    expect(() => c.bindRun('run-2')).toThrow('already bound');
     expect(c.status().observations.map((o) => o.text)).toEqual(['observed during startup']);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -77,11 +76,12 @@ test('permission wait pauses active budget and resumes with explicit evidence', 
   const round = {
     root,
     id: 'perm',
+    phase: 'provisioned',
     config: { root },
   } as unknown as import('../../packages/core/src/workflow/demo/round.js').DemoRound;
-  const c = new DemoControl(round, { start: async () => 'run', stop: async () => true });
+  const c = new DemoControl(round, { stop: async () => true });
   try {
-    const s = await c.start(true, 5000);
+    const s = await c.arm(5000);
     await expect(c.permissionWait('')).rejects.toThrow('Expected permission evidence');
     await expect(c.permissionResume()).rejects.toThrow('No permission wait to resume');
 

@@ -131,6 +131,9 @@ Options:
   --requirements <text>           Immutable additional Run Requirements
   --requirements-file <file>      Read immutable Run Requirements from a UTF-8
                                   file
+  --demo-round <id>               Bind Run to an armed Demo round
+  --demo-config <file>            Demo configuration file for Demo-constrained
+                                  Run
   --type <type>                   Subject type; must match the title EPIC marker
                                   (choices: "issue", "epic")
   --config <file>                 Authoritative Fleet configuration (default:
