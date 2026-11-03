@@ -171,6 +171,16 @@
       "paper-craft-source": "./src/workflow/demo/native.ts",
       "types": "./dist/workflow/demo/native.d.ts",
       "default": "./dist/workflow/demo/native.js"
+    },
+    "./workflow/demo-control": {
+      "paper-craft-source": "./src/workflow/demo/control.ts",
+      "types": "./dist/workflow/demo/control.d.ts",
+      "default": "./dist/workflow/demo/control.js"
+    },
+    "./workflow/demo-execution": {
+      "paper-craft-source": "./src/workflow/demo/execution.ts",
+      "types": "./dist/workflow/demo/execution.d.ts",
+      "default": "./dist/workflow/demo/execution.js"
     }
   },
   "files": [
