@@ -1,6 +1,6 @@
 /** Real native relationship, delivery and closure boundary. No scheduling decisions. */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inspectRuns, inspectRun, canonicalDeliveryFingerprint } from '../run/run-driver.js';
 import { inspectAttemptControl } from '../runtime/runtime.js';
