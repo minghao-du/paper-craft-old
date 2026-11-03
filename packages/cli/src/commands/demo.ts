@@ -1,4 +1,5 @@
 import { registerDemoFinalization } from './demo-finalization.js';
+import { registerDemoDisposition } from './demo-disposition.js';
 import { registerDemoDelivery } from './demo-delivery.js';
 import { registerDemoVerifier } from './demo-verifier.js';
 import { DemoControl } from '@paper-craft/core/workflow/demo-control';
@@ -17,6 +18,7 @@ export function registerDemoCommands(program: Command) {
       'Demo JSON: physical root, owner, prefix, coordinator, brief',
     );
   registerDemoVerifier(demo);
+  registerDemoDisposition(demo);
   registerDemoDelivery(demo);
   registerDemoFinalization(demo);
   const controller = () =>

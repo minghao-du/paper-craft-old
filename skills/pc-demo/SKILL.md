@@ -44,6 +44,21 @@ Controlled checker samples never establish native Agy/GitHub acceptance.
 
 A detached demo watchdog enforces the active budget after launcher disconnect. Human/permission waiting must be recorded at verified boundaries through the public control checkpoint; the watchdog does not infer waiting from missing output. Native stop cannot prove aggregate detached-helper/ownership release and therefore retains unknown occupancy; do not reuse or delete these resources based on a stop response. Missing release proof is a blocker, never a successful stop or demo pass. Generic runtime recovery remains outside this demo control boundary; do not invoke recovery/retry on a stopped demo Run. Usage is unavailable unless separately evidenced by the provider.
 
+Run `./pc demo --config <file> dispose <round>` after final business completion.
+It recollects independent evidence, terminates owned executions without changing
+business completion, displays the result and removes only a fully verified clean
+round's repository and local scene. Unknown execution, late observations, failed
+checks and failed deletion retain diagnostic records. Do not use `stop` to mark a
+clean completion: stop is a retained user interruption.
+
+For a retained problem scene, validate the fix in a different fresh round with the
+same baseline, then use `dispose <old-round> --validated-by <fresh-round>
+--confirm-resolved` only after explicit operator confirmation that the findings
+were resolved. A repair commit alone is insufficient. The fresh validation scene
+must still be available for independent checking. Deletion does not erase Agy
+native history, GitHub backups or external console/chat copies. Permission,
+policy and throttling failures remain explicit cleanup failures; uncertain remote
+deletions are queried before any further mutation. No automatic deletion retries.
 ## Sequential delivery and human Closure
 
 The Orchestrator creates exactly two native children with the second blocked by
