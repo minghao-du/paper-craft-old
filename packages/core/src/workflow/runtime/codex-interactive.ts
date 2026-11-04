@@ -226,7 +226,7 @@ export class InteractiveCodexRunner implements RunnerAdapter {
       ? `Recover role ${attempt.role} for Run ${attempt.run ?? attempt.id}, Dispatch ${attempt.dispatchId ?? attempt.id}. This is a new authorized execution attempt. Reconcile durable brief and receipts in ${attempt.directory} and checkout ${attempt.checkout}; accepted work must not repeat. Inspect predecessor evidence and the original immutable brief before continuing only incomplete assigned work. If ownership or results are uncertain, report that uncertainty instead of executing.`
       : attempt.brief;
     const roleInstructions =
-      attempt.conversation && attempt.initialization
+      attempt.initialization && !instruction.includes('Role initialization gate:')
         ? initializationInstructions(attempt.initialization, attempt.directory)
         : '';
     args.push(

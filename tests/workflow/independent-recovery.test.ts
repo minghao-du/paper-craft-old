@@ -26,12 +26,18 @@ function fixture() {
   let launches = 0;
   let ready = false;
   let stopped = false;
+  const stoppedAttempts = new Set<string>();
   const runner = {
     name: 'agy',
     interactive: true,
+    automaticStartup: true,
     async preflight() {},
-    async stopped() {
+    async stopped(a?: ManagedAttempt) {
+      if (a) return stoppedAttempts.has(a.id) || (stoppedAttempts.size === 0 && stopped);
       return stopped;
+    },
+    async send(_a: ManagedAttempt, _m: { id: string; brief: string }) {
+      return { status: 'delivered' as const, evidence: 'native activation' };
     },
     async result() {
       return undefined;
@@ -63,8 +69,13 @@ function fixture() {
     ready() {
       ready = true;
     },
-    stop() {
+    stop(attemptId?: string) {
       stopped = true;
+      if (attemptId) stoppedAttempts.add(attemptId);
+      else {
+        const current = inspectRuns(config).runs[0]?.orchestrator;
+        if (current) stoppedAttempts.add(current.id);
+      }
     },
     cleanup() {
       rmSync(project, { recursive: true, force: true });

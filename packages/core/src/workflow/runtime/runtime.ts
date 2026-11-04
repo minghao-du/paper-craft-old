@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { stateDirectory } from '../handoff.js';
 import {
   verifyRoleInitialization,
-  initializationInstructions,
   type RoleInitialization,
 } from '../run/role-initialization.js';
 import type { FleetConfig } from '../fleet/fleet-config.js';
@@ -144,7 +143,7 @@ export async function startOrchestrator(
     role: 'orchestrator',
     runner: runner.name,
     persistent: !!runner.result,
-    ...(runner.automaticStartup || runner.separateActivation ? { startupGate: true } : {}),
+    ...(runner.automaticStartup || runner.separateActivation || runner.result ? { startupGate: true } : {}),
     brief,
     status: 'starting',
     created: new Date().toISOString(),
@@ -163,8 +162,6 @@ export async function startOrchestrator(
       attempt: attempt.id,
       briefHash: createHash('sha256').update(brief).digest('hex'),
     };
-    if (runner.name !== 'agy')
-      attempt.brief += initializationInstructions(attempt.initialization, directory);
   }
   save(path, attempt);
   writeFileSync(join(directory, 'brief.md'), attempt.brief, { mode: 0o600 });
