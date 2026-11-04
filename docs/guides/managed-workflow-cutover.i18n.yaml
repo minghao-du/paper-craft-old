@@ -1,0 +1,18 @@
+/managed-workflow-operator-cutover-guide:
+  en: 047d304877587610
+  zh: 5a21ca36d92638d3
+/managed-workflow-operator-cutover-guide/background-and-architectural-rationale:
+  en: eea57bdc27432a45
+  zh: 0effbe9f01bf888a
+/managed-workflow-operator-cutover-guide/pre-cutover-preparation:
+  en: 9c50d7af9113f481
+  zh: 3395606fead72863
+/managed-workflow-operator-cutover-guide/historical-data-protection:
+  en: 3674f67e7c01c72a
+  zh: 68bb3adf07ab4515
+/managed-workflow-operator-cutover-guide/cutover-execution:
+  en: a5b7c4c22271e619
+  zh: f30c8bb258ac89b6
+/managed-workflow-operator-cutover-guide/starting-managed-work-cleanly:
+  en: e74751afe0abb549
+  zh: e768d020ecf44b73
