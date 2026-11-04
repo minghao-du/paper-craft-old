@@ -113,6 +113,7 @@ export interface RunRegistry {
     reason?: string;
   }[];
 }
+/** Runtime state root directory for a fleet configuration. */
 export function home(config: FleetConfig): string {
   return stateDirectory(config, '.runtime', createHash('sha256').update(config.file).digest('hex'));
 }

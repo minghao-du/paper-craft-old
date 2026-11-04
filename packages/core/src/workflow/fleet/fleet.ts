@@ -158,6 +158,13 @@ function discoverSlots(config: FleetConfig): DiscoveredSlots {
     }
   }
 
+  const invalidate = (physical: string, slotName: string, detail: string) => {
+    unknown.push({ slot: slotName, detail });
+    invalidPaths.add(physical);
+    const conf = configuredSlots.find((c) => c.physical === physical);
+    if (conf) invalidPaths.add(conf.physical);
+  };
+
   for (const [physical, claims] of claimsByPath.entries()) {
     if (invalidPaths.has(physical)) continue;
 
@@ -165,13 +172,11 @@ function discoverSlots(config: FleetConfig): DiscoveredSlots {
     const slotName = claims[0].slotName;
 
     if (runIds.length > 1) {
-      unknown.push({
-        slot: slotName,
-        detail: `Multiple runs claiming the same checkout path: ${runIds.join(', ')} at ${claims[0].resource.path}`,
-      });
-      invalidPaths.add(physical);
-      const conf = configuredSlots.find((c) => c.physical === physical);
-      if (conf) invalidPaths.add(conf.physical);
+      invalidate(
+        physical,
+        slotName,
+        `Multiple runs claiming the same checkout path: ${runIds.join(', ')} at ${claims[0].resource.path}`,
+      );
       continue;
     }
 
@@ -179,13 +184,11 @@ function discoverSlots(config: FleetConfig): DiscoveredSlots {
 
     const run = registry?.runs.find((r) => r.id === resource.runId);
     if (!run) {
-      unknown.push({
-        slot: slotName,
-        detail: `Resource run attribution missing: run ${resource.runId} not found in registry`,
-      });
-      invalidPaths.add(physical);
-      const conf = configuredSlots.find((c) => c.physical === physical);
-      if (conf) invalidPaths.add(conf.physical);
+      invalidate(
+        physical,
+        slotName,
+        `Resource run attribution missing: run ${resource.runId} not found in registry`,
+      );
       continue;
     }
 
@@ -199,25 +202,21 @@ function discoverSlots(config: FleetConfig): DiscoveredSlots {
       resource.registry !== expectedRegistry &&
       resourceRegPhysical !== expectedRegistryPhysical
     ) {
-      unknown.push({
-        slot: slotName,
-        detail: `Resource registry attribution mismatch: expected ${expectedRegistry}, found ${resource.registry}`,
-      });
-      invalidPaths.add(physical);
-      const conf = configuredSlots.find((c) => c.physical === physical);
-      if (conf) invalidPaths.add(conf.physical);
+      invalidate(
+        physical,
+        slotName,
+        `Resource registry attribution mismatch: expected ${expectedRegistry}, found ${resource.registry}`,
+      );
       continue;
     }
 
     const ownerFile = join(physical, '.pc-execution-owner');
     if (!pathExists(ownerFile)) {
-      unknown.push({
-        slot: slotName,
-        detail: `Missing execution-owner evidence: .pc-execution-owner not found in ${resource.path}`,
-      });
-      invalidPaths.add(physical);
-      const conf = configuredSlots.find((c) => c.physical === physical);
-      if (conf) invalidPaths.add(conf.physical);
+      invalidate(
+        physical,
+        slotName,
+        `Missing execution-owner evidence: .pc-execution-owner not found in ${resource.path}`,
+      );
       continue;
     }
 
@@ -225,13 +224,11 @@ function discoverSlots(config: FleetConfig): DiscoveredSlots {
     try {
       owner = JSON.parse(readFileSync(ownerFile, 'utf8'));
     } catch (error) {
-      unknown.push({
-        slot: slotName,
-        detail: `Malformed execution-owner evidence in ${resource.path}: ${error instanceof Error ? error.message : String(error)}`,
-      });
-      invalidPaths.add(physical);
-      const conf = configuredSlots.find((c) => c.physical === physical);
-      if (conf) invalidPaths.add(conf.physical);
+      invalidate(
+        physical,
+        slotName,
+        `Malformed execution-owner evidence in ${resource.path}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       continue;
     }
 
@@ -246,13 +243,11 @@ function discoverSlots(config: FleetConfig): DiscoveredSlots {
       owner.runId !== resource.runId ||
       (owner.registry !== resource.registry && ownerRegPhysical !== expectedRegistryPhysical)
     ) {
-      unknown.push({
-        slot: slotName,
-        detail: `Execution-owner conflict in ${resource.path}: recorded run ${owner.runId} (registry ${owner.registry}), expected run ${resource.runId}`,
-      });
-      invalidPaths.add(physical);
-      const conf = configuredSlots.find((c) => c.physical === physical);
-      if (conf) invalidPaths.add(conf.physical);
+      invalidate(
+        physical,
+        slotName,
+        `Execution-owner conflict in ${resource.path}: recorded run ${owner.runId} (registry ${owner.registry}), expected run ${resource.runId}`,
+      );
       continue;
     }
   }
