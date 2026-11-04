@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgyInteractive } from './agy-interactive.js';
-import type { RunnerAdapter, ManagedAttempt, ExecutionObservation } from './runtime.js';
+import type { RunnerAdapter, ManagedAttempt, ExecutionObservation, ExecutionTermination } from './runtime.js';
 
 /** Managed agy persistent TUI adapter backed by native hook transcripts. */
 export class AgyRunner implements RunnerAdapter {
@@ -42,6 +42,33 @@ export class AgyRunner implements RunnerAdapter {
 
   termination(a: ManagedAttempt): Promise<boolean> {
     return this.tui.terminated(a);
+  }
+
+  async terminate(a: ManagedAttempt): Promise<ExecutionTermination> {
+    try {
+      if (await this.stopped(a)) {
+        return {
+          status: 'terminated',
+          evidence: 'Owned Agy process already exited or terminated',
+        };
+      }
+      const receipt = await this.cancel(a);
+      if (!(await this.stopped(a))) {
+        return {
+          status: 'unconfirmed',
+          error: 'Agy pane termination unverified after cancellation',
+        };
+      }
+      return {
+        status: 'terminated',
+        evidence: receipt.evidence,
+      };
+    } catch (error) {
+      return {
+        status: 'unconfirmed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   cancel(a: ManagedAttempt): Promise<{ evidence: string }> {
