@@ -14,7 +14,16 @@ export async function recoverAllRuns(
     pendingDispatches?: string[];
     error?: string;
   }[] = [];
-  const runs = inspectRuns(config).runs;
+  let runs;
+  try {
+    runs = inspectRuns(config).runs;
+  } catch (error) {
+    return {
+      status: 'unknown' as const,
+      error: `Failed to inspect fleet runs: ${String(error)}`,
+      outcomes,
+    };
+  }
   for (const run of runs.filter((r) => r.lifecycle !== 'completed')) {
     try {
       const runner = runnerFor(run.provider);

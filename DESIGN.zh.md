@@ -46,4 +46,4 @@ Checkout 与目录锁隔离并发 worker。未知占用状态绝不意味着空�
 
 ## VIII. 宿主适配器依赖 Core
 
-pnpm 工作区分离 `packages/core`、`packages/cli` 和 `packages/mcp`。Core 暴露领域数据与服务，不包含 Commander、MCP 或模型宿主上下文。CLI 和 MCP 依赖 Core 的公共包导出；Core 绝不导入适配器。宿主专用的注册、响应格式和进程生命周期属于适配器。前台与后台入口点显式组合执行依赖；Core 监督算法通过宿主启动接缝接收依赖，而无需导入具体提供者。通用 Shell 引号转义辅助函数保留在 Core 中以服务不同宿主的调用方，而非专属于 Agy。未来的原生 DeepSeek 插件也遵循同一依赖方向。共享 skills 仍位于仓库根目录。CLI 命令、配置路径和 JSONL 格式是明确的公共契约。
+pnpm 工作区分离 `packages/core`、`packages/cli` 和 `packages/mcp`。Core 暴露领域数据与服务，不包含 Commander、MCP 或模型宿主上下文。CLI 和 MCP 依赖 Core 的公共包导出；Core 绝不导入适配器。宿主专用的注册、响应格式和进程生命周期属于适配器。前台与后台入口点显式组合执行依赖；Core 监督算法通过宿主启动接缝接收依赖，而无需导入具体提供者。通用 Shell 引号转义辅助函数保留在 Core 中以服务不同宿主的调用方，而非专属于 Agy。Core 持久化不透明的提供者恢复状态，而不解析提供者专用的内部字段；提供者适配器自行验证其会话、窗格、权限与执行位置证据，而 Dashboard 观测严格保持只读且无执行依赖。未来的原生 DeepSeek 插件也遵循同一依赖方向。共享 skills 仍位于仓库根目录。CLI 命令、配置路径和 JSONL 格式是明确的公共契约。
