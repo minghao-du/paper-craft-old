@@ -16,6 +16,13 @@ import { join, resolve } from 'node:path';
 import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import { preserveState } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
+import {
+  startRun,
+  reserveRunCheckout,
+  updateRunRegistry,
+  inspectRuns,
+  home,
+} from '@paper-craft/core/workflow/run-driver';
 
 const repo = process.cwd();
 function git(dir: string, ...args: string[]): string {
@@ -189,6 +196,7 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
   let temp: string;
   let project: string;
   let pool: string;
+  let origin: string;
   let configFile: string;
   beforeEach(() => {
     temp = realpathSync(mkdtempSync(join(tmpdir(), 'pc-fleet-')));
@@ -196,7 +204,7 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
     pool = join(temp, 'pool');
     mkdirSync(project);
     mkdirSync(pool);
-    const origin = join(temp, 'origin.git');
+    origin = join(temp, 'origin.git');
     mkdirSync(origin);
     git(origin, 'init', '--bare');
     git(project, 'init', '-b', 'main');
@@ -301,6 +309,138 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
     expect(preserveState(config, path, 'worktree test').status).toBe('preserved');
     expect(checkReclaim(config, path).eligible).toBe(false);
     expect(existsSync(join(path, '.epic-status.json'))).toBe(true);
+  });
+
+  it('discovers dynamic checkouts from Managed Registry resources', () => {
+    const config = loadFleetConfig(configFile);
+    const dynamicSlot = join(pool, 'dynamic-1');
+    git(pool, 'clone', '-b', 'main', origin, 'dynamic-1');
+    git(dynamicSlot, 'config', 'user.name', 'Workflow Test');
+    git(dynamicSlot, 'config', 'user.email', 'workflow@example.test');
+    writeFileSync(join(dynamicSlot, '.git', 'info', 'exclude'), '.pc-execution-owner\n');
+
+    const runId = 'run-10';
+    updateRunRegistry(config, (reg) => {
+      reg.runs.push({
+        id: runId,
+        subject: { repository: 'test/repo', number: 10, kind: 'issue', title: 'dynamic', body: 'work' },
+        provider: 'agy',
+        policy: { name: 'default', revision: 1 },
+        lifecycle: 'running',
+        orchestratorId: 'orch-10',
+        brief: { path: '', hash: '' },
+      });
+      reg.resources = [
+        { path: dynamicSlot, runId, registry: join(home(config), 'registry.json') },
+      ];
+    });
+    writeFileSync(
+      join(dynamicSlot, '.pc-execution-owner'),
+      JSON.stringify({ path: dynamicSlot, runId, registry: join(home(config), 'registry.json') }),
+    );
+
+    const result = checkFleet(config, 'currency');
+    expect(result.status).toBe('clear');
+    const slotNames = result.slots.map((s) => s.name);
+    expect(slotNames).toContain('cedar');
+    expect(slotNames).toContain('pine');
+    expect(slotNames).toContain(`${runId}/dynamic-1`);
+  });
+
+  it('reports missing registered checkouts as unknown, never inferred as released even if run completed', () => {
+    const config = loadFleetConfig(configFile);
+    const missingSlot = join(pool, 'missing-slot');
+    const runId = 'run-11';
+    updateRunRegistry(config, (reg) => {
+      reg.runs.push({
+        id: runId,
+        subject: { repository: 'test/repo', number: 11, kind: 'issue', title: 'missing', body: 'work' },
+        provider: 'agy',
+        policy: { name: 'default', revision: 1 },
+        lifecycle: 'completed',
+        orchestratorId: 'orch-11',
+        brief: { path: '', hash: '' },
+      });
+      reg.resources = [
+        { path: missingSlot, runId, registry: join(home(config), 'registry.json') },
+      ];
+    });
+
+    const result = checkFleet(config, 'currency');
+    expect(result.status).toBe('unknown');
+    expect(
+      result.unknown.some(
+        (u) => u.slot === `${runId}/missing-slot` && u.detail.includes('does not exist'),
+      ),
+    ).toBe(true);
+  });
+
+  it('isolates failed Registry reads so valid configured directories continue independent checks', () => {
+    const config = loadFleetConfig(configFile);
+    const regFile = join(home(config), 'registry.json');
+    mkdirSync(home(config), { recursive: true });
+    writeFileSync(regFile, '{"corrupted json');
+
+    const result = checkFleet(config, 'currency');
+    expect(result.status).toBe('unknown');
+    expect(result.unknown.some((u) => u.slot === 'registry')).toBe(true);
+    expect(result.slots.map((s) => s.name).sort()).toEqual(['cedar', 'pine']);
+  });
+
+  it('reports ownership conflicts and prevents overlapping configured paths from hiding conflicts', () => {
+    const config = loadFleetConfig(configFile);
+    const pine = join(pool, 'pine');
+    const run1 = 'run-12';
+    const run2 = 'run-13';
+
+    // Both runs claim the same configured slot 'pine' in registry.resources
+    updateRunRegistry(config, (reg) => {
+      reg.runs.push(
+        {
+          id: run1,
+          subject: { repository: 'test/repo', number: 12, kind: 'issue', title: 'c1', body: 'b' },
+          provider: 'agy',
+          policy: { name: 'default', revision: 1 },
+          lifecycle: 'running',
+          orchestratorId: 'orch-12',
+          brief: { path: '', hash: '' },
+        },
+        {
+          id: run2,
+          subject: { repository: 'test/repo', number: 13, kind: 'issue', title: 'c2', body: 'b' },
+          provider: 'agy',
+          policy: { name: 'default', revision: 1 },
+          lifecycle: 'running',
+          orchestratorId: 'orch-13',
+          brief: { path: '', hash: '' },
+        },
+      );
+      reg.resources = [
+        { path: pine, runId: run1, registry: join(home(config), 'registry.json') },
+        { path: pine, runId: run2, registry: join(home(config), 'registry.json') },
+      ];
+    });
+    writeFileSync(
+      join(pine, '.pc-execution-owner'),
+      JSON.stringify({ path: pine, runId: run1, registry: join(home(config), 'registry.json') }),
+    );
+
+    const result = checkFleet(config, 'currency');
+    expect(result.status).toBe('unknown');
+    expect(result.unknown.some((u) => u.slot === 'pine' && u.detail.includes('Multiple runs'))).toBe(true);
+    expect(result.slots.map((s) => s.name)).not.toContain('pine');
+  });
+
+  it('observes released resources as standard configured slots without checking managed identity', () => {
+    const config = loadFleetConfig(configFile);
+    const pine = join(pool, 'pine');
+    // Pine has no .pc-execution-owner and is not in registry.resources (it was released or never registered)
+    expect(existsSync(join(pine, '.pc-execution-owner'))).toBe(false);
+    expect(inspectRuns(config).resources?.some((r) => r.path === pine)).toBeFalsy();
+
+    const result = checkFleet(config, 'currency');
+    expect(result.status).toBe('clear');
+    expect(result.slots.map((s) => s.name).sort()).toEqual(['cedar', 'pine']);
   });
 });
 

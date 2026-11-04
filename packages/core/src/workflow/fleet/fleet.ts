@@ -1,9 +1,9 @@
 /** Git/file checks deliberately make no claims about agent or process liveness. */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, lstatSync } from 'node:fs';
-import { readWorkerInventory } from './worker-inventory.js';
-import { join } from 'node:path';
+import { readFileSync, readdirSync, lstatSync, realpathSync } from 'node:fs';
+import { join, basename, resolve } from 'node:path';
 import { directory, pathExists, workflowSource, type FleetConfig } from './fleet-config.js';
+import { inspectRuns, home, type RunRegistry } from '../run/run-driver.js';
 
 function git(dir: string, ...args: string[]): string {
   return execFileSync('git', ['-C', dir, ...args], {
@@ -67,33 +67,218 @@ export interface SlotReport {
   landedOverlap: string[];
 }
 
-function slotLocations(config: FleetConfig): { name: string; path: string; runtime: boolean }[] {
-  const names = config.worktrees
+interface Location {
+  name: string;
+  path: string;
+  runtime: boolean;
+}
+
+interface DiscoveredSlots {
+  locations: Location[];
+  unknown: Finding[];
+}
+
+function discoverSlots(config: FleetConfig): DiscoveredSlots {
+  const configuredNames = config.worktrees
     ? readdirSync(config.root, { withFileTypes: true })
         .filter((d) => d.isDirectory() && /^issue-\d+$/.test(d.name))
         .map((d) => d.name)
         .sort()
     : config.slots;
-  const locations = names.map((name) => ({
-    name,
-    path: join(config.root, name),
-    runtime: false,
-  }));
-  const workers = readWorkerInventory(config.project);
-  for (const worker of workers) {
-    // Released/completed attempts may retain records after checkout removal.
-    // Missing in-flight checkouts remain visible as failed probes.
-    if (worker.state === 'completed' && !pathExists(worker.worktree)) continue;
-    if (!locations.some((location) => location.path === worker.worktree))
-      locations.push({
-        name: `${worker.fleet_id}/${worker.dispatch_id}`,
-        path: worker.worktree,
-        runtime: true,
-      });
+
+  const configuredSlots = configuredNames.map((name) => {
+    const slotPath = join(config.root, name);
+    let physical: string;
+    try {
+      physical = directory(slotPath);
+    } catch {
+      physical = resolve(slotPath);
+    }
+    return { name, path: slotPath, physical };
+  });
+
+  const unknown: Finding[] = [];
+  let registry: RunRegistry | undefined;
+  try {
+    registry = inspectRuns(config);
+  } catch (error) {
+    unknown.push({
+      slot: 'registry',
+      detail: error instanceof Error ? error.message : String(error),
+    });
   }
-  if (!locations.length && !workers.length)
+
+  const resources = registry?.resources ?? [];
+  if (!configuredNames.length && !resources.length && !unknown.length) {
     throw new Error(`No configured slots to check in ${config.file}`);
-  return locations;
+  }
+
+  const expectedRegistry = join(home(config), 'registry.json');
+  let expectedRegistryPhysical: string;
+  try {
+    expectedRegistryPhysical = realpathSync(expectedRegistry);
+  } catch {
+    expectedRegistryPhysical = resolve(expectedRegistry);
+  }
+
+  interface ResourceClaim {
+    resource: { path: string; runId: string; registry: string };
+    physical: string;
+    slotName: string;
+    isConfigured: boolean;
+  }
+
+  const claimsByPath = new Map<string, ResourceClaim[]>();
+  const invalidPaths = new Set<string>();
+
+  for (const resource of resources) {
+    let physical: string;
+    try {
+      physical = realpathSync(resource.path);
+    } catch {
+      physical = resolve(resource.path);
+    }
+
+    const conf = configuredSlots.find(
+      (c) => c.physical === physical || c.path === resource.path,
+    );
+    const slotName = conf ? conf.name : `${resource.runId}/${basename(resource.path)}`;
+    const isConfigured = !!conf;
+
+    const claim: ResourceClaim = { resource, physical, slotName, isConfigured };
+    claimsByPath.set(physical, [...(claimsByPath.get(physical) ?? []), claim]);
+
+    if (!pathExists(resource.path)) {
+      unknown.push({
+        slot: slotName,
+        detail: `Registered checkout does not exist on disk: ${resource.path}`,
+      });
+      invalidPaths.add(physical);
+      if (conf) invalidPaths.add(conf.physical);
+    }
+  }
+
+  for (const [physical, claims] of claimsByPath.entries()) {
+    if (invalidPaths.has(physical)) continue;
+
+    const runIds = [...new Set(claims.map((c) => c.resource.runId))];
+    const slotName = claims[0].slotName;
+
+    if (runIds.length > 1) {
+      unknown.push({
+        slot: slotName,
+        detail: `Multiple runs claiming the same checkout path: ${runIds.join(', ')} at ${claims[0].resource.path}`,
+      });
+      invalidPaths.add(physical);
+      const conf = configuredSlots.find((c) => c.physical === physical);
+      if (conf) invalidPaths.add(conf.physical);
+      continue;
+    }
+
+    const { resource } = claims[0];
+
+    const run = registry?.runs.find((r) => r.id === resource.runId);
+    if (!run) {
+      unknown.push({
+        slot: slotName,
+        detail: `Resource run attribution missing: run ${resource.runId} not found in registry`,
+      });
+      invalidPaths.add(physical);
+      const conf = configuredSlots.find((c) => c.physical === physical);
+      if (conf) invalidPaths.add(conf.physical);
+      continue;
+    }
+
+    let resourceRegPhysical: string;
+    try {
+      resourceRegPhysical = realpathSync(resource.registry);
+    } catch {
+      resourceRegPhysical = resolve(resource.registry);
+    }
+    if (
+      resource.registry !== expectedRegistry &&
+      resourceRegPhysical !== expectedRegistryPhysical
+    ) {
+      unknown.push({
+        slot: slotName,
+        detail: `Resource registry attribution mismatch: expected ${expectedRegistry}, found ${resource.registry}`,
+      });
+      invalidPaths.add(physical);
+      const conf = configuredSlots.find((c) => c.physical === physical);
+      if (conf) invalidPaths.add(conf.physical);
+      continue;
+    }
+
+    const ownerFile = join(physical, '.pc-execution-owner');
+    if (!pathExists(ownerFile)) {
+      unknown.push({
+        slot: slotName,
+        detail: `Missing execution-owner evidence: .pc-execution-owner not found in ${resource.path}`,
+      });
+      invalidPaths.add(physical);
+      const conf = configuredSlots.find((c) => c.physical === physical);
+      if (conf) invalidPaths.add(conf.physical);
+      continue;
+    }
+
+    let owner: { path?: string; runId?: string; registry?: string };
+    try {
+      owner = JSON.parse(readFileSync(ownerFile, 'utf8'));
+    } catch (error) {
+      unknown.push({
+        slot: slotName,
+        detail: `Malformed execution-owner evidence in ${resource.path}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      invalidPaths.add(physical);
+      const conf = configuredSlots.find((c) => c.physical === physical);
+      if (conf) invalidPaths.add(conf.physical);
+      continue;
+    }
+
+    let ownerRegPhysical = owner.registry ?? '';
+    try {
+      if (owner.registry) ownerRegPhysical = realpathSync(owner.registry);
+    } catch {
+      if (owner.registry) ownerRegPhysical = resolve(owner.registry);
+    }
+
+    if (
+      owner.runId !== resource.runId ||
+      (owner.registry !== resource.registry && ownerRegPhysical !== expectedRegistryPhysical)
+    ) {
+      unknown.push({
+        slot: slotName,
+        detail: `Execution-owner conflict in ${resource.path}: recorded run ${owner.runId} (registry ${owner.registry}), expected run ${resource.runId}`,
+      });
+      invalidPaths.add(physical);
+      const conf = configuredSlots.find((c) => c.physical === physical);
+      if (conf) invalidPaths.add(conf.physical);
+      continue;
+    }
+  }
+
+  const locations: Location[] = [];
+
+  for (const conf of configuredSlots) {
+    if (invalidPaths.has(conf.physical)) continue;
+    locations.push({
+      name: conf.name,
+      path: conf.path,
+      runtime: false,
+    });
+  }
+
+  for (const [physical, claims] of claimsByPath.entries()) {
+    if (invalidPaths.has(physical)) continue;
+    if (claims[0].isConfigured) continue;
+    locations.push({
+      name: claims[0].slotName,
+      path: claims[0].resource.path,
+      runtime: true,
+    });
+  }
+
+  return { locations, unknown };
 }
 
 function reference(config: FleetConfig): string {
@@ -162,7 +347,7 @@ export function checkFleet(
   kind: 'currency' | 'collisions',
   fetch = false,
 ): FleetReport {
-  const locations = slotLocations(config);
+  const { locations, unknown } = discoverSlots(config);
   const report: FleetReport = {
     status: 'clear',
     scope: {
@@ -175,7 +360,7 @@ export function checkFleet(
     occupancy: 'unknown',
     slots: [],
     issues: [],
-    unknown: [],
+    unknown: [...unknown],
   };
   const ref = reference(config);
   const origin = git(config.project, 'remote', 'get-url', 'origin');

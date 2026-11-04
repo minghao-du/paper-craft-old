@@ -113,7 +113,7 @@ export interface RunRegistry {
     reason?: string;
   }[];
 }
-function home(config: FleetConfig): string {
+export function home(config: FleetConfig): string {
   return stateDirectory(config, '.runtime', createHash('sha256').update(config.file).digest('hex'));
 }
 /** Read only; absent legacy Run identities are never fabricated. */
