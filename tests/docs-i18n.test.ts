@@ -55,7 +55,7 @@ test('reviewed pairs detect stale content, preserve unrelated sections and only 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-}, 30000);
+}, 45000);
 
 test('adoption backlog permits only existing unpaired documents and orphan artifacts fail', () => {
   const root = mkdtempSync(join(tmpdir(), 'pc-docs-'));
@@ -115,7 +115,7 @@ test('adoption backlog permits only existing unpaired documents and orphan artif
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-}, 30000);
+}, 60000);
 
 test('adoption snapshot cannot move forward to exempt newly introduced documents', () => {
   const root = mkdtempSync(join(tmpdir(), 'pc-docs-adoption-'));

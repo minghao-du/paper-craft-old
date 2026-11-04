@@ -42,14 +42,6 @@ const opts = {
   human: () => program.opts()['human'] as boolean,
 };
 
-// Lightweight commands execute in the shell launcher before loading this tree.
-program.command('status').description('Inspect worker attempts and unhandled receipts');
-program.command('pr').description('Verify and land a worker PR with evidence preservation');
-program
-  .command('worker')
-  .description('Inspect worker records, wait for results, or release resources');
-program.command('run').description('Create or inspect a lightweight agent-driven Run');
-
 // Register commands
 registerConfigCommand(program, opts);
 registerRebuildCommand(program, opts);

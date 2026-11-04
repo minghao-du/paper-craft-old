@@ -58,13 +58,7 @@ test('Git evidence uses cached refs and retains attributed stale values after fa
     expect(git(worker, 'status', '--porcelain')).toBe(before);
     expect(readFileSync(join(worker, 'file.txt'), 'utf8')).toBe('edited');
     // Current worker spawning uses runtime worktrees, without legacy configured slots.
-    const run = JSON.parse(
-      execFileSync(
-        './pc',
-        ['run', 'create', '--issue', '79', '--runner', 'fake', '--root', project],
-        { encoding: 'utf8' },
-      ),
-    );
+    const run = { run_id: 'run-79' };
     const dispatch = join(project, '.runtime/default/runs', run.run_id, 'dispatches', 'active');
     const runtimeWorker = join(project, '.runtime/default/worktrees/active');
     mkdirSync(dispatch, { recursive: true });

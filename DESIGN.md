@@ -58,19 +58,16 @@ when behavior changes, skill docs MUST update in the same PR.
 ## VII. Runtime-Independent Workflows
 
 The Run's active managed Orchestrator attempt makes scheduling, acceptance and rework decisions.
-Lightweight Bash commands execute Git worktree, tmux and GitHub operations behind
-`pc`; small JavaScript helpers validate and persist JSON state. Run intake records
-the issue, transparent runner command and conversational requirements. Fleet is a
-runtime resource boundary, not a scheduling agent.
+Fleet is a runtime resource boundary, not a scheduling agent. Managed Workflow
+coordinates runs, dispatches, receipts, and stage execution across providers.
 
-Workers receive immutable brief files and publish durable `RECEIPT.md` results.
-Synchronous wait detects verified premature exits; status exposes unhandled results
-on reconnect. Runner commands are platform independent; wrappers adapt prompt input
-when needed. Claude Code is not required.
+Managed Workers receive immutable brief files and publish durable receipts.
+Stage execution and receipts are accepted through the authoritative Run Registry.
+Runner commands and adapters are platform independent. Claude Code is not required.
 
-Worktrees and directory locks isolate concurrent workers. Unknown occupancy never
+Checkouts and directory locks isolate concurrent workers. Unknown occupancy never
 means free. Landing verifies the tested PR HEAD and checks, preserves evidence,
-then releases the worktree only after a verified merge.
+then releases resources only after a verified merge and completed delivery.
 
 ## VIII. Host Adapters Depend on Core
 

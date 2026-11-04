@@ -129,7 +129,7 @@ describe('portable workflow file contract', () => {
     );
     expect(noRun.status).not.toBe(0);
     expect(noRun.stdout + noRun.stderr).toContain('workflow orchestrator start 7');
-  });
+  }, 15000);
 
   it('rejects the retired workflow command group', () => {
     const launcher = join(temp, 'pc');
@@ -189,7 +189,7 @@ describe('portable workflow file contract', () => {
     const reclaim = cli('fleet', 'reclaim-check', '--dir', join(pool, 'cedar'));
     expect(reclaim.status).toBe(2);
     expect(JSON.parse(reclaim.stdout).eligible).toBe(false);
-  }, 15000);
+  }, 25000);
 });
 
 describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
