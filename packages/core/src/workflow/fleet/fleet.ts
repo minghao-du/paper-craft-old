@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, lstatSync, realpathSync } from 'node:fs';
 import { join, basename, resolve } from 'node:path';
 import { directory, pathExists, workflowSource, type FleetConfig } from './fleet-config.js';
-import { inspectRuns, home, type RunRegistry } from '../run/run-driver.js';
+import { inspectRuns, home, type RunRegistry } from '../run/run-registry.js';
 
 function git(dir: string, ...args: string[]): string {
   return execFileSync('git', ['-C', dir, ...args], {
