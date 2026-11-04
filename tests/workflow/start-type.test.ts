@@ -5,7 +5,7 @@ import { Command } from 'commander';
 import { afterEach, expect, it, vi } from 'vitest';
 import { registerWorkflowCommands } from '../../packages/cli/src/commands/workflow.js';
 import { startRun } from '@paper-craft/core/workflow/run-driver';
-import { readIssue } from '@paper-craft/core/workflow/issue-driver';
+import { readIssue } from '@paper-craft/core/workflow/run-subject';
 
 vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/run-driver')>()),
@@ -15,8 +15,8 @@ vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
     brief: { path: '/context', hash: 'hash' },
   })),
 }));
-vi.mock('@paper-craft/core/workflow/issue-driver', async (original) => ({
-  ...(await original<typeof import('@paper-craft/core/workflow/issue-driver')>()),
+vi.mock('@paper-craft/core/workflow/run-subject', async (original) => ({
+  ...(await original<typeof import('@paper-craft/core/workflow/run-subject')>()),
   readIssue: vi.fn(),
 }));
 vi.mock('@paper-craft/core/workflow/fleet-config', () => ({
@@ -24,7 +24,8 @@ vi.mock('@paper-craft/core/workflow/fleet-config', () => ({
 }));
 vi.mock('../../packages/cli/src/workflow/composition.js', () => ({
   createRunner: vi.fn((provider: string) => {
-    if (provider !== 'agy') throw new Error(`Unsupported managed provider '${provider}'. Only 'agy' is supported.`);
+    if (provider !== 'agy')
+      throw new Error(`Unsupported managed provider '${provider}'. Only 'agy' is supported.`);
     return { name: 'agy', preflight: async () => {} };
   }),
   launchStartupSupervisor: vi.fn(),
@@ -78,10 +79,9 @@ it('requires a valid explicit type before reading GitHub or launching a Run', as
     const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
     registerWorkflowCommands(program, { human: () => false });
     await expect(
-      program.parseAsync(
-        ['workflow', 'orchestrator', 'start', '7', '--provider', 'agy', ...args],
-        { from: 'user' },
-      ),
+      program.parseAsync(['workflow', 'orchestrator', 'start', '7', '--provider', 'agy', ...args], {
+        from: 'user',
+      }),
     ).rejects.toThrow();
     expect(readIssue).not.toHaveBeenCalled();
     expect(startRun).not.toHaveBeenCalled();

@@ -16,22 +16,11 @@ export interface RoleInitialization {
   briefHash: string;
   context: { path: string; hash: string };
 }
-const workerPhases = [
-  'exploring',
-  'coding',
-  'testing',
-  'awaiting-results',
-  'quality-gate',
-  'needs-human',
-  'completed',
-];
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
 /** Required role artifacts, shared by inline and file-based startup instructions. */
-export function roleArtifactInstructions(expected: RoleInitialization): string {
-  return expected.role === 'worker'
-    ? `Write actual checkout .epic-status.json (numeric issue=${Number(expected.subject.split('#').at(-1))}, phase from ${workerPhases.join(', ')}, nonempty summary, UTC updated_at at or after launch) and append a timestamped startup entry containing this Attempt id to .epic-worklog.md.`
-    : '';
+export function roleArtifactInstructions(_expected: RoleInitialization): string {
+  return '';
 }
 
 /** Append the one authoritative startup evidence instruction to a complete brief. */
@@ -39,7 +28,9 @@ export function initializationInstructions(
   expected: RoleInitialization,
   directory: string,
 ): string {
-  return `\nRole initialization gate: read the immutable context at ${expected.context.path}. Initialize your assigned role before proceeding. Write ${join(directory, 'initialization.json')} atomically with these exact assignment fields: ${JSON.stringify(expected)}. These fields acknowledge role/scope and the exact context you initialized; they are not a task completion receipt. ${roleArtifactInstructions(expected)} Never claim ready without these files.\n`;
+  const extra = roleArtifactInstructions(expected);
+  const extraText = extra ? ` ${extra}` : '';
+  return `\nRole initialization gate: read the immutable context at ${expected.context.path}. Initialize your assigned role before proceeding. Write ${join(directory, 'initialization.json')} atomically with these exact assignment fields: ${JSON.stringify(expected)}. These fields acknowledge role/scope and the exact context you initialized; they are not a task completion receipt.${extraText} Never claim ready without this initialization evidence.\n`;
 }
 
 /** Verify the assignment-bound evidence and existing role artifacts; missing facts stay pending. */
@@ -84,22 +75,6 @@ export function verifyRoleInitialization(attempt: ManagedAttempt): string {
     )
   )
     throw new Error('EPIC initialization scope is outside its Run');
-  if (attempt.role === 'worker') {
-    const status = JSON.parse(readFileSync(join(attempt.checkout, '.epic-status.json'), 'utf8'));
-    const issue = Number(expected.subject.split('#').at(-1));
-    if (
-      status.issue !== issue ||
-      !workerPhases.includes(status.phase) ||
-      typeof status.summary !== 'string' ||
-      !status.summary.trim() ||
-      !Number.isFinite(Date.parse(status.updated_at)) ||
-      Date.parse(status.updated_at) < Date.parse(attempt.created)
-    )
-      throw new Error('Worker status must identify this assignment with fresh actual state');
-    const worklog = readFileSync(join(attempt.checkout, '.epic-worklog.md'), 'utf8');
-    if (!worklog.split('\n').some((line) => /startup/i.test(line) && line.includes(attempt.id)))
-      throw new Error('Worker startup worklog entry missing for this Attempt');
-  }
   if (attempt.role === 'landing') {
     const owner = JSON.parse(readFileSync(join(attempt.checkout, '.pc-execution-owner'), 'utf8'));
     if (owner.runId !== expected.run) throw new Error('Landing checkout ownership mismatch');

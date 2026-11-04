@@ -18,50 +18,32 @@ Options:
 "
 `;
 
-exports[`publishes orchestrator finalize-epic help 1`] = `
-"Usage: pc workflow orchestrator finalize-epic [options] <number>
-
-Assess EPIC delivery; finalize specialists only after confirmed closure
-
-Options:
-  --repository <owner/name>  Target repository
-  --retry                    Start a fresh finalization round only after
-                             verified specialist termination
-  --config <file>            Authoritative Fleet configuration (default:
-                             ".epic-config.json")
-  -h, --help                 display help for command
-"
-`;
-
 exports[`publishes orchestrator group help 1`] = `
 "Usage: pc workflow orchestrator [options] [command]
 
 Create or inspect a subject-scoped managed Run
 
 Options:
-  -h, --help                        display help for command
+  -h, --help                     display help for command
 
 Commands:
-  status [options]                  Read concise current Runs, pending work and
-                                    resource ownership
-  start [options] <issue>           Create or reconnect a Run; automatically
-                                    reconcile pending startup in the background
-  recover [options] <run>           Recover late startup evidence; report
-                                    concise outcome and retained occupancy
-  recover-all [options]             Reconcile each incomplete Run; report
-                                    unowned work as blocked
-  stop [options] <run>              Revoke scheduling and terminate owned
-                                    executions; retain completed business
-                                    evidence
-  release [options] <run>           Terminate remaining executions and release
-                                    resources for a completed Run
-  finalize-epic [options] <number>  Assess EPIC delivery; finalize specialists
-                                    only after confirmed closure
-  close-epic [options] <number>     Record explicit human confirmation, close
-                                    and archive an accepted EPIC
-  land [options] <issue>            Merge, record, preserve and clean delivered
-                                    PR stages automatically
-  help [command]                    display help for command
+  status [options]               Read concise current Runs, pending work and
+                                 resource ownership
+  start [options] <issue>        Create or reconnect a Run; automatically
+                                 reconcile pending startup in the background
+  recover [options] <run>        Recover late startup evidence; report concise
+                                 outcome and retained occupancy
+  recover-all [options]          Reconcile each incomplete Run; report unowned
+                                 work as blocked
+  stop [options] <run>           Revoke scheduling and terminate owned
+                                 executions; retain completed business evidence
+  release [options] <run>        Terminate remaining executions and release
+                                 resources for a completed Run
+  close-epic [options] <number>  Record explicit human confirmation, close and
+                                 archive an accepted EPIC
+  land [options] <issue>         Merge, record, preserve and clean delivered PR
+                                 stages automatically
+  help [command]                 display help for command
 "
 `;
 
@@ -71,11 +53,11 @@ exports[`publishes orchestrator land help 1`] = `
 Merge, record, preserve and clean delivered PR stages automatically
 
 Options:
-  --config <file>             Authoritative Fleet configuration (default:
-                              ".epic-config.json")
-  --confirmation-file <file>  EPIC professional confirmation JSON: epic, head,
-                              evidence
-  -h, --help                  display help for command
+  --config <file>  Authoritative Fleet configuration (default:
+                   ".epic-config.json")
+  --pr <number>    PR whose current external facts must match the assignment
+  --dispatch <id>  Specific landing dispatch to execute
+  -h, --help       display help for command
 "
 `;
 

@@ -95,6 +95,11 @@ export async function executeDeliveryStage(
     updateRunRegistry(config, (r) => {
       r.resources = r.resources?.filter((x) => x.path !== checkout);
       r.deliveries!.find((d) => d.dispatches.includes(dispatch.id))!.released = true;
+      const run = r.runs.find((x) => x.id === dispatch.runId);
+      if (run && run.subject.kind === 'issue') {
+        run.phase = 'completed';
+        run.lifecycle = 'completed';
+      }
     });
     const result = { archive: retained.archive, released: true, checkout, pr };
     writeFileSync(
@@ -118,8 +123,7 @@ export async function executeDeliveryStage(
     .filter(Boolean);
   if (
     dirty.some(
-      (line) =>
-        !['.epic-status.json', '.epic-worklog.md', '.pc-execution-owner'].includes(line.slice(3)),
+      (line) => line.slice(3) !== '.pc-execution-owner',
     )
   )
     throw new Error('Unaccounted checkout files; retain checkout');
@@ -161,6 +165,11 @@ export async function executeDeliveryStage(
   );
   updateRunRegistry(config, (r) => {
     r.deliveries!.find((d) => d.dispatches.includes(dispatch.id))!.released = true;
+    const run = r.runs.find((x) => x.id === dispatch.runId);
+    if (run && run.subject.kind === 'issue') {
+      run.phase = 'completed';
+      run.lifecycle = 'completed';
+    }
   });
   writeFileSync(evidence, JSON.stringify(result));
   return result;
@@ -229,18 +238,14 @@ export async function deliveryFacts(
       !result.releaseEvidence.trim()
     )
       throw new Error('Worker final records incomplete');
-    const status = JSON.parse(readFileSync(join(attempt.checkout, '.epic-status.json'), 'utf8'));
-    if (
-      status.issue !== Number(dispatch.subject.split('#')[1]) ||
-      status.repository !== dispatch.subject.split('#')[0] ||
-      status.pr !== pr ||
-      !Array.isArray(status.followups) ||
-      typeof status.releaseEvidence !== 'string' ||
-      !status.releaseEvidence.trim() ||
-      typeof status.assessment !== 'string' ||
-      !status.assessment.trim() ||
-      !readFileSync(join(attempt.checkout, '.epic-worklog.md'), 'utf8').trim()
-    )
-      throw new Error('Expected attributed final assessment and worklog');
+    if (result.issue !== undefined && result.issue !== Number(dispatch.subject.split('#')[1])) {
+      throw new Error('Final records issue mismatch');
+    }
+    if (result.repository !== undefined && result.repository !== dispatch.subject.split('#')[0]) {
+      throw new Error('Final records repository mismatch');
+    }
+    if (result.pr !== undefined && result.pr !== pr) {
+      throw new Error('Final records pr mismatch');
+    }
   }
 }

@@ -1,9 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { test, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDashboard } from '../../packages/dashboard/src/server.js';
+import { updateRunRegistry } from '@paper-craft/core/workflow/run-driver';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 
 test('runtime HTTP evidence attributes panes by physical directory, keeps shell occupancy unknown and retains stale successes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'runtime-'));
@@ -12,10 +14,51 @@ test('runtime HTTP evidence attributes panes by physical directory, keeps shell 
     mkdirSync(join(root, 'pool', 'worker'), { recursive: true });
     const config = join(root, '.epic-config.json');
     writeFileSync(config, JSON.stringify({ clone_root: 'pool', clone_names: ['worker'] }));
-    const status = join(root, 'pool', 'worker', '.epic-status.json');
-    writeFileSync(status, JSON.stringify({ phase: 'coding', summary: 'Working' }));
-    const oldTime = new Date(Date.now() - 60 * 60000);
-    utimesSync(status, oldTime, oldTime);
+    const fleetConfig = loadFleetConfig(config);
+    const briefPath = join(root, 'brief.md');
+    writeFileSync(briefPath, '# Brief');
+    updateRunRegistry(fleetConfig, (registry) => {
+      registry.runs.push({
+        id: 'run-1',
+        subject: { repository: 'o/r', number: 1 },
+        provider: 'agy',
+        policy: { name: 'default', revision: 1 },
+        lifecycle: 'running',
+        orchestratorId: 'orch-1',
+        brief: { path: briefPath, hash: 'h' },
+      });
+      registry.dispatches = [
+        {
+          id: 'dispatch-worker',
+          generation: 1,
+          provider: 'agy',
+          stage: 'implementation',
+          role: 'worker',
+          runId: 'run-1',
+          prerequisites: [],
+          briefReference: { path: briefPath, hash: 'h' },
+          lifecycle: 'running',
+          attempts: [
+            {
+              id: 'attempt-worker',
+              fleet: 'fleet-1',
+              role: 'worker',
+              runner: 'agy',
+              brief: 'brief',
+              status: 'running',
+              created: '2026-11-01T01:00:00Z',
+              directory: join(root, 'pool', 'worker'),
+              checkout: join(root, 'pool', 'worker'),
+              observation: {
+                status: 'running',
+                at: new Date(Date.now() - 60 * 60000).toISOString(),
+                evidence: 'observation 60 min ago',
+              },
+            },
+          ],
+        },
+      ];
+    });
     mkdirSync(join(root, 'pool', 'worker', '.claude'));
     execFileSync('mkfifo', [join(root, 'pool', 'worker', '.claude', 'ralph-loop.local.md')]);
     let failed = false;
@@ -39,12 +82,14 @@ test('runtime HTTP evidence attributes panes by physical directory, keeps shell 
         headers: { host: 'local', authorization: 'Bearer test' },
       });
     const first = await (await read()).json();
-    expect(first.fleets[0].tasks[1].runtimeEvidence).toMatchObject({
+    const task = first.fleets[0].tasks.find((t: any) => t.id.includes(':managed:dispatch-worker'));
+    expect(task).toBeDefined();
+    expect(task.runtimeEvidence).toMatchObject({
       occupancy: 'unknown',
       tmux: { state: 'observed', panes: [{ id: '%1', command: 'zsh' }] },
       runner: { state: 'unknown' },
     });
-    expect(first.fleets[0].tasks[1].interventions).toEqual(
+    expect(task.interventions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ reason: expect.stringContaining('Possibly stalled') }),
       ]),
@@ -56,12 +101,13 @@ test('runtime HTTP evidence attributes panes by physical directory, keeps shell 
     failed = true;
     await service.refreshRuntime(true);
     const stale = await (await read()).json();
-    expect(stale.fleets[0].tasks[1].runtimeEvidence).toMatchObject({
+    const staleTask = stale.fleets[0].tasks.find((t: any) => t.id.includes(':managed:dispatch-worker'));
+    expect(staleTask.runtimeEvidence).toMatchObject({
       stale: true,
       tmux: { panes: [{ id: '%1' }] },
       error: expect.any(String),
     });
-    expect(stale.fleets[0].tasks[1].runtime).toBe('unknown');
+    expect(staleTask.runtime).toBe('unknown');
   } finally {
     service?.stop();
     rmSync(root, { recursive: true, force: true });

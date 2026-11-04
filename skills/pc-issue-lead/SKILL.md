@@ -23,14 +23,14 @@ genuinely complete and the issue is truly resolved.
 
 Read ALL of these before making any judgment:
 
-1. `.epic-status.json` — current phase, summary, stop_reason, lead_notes, lead_guidance
-2. `.epic-worklog.md` — narrative log of what the worker has done
+1. Managed Run, Dispatch, and Attempt receipts/state; `.pc-execution-owner` in checkout — current stage, summary, stop_reason, lead_notes, lead_guidance
+2. Attempt logs and worklogs — narrative log of what the worker has done
 3. Issue body: `gh issue view <N> --json title,body`
 4. Recent commits: `git log main..HEAD --oneline`
 5. Diff summary: `git diff main --stat`
 6. PR if it exists: `gh pr view --json title,body,state,checks`
 7. Existing partial experiment results and logs; query live jobs only under the
-   [adaptive-check schedule](../pc-issue-work/SKILL.md#adaptive-checks-for-long-tasks)
+   [adaptive-check schedule](../lib/adaptive-checks.md)
 
 ### Step 2: Scope check (mandatory every time)
 
@@ -100,7 +100,7 @@ iteration. Every lead invocation re-derives cold from the signals
 | **phase-complete** | Multi-phase issue, current phase done | Check gate criteria, advance or confirm done |
 | **needs-instrumentation** | "Fixed" something without proof | "Add measurements/tests that demonstrate the fix works" |
 | **needs-deeper-investigation** | Surface fix, no root cause understanding | "Design an experiment that reveals the fundamental issue" |
-| **awaiting-results** | Experiment running, not done | Check partial results: if sufficient to answer the question, tell worker to analyze what's available. Otherwise, follow the adaptive-check schedule in /pc-issue-work; normal waiting is not a mechanical blocker. |
+| **awaiting-results** | Experiment running, not done | Check partial results: if sufficient to answer the question, tell worker to analyze what's available. Otherwise, follow the [adaptive-check schedule](../lib/adaptive-checks.md); normal waiting is not a mechanical blocker. |
 | **run-production** | Works on test data, not on real data | "Run on production data with the new feature" |
 | **pr-ready** | Work done, no PR yet | Verify topic branch, instruct: push, PR, quality gate |
 | **quality-gate** | PR exists, needs checks | Instruct: run /pc-pr-check, fix all, run /pc-pr-review, fix all, repeat until clean |
@@ -150,21 +150,20 @@ Before accepting "done" or "phase-complete", ask yourself:
 
 ### Step 6: Check for loops
 
-Read `lead_notes` in `.epic-status.json`:
+Read `lead_notes` in the managed run/receipt state or attempt records:
 - If there are **8+ total lead notes** → escalate to `needs-human`
   with a summary of all progress and what's still unresolved
 
 ### Step 7: Write your assessment
 
-Two rules for writing the status file:
+Rules for writing assessment:
 
-- **Never construct a timestamp.** Every `updated_at`, `completed_at` and `awaiting.started_at` is the verbatim output of `date -u +%Y-%m-%dT%H:%M:%SZ`. (A constructed time tends to run ahead of the clock, which hides a stall.)
-- **`phase` is one of seven:** `exploring`, `coding`, `testing`, `awaiting-results`, `quality-gate`, `needs-human`, `completed`. `phase` says where the slot is in its lifecycle, and the fleet keys on it. `stop_reason` says why the worker stopped, in your own words. A specific classification goes in `stop_reason` and `lead_guidance`, never in `phase`. If none of the seven fits, escalate rather than invent one.
+- **Never construct a timestamp.** Every `updated_at`, `completed_at` and check timestamp is the verbatim output of `date -u +%Y-%m-%dT%H:%M:%SZ`. (A constructed time tends to run ahead of the clock, which hides a stall.)
+- **Align with Managed Run lifecycle:** A Managed Run tracks stages and lifecycle states (`running`, `quality-gate`, `needs-human`, `completed`). `stop_reason` records your classified stopping reason in your own words, while `lead_guidance` provides clear, actionable instructions for the worker.
 
-1. **Update `.epic-status.json`**:
-   - Set `phase` (if changing) — one of the seven above, no others
-   - Set `stop_reason` to your classification. For clean open PRs awaiting orchestrator
-     confirmation or user approval, retain `awaiting-human-merge` and phase `quality-gate`;
+1. **Update assessment**:
+   - Set `stop_reason` to your classification from Step 3. For clean open PRs awaiting orchestrator
+     confirmation or user approval, record `awaiting-human-merge` and `quality-gate` guidance;
      put your assessment in `lead_notes`. This never authorizes landing or reclaim.
    - Set `lead_guidance` — clear, actionable instruction for the worker
    - Set `scope` — one-line restatement of the issue's goal
@@ -205,8 +204,8 @@ Two rules for writing the status file:
 
 3. **Return your verdict** to the worker as your final output — but
    for `completed`, only after Step 8 runs:
-   - For terminal states: "PHASE: completed" or "PHASE: needs-human"
-   - For continuation: "PHASE: <phase>. GUIDANCE: <what to do next>"
+   - For terminal states: "STATUS: completed" or "STATUS: needs-human"
+   - For continuation: "STATUS: in-progress. GUIDANCE: <what to do next>"
 
 ### Step 8: File legitimate follow-ups (only at terminal `completed`)
 
@@ -263,8 +262,8 @@ Otherwise:
    section for any failures. If there are no legitimate candidates,
    omit both. Post the comment.
 
-3. Set `.epic-status.json#completed_at` to the current ISO 8601
-   timestamp from `date -u`, then return "PHASE: completed". If the file is missing, report missing final records to the orchestrator and reconstruct them before cleanup.
+3. Set `completed_at` to the current ISO 8601
+   timestamp from `date -u`, then return "PHASE: completed". If final records are missing, report missing final records to the orchestrator and reconstruct them before cleanup.
 
 **Do not file on non-terminal evaluations.** Signals may change as
 the worker addresses feedback; filing only at `completed` means the
@@ -274,7 +273,7 @@ guard above, is what makes re-invocation idempotent.
 ## Awaiting-results Protocol
 
 For long tasks you launch or evaluate, read and follow
-[Adaptive checks for long tasks](../pc-issue-work/SKILL.md#adaptive-checks-for-long-tasks).
+[Adaptive checks for long tasks](../lib/adaptive-checks.md).
 Verify the durable schedule and wake-up/manual continuation, including SLURM queue
 state, before directing another check. Read existing partial results first; obtain
 fresh task status when due or prompted by an event. If available results already
@@ -290,6 +289,6 @@ the remaining run is needed.
 - **Scope is sacred.** The issue defines the work. Nothing more.
 - **When in doubt, escalate.** A false `needs-human` is far cheaper
   than a worker spinning on the wrong thing.
-- **Verify issue number.** Check that `.epic-status.json` `issue`
+- **Verify issue number.** Check that the evaluated run or dispatch's `issue`
   field matches the issue you were asked to evaluate. If it doesn't,
-  the clone has stale state from a previous assignment — flag this.
+  the checkout has stale state from a previous assignment — flag this.

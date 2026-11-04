@@ -41,19 +41,19 @@ result bound to the evaluated SHA. A window, process exit or missing error is in
 
 ## 3. Verify and recover
 
-Managed completion retains context, applicability, results and turns in its existing
-`completion.json`; Runner directories retain briefs, logs and result files. Structured
+Managed completion retains context, applicability, results and turns in the Run registry;
+Runner directories retain briefs, logs and result files. Structured
 specialist receipts contain `head`, `status` (`completed` or `blocked`), `evidence`,
 `blockers`, `scope`, `checks`, `artifacts`, and `limitations`. Explain checks not run.
 Orchestrator records research-only confirmed skips with their reasons. Preserve old rounds and attempts.
-Use `pc workflow orchestrator recover <run>` with the authoritative config to reconcile original receipts
-and collect results; inspect that command's help for continuation options.
+Use `pc workflow orchestrator recover <run>` with the authoritative config to reconcile original receipts,
+verify external outcomes, and resume unfinished post-closure stages without repeating closure, publication, or merge actions.
 
-For an explicit fresh round after a resolved failure, use
-`pc workflow orchestrator finalize-epic <number> --repository <owner/name> --config <file> --retry`.
-Without `--retry`, that command resumes the original round. It never supplies human
-closure confirmation. Retry verifies that all prior specialist executions have stopped,
-retains their records, and invalidates prior final acceptance and closure confirmation.
+Post-closure stages run as Managed Dispatches:
+- Dispatch `pipeline-audit` or `pipeline-refactor`, collect and accept the receipt, and commit with `pc workflow stage pipeline`.
+- Dispatch `research-report` (`research-state`), collect and accept the receipt, and publish with `pc workflow stage publish`.
+Failure in any post-closure stage leaves the Run incomplete in `phase: 'post_closure_finalization'`.
+Recovery identifies unfinished post-closure dispatches and resumes them without re-calling GitHub close.
 
 Timeout ends waiting, not execution. Unknown occupancy blocks replacement and closure.
 Confirm termination and release of writing/checkout ownership before a new attempt;

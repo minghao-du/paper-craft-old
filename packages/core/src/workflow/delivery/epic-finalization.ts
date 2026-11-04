@@ -3,7 +3,7 @@ import { dirname, isAbsolute } from 'node:path';
 import { writeResearchReport, type ResearchReport } from './research-report.js';
 import { z } from 'zod';
 import { execFileSync } from 'node:child_process';
-import type { IssueTurn } from './issue-driver.js';
+import type { ManagedAttempt } from '../runtime/runtime.js';
 
 const text = z.string().trim().min(1);
 const disposition = z.object({ run: z.boolean(), reason: text, reuse: z.boolean().optional() });
@@ -148,7 +148,11 @@ export interface EpicFinalization {
 export async function finalizeEpic(
   state: EpicFinalization,
   objective: string,
-  turn: (role: IssueTurn['role'], brief: string, context?: FinalizationContext) => Promise<string>,
+  turn: (
+    role: ManagedAttempt['role'],
+    brief: string,
+    context?: FinalizationContext,
+  ) => Promise<string>,
   save: () => void,
   previous?: EpicFinalization,
   maintenance?: PipelineMaintenanceProvider,

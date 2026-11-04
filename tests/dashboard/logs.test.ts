@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDashboard } from '../../packages/dashboard/src/server.js';
+import { updateRunRegistry } from '@paper-craft/core/workflow/run-driver';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 
 test('authenticated logs are bounded, segmented and restricted to verified registered sources', async () => {
   const root = mkdtempSync(join(tmpdir(), 'logs-'));
@@ -13,8 +15,47 @@ test('authenticated logs are bounded, segmented and restricted to verified regis
     mkdirSync(join(root, 'pool', 'worker'), { recursive: true });
     const config = join(root, '.epic-config.json');
     writeFileSync(config, JSON.stringify({ clone_root: 'pool', clone_names: ['worker'] }));
-    writeFileSync(join(root, 'pool', 'worker', '.epic-status.json'), '{"phase":"coding"}');
-    const log = join(root, 'pool', 'worker', '.epic-worklog.md');
+    const fleetConfig = loadFleetConfig(config);
+    const briefPath = join(root, 'brief.md');
+    writeFileSync(briefPath, '# Brief');
+    updateRunRegistry(fleetConfig, (registry) => {
+      registry.runs.push({
+        id: 'run-1',
+        subject: { repository: 'o/r', number: 1 },
+        provider: 'agy',
+        policy: { name: 'default', revision: 1 },
+        lifecycle: 'running',
+        orchestratorId: 'orch-1',
+        brief: { path: briefPath, hash: 'h' },
+      });
+      registry.dispatches = [
+        {
+          id: 'dispatch-worker',
+          generation: 1,
+          provider: 'agy',
+          stage: 'implementation',
+          role: 'worker',
+          runId: 'run-1',
+          prerequisites: [],
+          briefReference: { path: briefPath, hash: 'h' },
+          lifecycle: 'running',
+          attempts: [
+            {
+              id: 'attempt-worker',
+              fleet: 'fleet-1',
+              role: 'worker',
+              runner: 'agy',
+              brief: 'brief',
+              status: 'running',
+              created: '2026-11-01T01:00:00Z',
+              directory: join(root, 'pool', 'worker'),
+              checkout: join(root, 'pool', 'worker'),
+            },
+          ],
+        },
+      ];
+    });
+    const log = join(root, 'pool', 'worker', 'attempt.log');
     const original = 'Progress\n'.repeat(10000) + 'Authorization: Bearer private-secret\n';
     writeFileSync(log, original);
     service = await createDashboard({
@@ -38,7 +79,9 @@ test('authenticated logs are bounded, segmented and restricted to verified regis
         headers: { host: 'local', ...(auth ? { authorization: 'Bearer test' } : {}) },
       });
     const snapshot = await (await get('/api/snapshot')).json();
-    const id = encodeURIComponent(snapshot.fleets[0].tasks[1].id);
+    const task = snapshot.fleets[0].tasks.find((t: any) => t.id.includes(':managed:dispatch-worker'));
+    expect(task).toBeDefined();
+    const id = encodeURIComponent(task.id);
     const url = `/api/tasks/${id}/logs`;
     expect((await get(url, false)).status).toBe(401);
     const first = await (await get(url)).json();

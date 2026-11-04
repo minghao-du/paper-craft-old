@@ -32,7 +32,7 @@ import {
   type ExecutionTermination,
 } from '../runtime/runtime.js';
 import { pipelineAccepted, type PipelineDisposition } from '../delivery/epic-finalization.js';
-import type { IssueInput } from '../delivery/issue-driver.js';
+import type { IssueInput } from './run-subject.js';
 
 /** Verified tracker subject, with explicit scope rather than title heuristics. */
 export interface RunSubject extends IssueInput {
@@ -69,6 +69,7 @@ export interface WorkflowRun {
   requirements?: string;
   reconciliation?: { at: string; blockers: string[]; pendingDispatches: string[] };
   priorOrchestrators?: ManagedAttempt[];
+  humanConfirmation?: { source: 'human'; deliveryVersion: string; evidence: string };
 }
 /** Atomic Fleet relationship snapshot. */
 export interface RunRegistry {
@@ -477,9 +478,18 @@ function findDispatch(registry: RunRegistry, id: string): StageDispatch {
   if (!dispatch) throw new Error('Unknown Dispatch');
   return dispatch;
 }
-function authorize(registry: RunRegistry, runId: string, authority: string): WorkflowRun {
+function authorize(
+  registry: RunRegistry,
+  runId: string,
+  authority: string,
+  allowCompleted = false,
+): WorkflowRun {
   const run = registry.runs.find((r) => r.id === runId);
-  if (!run || run.orchestratorId !== authority || run.lifecycle !== 'running')
+  if (
+    !run ||
+    run.orchestratorId !== authority ||
+    (run.lifecycle !== 'running' && (!allowCompleted || run.lifecycle !== 'completed'))
+  )
     throw new Error('Inactive or wrong Orchestrator authority');
   return run;
 }
@@ -739,6 +749,15 @@ export async function dispatchStage(
       'preservation-cleanup': 'final-records',
     };
     if (
+      (request.stage === 'planning' || request.stage === 'integrated-acceptance') &&
+      run.subject.kind !== 'epic'
+    ) {
+      throw new Error(`Stage ${request.stage} requires an EPIC Run`);
+    }
+    if (request.stage === 'integrated-acceptance') {
+      verifyEpicDeliveries(registry, run.id);
+    }
+    if (
       request.stage === 'pr-quality' &&
       !registry.dispatches.some(
         (d) =>
@@ -953,7 +972,7 @@ export async function acceptStageReceipt(
   const receipt = snapshot.receipts?.find((r) => r.id === receiptId);
   if (!receipt) throw new Error('Unknown Receipt');
   const dispatch = findDispatch(snapshot, receipt.dispatchId);
-  authorize(snapshot, dispatch.runId, authority);
+  authorize(snapshot, dispatch.runId, authority, dispatch.stage === 'preservation-cleanup');
   const release = async () => {
     const current = findDispatch(inspectRuns(config), dispatch.id);
     if (
@@ -975,7 +994,7 @@ export async function acceptStageReceipt(
   let rejection: string | undefined;
   updateRunRegistry(config, (registry) => {
     const current = findDispatch(registry, dispatch.id);
-    authorize(registry, current.runId, authority);
+    authorize(registry, current.runId, authority, current.stage === 'preservation-cleanup');
     if (current.acceptedReceipt === receiptId) return;
     if (registry.revision !== snapshot.revision)
       throw new Error('Registry changed during fact verification; retry');
@@ -1051,6 +1070,13 @@ export async function acceptStageReceipt(
       }
       current.acceptedReceipt = receiptId;
       current.lifecycle = 'accepted';
+      if (current.stage === 'preservation-cleanup') {
+        const run = registry.runs.find((r) => r.id === current.runId);
+        if (run && run.subject.kind === 'issue') {
+          run.phase = 'completed';
+          run.lifecycle = 'completed';
+        }
+      }
       if (current.remediation) {
         current.remediation.consecutive = 0;
         current.remediation.exhausted = false;
@@ -1495,10 +1521,34 @@ export async function recoverRun(
         Object.assign(attempt, ack, { status: 'running' });
       }
       if (dispatch.lifecycle === 'accepted') pendingDispatches.push(dispatch.id);
+      else if (
+        ['pipeline-audit', 'pipeline-refactor', 'research-state'].includes(dispatch.role) &&
+        dispatch.lifecycle !== 'superseded'
+      ) {
+        if (!pendingDispatches.includes(dispatch.id)) pendingDispatches.push(dispatch.id);
+      }
       else if (dispatch.remediation?.exhausted)
         blockers.push(`${dispatch.id}: remediation exhausted: ${dispatch.remediation.feedback}`);
       else if (attempt.status !== 'running')
         blockers.push(`${dispatch.id}: startup pending; verify occupancy before retry`);
+    }
+
+    if (current.epicClosure?.status === 'closed') {
+      if (current.pipeline && current.report) {
+        current.phase = 'completed';
+        current.lifecycle = 'completed';
+      } else {
+        current.phase = 'post_closure_finalization';
+        if (current.lifecycle !== 'blocked') {
+          current.lifecycle = 'running';
+        }
+      }
+    } else if (current.subject.kind === 'issue') {
+      const delivery = registry.deliveries?.find((d) => d.runId === current.id);
+      if (delivery?.status === 'done' && delivery?.released) {
+        current.phase = 'completed';
+        current.lifecycle = 'completed';
+      }
     }
     current.reconciliation = { at: new Date().toISOString(), blockers, pendingDispatches };
   });
@@ -1992,11 +2042,110 @@ export interface EpicClosureActions {
   close?: () => Promise<void>;
 }
 
+/** Find all child subjects (both referenced external subjects and owned child subjects) for a Run. */
+export function epicChildSubjects(registry: RunRegistry, runId: string): string[] {
+  const epicRun = registry.runs.find((r) => r.id === runId);
+  const epicSubject = epicRun ? `${epicRun.subject.repository}#${epicRun.subject.number}` : undefined;
+  const referenced =
+    registry.subjects?.filter((s) => s.consumingRunIds?.includes(runId)).map((s) => s.subject) ?? [];
+  const owned =
+    registry.subjects?.filter((s) => s.ownerRunId === runId && s.subject !== epicSubject).map((s) => s.subject) ?? [];
+  const fromDispatches =
+    registry.dispatches?.filter((d) => d.runId === runId && d.subject !== epicSubject).map((d) => d.subject) ?? [];
+  return [...new Set([...referenced, ...owned, ...fromDispatches])];
+}
+
+/** Retrieve all completed or required deliveries associated with an EPIC run (including referenced external deliveries). */
+export function epicDeliveries(
+  registry: RunRegistry,
+  runId: string,
+): NonNullable<RunRegistry['deliveries']> {
+  const children = epicChildSubjects(registry, runId);
+  const allDeliveries = registry.deliveries ?? [];
+  const result: NonNullable<RunRegistry['deliveries']> = [];
+
+  for (const d of allDeliveries) {
+    if (d.runId === runId) {
+      result.push(d);
+    }
+  }
+
+  for (const child of children) {
+    const [repo, numStr] = child.split('#');
+    const num = Number(numStr);
+    const d = allDeliveries.find((del) => del.repository === repo && del.issue === num);
+    if (
+      d &&
+      !result.some(
+        (existing) =>
+          existing === d || (existing.repository === d.repository && existing.issue === d.issue),
+      )
+    ) {
+      result.push(d);
+    }
+  }
+
+  result.sort((a, b) => {
+    const repoCmp = a.repository.localeCompare(b.repository);
+    if (repoCmp !== 0) return repoCmp;
+    return a.issue - b.issue;
+  });
+
+  return result;
+}
+
+/** Verify that all required child deliveries for an EPIC run are completed in registry.deliveries. */
+export function verifyEpicDeliveries(registry: RunRegistry, runId: string): void {
+  const children = epicChildSubjects(registry, runId);
+  for (const child of children) {
+    const [repo, numStr] = child.split('#');
+    const num = Number(numStr);
+    const d = registry.deliveries?.find((del) => del.repository === repo && del.issue === num);
+    if (!d || d.status !== 'done' || !d.recorded || !d.released || !d.archive) {
+      throw new Error(`Incomplete delivery for required child ${child}`);
+    }
+  }
+}
+
 /** Canonical accepted delivery fingerprint for closure request, human consent, native close, and recorded closure. */
 export function canonicalDeliveryFingerprint(head: string, deliveries: unknown[]): string {
   return createHash('sha256')
     .update(JSON.stringify({ head, deliveries }))
     .digest('hex');
+}
+
+/** Record explicit human confirmation bound to delivery version on an EPIC Run. */
+export function confirmStageEpic(
+  config: FleetConfig,
+  runId: string,
+  authority: string,
+  confirmation: { deliveryVersion: string; source: 'human'; evidence: string },
+) {
+  const snapshot = inspectRuns(config);
+  const run = authorize(snapshot, runId, authority);
+  if (run.subject.kind !== 'epic') {
+    throw new Error('Only EPIC runs accept delivery confirmation');
+  }
+  if (
+    !confirmation ||
+    confirmation.source !== 'human' ||
+    !confirmation.deliveryVersion?.trim() ||
+    !confirmation.evidence?.trim()
+  ) {
+    throw new Error('Explicit human confirmation with deliveryVersion and evidence required');
+  }
+  updateRunRegistry(config, (registry) => {
+    const current = authorize(registry, runId, authority);
+    current.humanConfirmation = confirmation;
+  });
+}
+
+/** Invalidate cached human confirmation upon delivery revision changes. */
+function invalidateHumanConfirmation(config: FleetConfig, runId: string): void {
+  updateRunRegistry(config, (registry) => {
+    const current = registry.runs.find((r) => r.id === runId);
+    if (current?.humanConfirmation) delete current.humanConfirmation;
+  });
 }
 
 /** Commit externally verified closure after accepted integrated goal judgment and delivery. */
@@ -2005,16 +2154,23 @@ export async function closeStageEpic(
   runId: string,
   authority: string,
   dispatchId: string,
-  confirmation: { deliveryVersion: string; source: 'human'; evidence: string },
+  confirmation?: { deliveryVersion: string; source: 'human'; evidence: string },
   observeOrActions?: (() => Promise<{ head: string; closed: boolean; evidence: string }>) | EpicClosureActions,
 ) {
   const snapshot = inspectRuns(config);
   const run = authorize(snapshot, runId, authority);
   const dispatch = findDispatch(snapshot, dispatchId);
-  const deliveries = snapshot.deliveries?.filter((d) => d.runId === runId) ?? [];
+  verifyEpicDeliveries(snapshot, runId);
+  const deliveries = epicDeliveries(snapshot, runId);
 
   if (run.subject.kind !== 'epic') {
     throw new Error('Issue-only Run cannot close or finalize parent EPIC');
+  }
+
+  if (run.epicClosure?.status === 'closed') {
+    throw new Error(
+      'EPIC has already been closed; registration that merely observes an already-closed Parent is not a substitute for actual closure',
+    );
   }
 
   if (
@@ -2049,18 +2205,36 @@ export async function closeStageEpic(
     );
   }
 
+  const humanConf = confirmation ?? run.humanConfirmation;
+  if (
+    !humanConf ||
+    humanConf.source !== 'human' ||
+    !humanConf.evidence?.trim() ||
+    !humanConf.deliveryVersion?.trim()
+  ) {
+    throw new Error(
+      'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+    );
+  }
+
   if (typeof observeOrActions === 'function') {
     const facts = await observeOrActions();
     const version = canonicalDeliveryFingerprint(facts.head, deliveries);
-    if (
-      dispatch.inputRevision !== facts.head ||
-      !confirmation ||
-      confirmation.source !== 'human' ||
-      !confirmation.evidence?.trim() ||
-      confirmation.deliveryVersion !== version ||
-      !facts.closed ||
-      !facts.evidence?.trim()
-    ) {
+    if (dispatch.inputRevision !== facts.head) {
+      if (run.humanConfirmation) {
+        invalidateHumanConfirmation(config, runId);
+      }
+      throw new Error('Delivery changed after acceptance; obtain renewed acceptance and confirmation');
+    }
+    if (humanConf.deliveryVersion !== version) {
+      if (run.humanConfirmation) {
+        invalidateHumanConfirmation(config, runId);
+      }
+      throw new Error(
+        `Delivery version mismatch: expected ${version}, but received ${humanConf.deliveryVersion}. Prior confirmation invalidated.`,
+      );
+    }
+    if (!facts.closed || !facts.evidence?.trim()) {
       throw new Error(
         'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
       );
@@ -2074,10 +2248,12 @@ export async function closeStageEpic(
         deliveryVersion: version,
         head: facts.head,
         evidence: facts.evidence,
-        confirmed: confirmation.evidence,
+        confirmed: humanConf.evidence,
         status: 'closed',
       };
       current.phase = 'post_closure_finalization';
+      current.lifecycle = 'running';
+      delete current.humanConfirmation;
     });
     return { deliveryVersion: version, head: facts.head };
   }
@@ -2089,19 +2265,20 @@ export async function closeStageEpic(
 
   const head = await (actions.head ? actions.head() : git('rev-parse', 'HEAD'));
   if (dispatch.inputRevision !== head) {
+    if (run.humanConfirmation) {
+      invalidateHumanConfirmation(config, runId);
+    }
     throw new Error('Delivery changed after acceptance; obtain renewed acceptance and confirmation');
   }
 
   const version = canonicalDeliveryFingerprint(head, deliveries);
 
-  if (
-    !confirmation ||
-    confirmation.source !== 'human' ||
-    !confirmation.evidence?.trim() ||
-    confirmation.deliveryVersion !== version
-  ) {
+  if (humanConf.deliveryVersion !== version) {
+    if (run.humanConfirmation) {
+      invalidateHumanConfirmation(config, runId);
+    }
     throw new Error(
-      'Expected accepted integrated goal, completed delivery, current human confirmation and verified closure',
+      `Delivery version mismatch: expected ${version}, but received ${humanConf.deliveryVersion}. Prior confirmation invalidated.`,
     );
   }
 
@@ -2164,10 +2341,12 @@ export async function closeStageEpic(
       deliveryVersion: version,
       head,
       evidence,
-      confirmed: confirmation.evidence,
+      confirmed: humanConf.evidence,
       status: 'closed',
     };
     current.phase = 'post_closure_finalization';
+    current.lifecycle = 'running';
+    delete current.humanConfirmation;
   });
   return { deliveryVersion: version, head };
 }
@@ -2241,6 +2420,9 @@ export async function publishStageReport(
   const snapshot = inspectRuns(config);
   const run = authorize(snapshot, runId, authority);
   const dispatch = findDispatch(snapshot, dispatchId);
+  if (run.report) {
+    throw new Error('Research report has already been published; cannot repeat publication');
+  }
   if (
     !run.epicClosure ||
     (run.epicClosure.status !== undefined && run.epicClosure.status !== 'closed') ||

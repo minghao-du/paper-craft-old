@@ -78,36 +78,47 @@ describe('portable workflow file contract', () => {
     expect(readFileSync(join(outside, '.epic-status.json'), 'utf8')).toBe('{}');
   });
 
-  it('preserves exact state bytes without deleting sources and reports optional worklog absence', () => {
+  it('preserves exact state bytes without deleting sources', () => {
     const config = loadFleetConfig(configFile);
     const slot = join(pool, 'cedar');
-    const status = '{"issue":123,"phase":"testing"}\n';
-    writeFileSync(join(slot, '.epic-status.json'), status);
+    const content = 'test evidence\n';
+    writeFileSync(join(slot, 'evidence.txt'), content);
     const first = preserveState(config, slot, 'first handoff');
-    expect(first.worklogMissing).toBe(true);
-    expect(readFileSync(join(slot, '.epic-status.json'), 'utf8')).toBe(status);
-    expect(readFileSync(join(first.path, '.epic-status.json'), 'utf8')).toBe(status);
+    expect(readFileSync(join(slot, 'evidence.txt'), 'utf8')).toBe(content);
+    expect(readFileSync(join(first.path, 'evidence.txt'), 'utf8')).toBe(content);
     const manifest = JSON.parse(readFileSync(join(first.path, 'manifest.json'), 'utf8'));
-    expect(manifest.files['.epic-status.json']).toMatch(/^[a-f0-9]{64}$/);
-    writeFileSync(join(slot, '.epic-worklog.md'), 'Measured result\n');
+    expect(manifest.files['evidence.txt']).toMatch(/^[a-f0-9]{64}$/);
+    writeFileSync(join(slot, 'notes.md'), 'Measured result\n');
     const second = preserveState(config, slot, 'second handoff');
     expect(second.path).not.toBe(first.path);
-    expect(second.worklogMissing).toBe(false);
-    expect(readFileSync(join(second.path, '.epic-worklog.md'), 'utf8')).toBe('Measured result\n');
+    expect(readFileSync(join(second.path, 'notes.md'), 'utf8')).toBe('Measured result\n');
   });
 
-  it('fails preservation on malformed status or linked worklogs, retaining originals and removing partial archives', () => {
+  it('preserves checkout files without requiring .epic-status.json or .epic-worklog.md', () => {
     const config = loadFleetConfig(configFile);
     const slot = join(pool, 'cedar');
-    const status = join(slot, '.epic-status.json');
-    writeFileSync(status, 'broken');
-    expect(() => preserveState(config, slot, 'test')).toThrow();
-    writeFileSync(status, '{}');
+    rmSync(join(slot, '.epic-status.json'), { force: true });
+    rmSync(join(slot, '.epic-worklog.md'), { force: true });
+    writeFileSync(join(slot, 'notes.txt'), 'test notes\n');
+    writeFileSync(join(slot, '.pc-execution-owner'), JSON.stringify({ runId: 'run-1' }));
+    const result = preserveState(config, slot, 'clean handoff');
+    expect(result.status).toBe('preserved');
+    expect(result.files['notes.txt']).toBeDefined();
+    expect(result.files['.pc-execution-owner']).toBeDefined();
+    expect(readFileSync(join(result.path, 'notes.txt'), 'utf8')).toBe('test notes\n');
+    expect(readFileSync(join(slot, 'notes.txt'), 'utf8')).toBe('test notes\n');
+  });
+
+  it('fails preservation on symlinks, retaining originals and removing partial archives', () => {
+    const config = loadFleetConfig(configFile);
+    const slot = join(pool, 'cedar');
+    const regular = join(slot, 'regular.txt');
+    writeFileSync(regular, 'content');
     const outside = join(temp, 'outside.md');
     writeFileSync(outside, 'precious');
-    symlinkSync(outside, join(slot, '.epic-worklog.md'));
+    symlinkSync(outside, join(slot, 'linked.md'));
     expect(() => preserveState(config, slot, 'test')).toThrow('regular file');
-    expect(readFileSync(status, 'utf8')).toBe('{}');
+    expect(readFileSync(regular, 'utf8')).toBe('content');
     expect(readFileSync(outside, 'utf8')).toBe('precious');
     expect(readdirSync(join(pool, '.preserved'))).toEqual([]);
   });
@@ -118,7 +129,7 @@ describe('portable workflow file contract', () => {
       [
         'workflow',
         'orchestrator',
-        'finalize-epic',
+        'close-epic',
         '7',
         '--repository',
         'owner/repo',
@@ -241,6 +252,23 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
     expect(checkFleet(config, 'collisions').status).toBe('clear');
   });
 
+  it('checkReclaim checks registry resources and .pc-execution-owner without inspecting .epic-status.json', () => {
+    const config = loadFleetConfig(configFile);
+    const slot = join(pool, 'cedar');
+    writeFileSync(join(slot, '.pc-execution-owner'), JSON.stringify({ runId: 'run-99' }));
+    updateRunRegistry(config, (reg) => {
+      reg.resources = [{ path: realpathSync(slot), runId: 'run-99', registry: config.file }];
+    });
+    // Write historical .epic-status.json to verify it is NOT adopted or inspected in checks
+    writeFileSync(join(slot, '.epic-status.json'), JSON.stringify({ phase: 'coding', issue: 123 }));
+    const reclaim = checkReclaim(config, slot);
+    expect(reclaim.eligible).toBe(false);
+    expect(reclaim.status).toBe('blocked');
+    expect(reclaim.checks.executionOwner).toEqual({ runId: 'run-99' });
+    expect(reclaim.checks.resource).toMatchObject({ runId: 'run-99' });
+    expect((reclaim.checks as any).workerState).toBeUndefined();
+  });
+
   it('detects committed, staged, unstaged and untracked overlap including whitespace in names', () => {
     const cedar = join(pool, 'cedar');
     const pine = join(pool, 'pine');
@@ -323,16 +351,20 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
     updateRunRegistry(config, (reg) => {
       reg.runs.push({
         id: runId,
-        subject: { repository: 'test/repo', number: 10, kind: 'issue', title: 'dynamic', body: 'work' },
+        subject: {
+          repository: 'test/repo',
+          number: 10,
+          kind: 'issue',
+          title: 'dynamic',
+          body: 'work',
+        },
         provider: 'agy',
         policy: { name: 'default', revision: 1 },
         lifecycle: 'running',
         orchestratorId: 'orch-10',
         brief: { path: '', hash: '' },
       });
-      reg.resources = [
-        { path: dynamicSlot, runId, registry: join(home(config), 'registry.json') },
-      ];
+      reg.resources = [{ path: dynamicSlot, runId, registry: join(home(config), 'registry.json') }];
     });
     writeFileSync(
       join(dynamicSlot, '.pc-execution-owner'),
@@ -354,16 +386,20 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
     updateRunRegistry(config, (reg) => {
       reg.runs.push({
         id: runId,
-        subject: { repository: 'test/repo', number: 11, kind: 'issue', title: 'missing', body: 'work' },
+        subject: {
+          repository: 'test/repo',
+          number: 11,
+          kind: 'issue',
+          title: 'missing',
+          body: 'work',
+        },
         provider: 'agy',
         policy: { name: 'default', revision: 1 },
         lifecycle: 'completed',
         orchestratorId: 'orch-11',
         brief: { path: '', hash: '' },
       });
-      reg.resources = [
-        { path: missingSlot, runId, registry: join(home(config), 'registry.json') },
-      ];
+      reg.resources = [{ path: missingSlot, runId, registry: join(home(config), 'registry.json') }];
     });
 
     const result = checkFleet(config, 'currency');
@@ -427,7 +463,9 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
 
     const result = checkFleet(config, 'currency');
     expect(result.status).toBe('unknown');
-    expect(result.unknown.some((u) => u.slot === 'pine' && u.detail.includes('Multiple runs'))).toBe(true);
+    expect(
+      result.unknown.some((u) => u.slot === 'pine' && u.detail.includes('Multiple runs')),
+    ).toBe(true);
     expect(result.slots.map((s) => s.name)).not.toContain('pine');
   });
 

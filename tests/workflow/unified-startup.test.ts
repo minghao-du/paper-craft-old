@@ -310,7 +310,7 @@ test('Worker: startup lifecycle progression from reserved to running upon activa
     });
     expect(pendingWorker.outcome).toBe('pending');
 
-    // Late worker initialization arrives (.epic-status.json + .epic-worklog.md + initialization.json)
+    // Late worker initialization arrives (initialization.json)
     initializeRole(workerAttempt);
 
     // Request managed startup with deadline: advances to ready
@@ -351,26 +351,20 @@ test('Worker: failed initialization records error and retains reserved occupancy
     });
 
     const workerAttempt = dispatch.attempts[0];
-    // Write invalid worker status (invalid phase)
-    writeFileSync(
-      join(workerAttempt.checkout, '.epic-status.json'),
-      JSON.stringify({
-        issue: 101,
-        phase: 'invalid-phase',
-        summary: 'invalid',
-        updated_at: new Date().toISOString(),
-      }),
-    );
+    // Write invalid worker initialization (mismatched run)
     writeFileSync(
       join(workerAttempt.directory, 'initialization.json'),
-      JSON.stringify(workerAttempt.initialization),
+      JSON.stringify({
+        ...workerAttempt.initialization,
+        run: 'mismatched-run',
+      }),
     );
 
     const workerResult = await requestManagedStartup(f.config, f.runner, run.id, {
       dispatchId: dispatch.id,
     });
     expect(workerResult.outcome).toBe('pending');
-    expect(workerResult.error).toContain('Worker status');
+    expect(workerResult.error).toContain('Role initialization');
     expect(workerAttempt.activation).toBeUndefined();
 
     // Business execution remains refused

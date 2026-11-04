@@ -13,7 +13,7 @@ It determines the session's role, runs the matching tuckin, and that skill write
 
 If `$ARGUMENTS` names a role — `ms`, `worker`, `epic`, `orchestrator`, `landing`, or `generic` — use it.
 
-Otherwise determine the role per [the continuation contract](../lib/continuation.md): explicit assignment or task markers (`.ms-config.json` → `ms`, `.epic-status.json` → `worker`), then ask if ambiguous.
+Otherwise determine the role per [the continuation contract](../lib/continuation.md): explicit assignment, task markers (`.ms-config.json` → `ms`), or checkout ownership (`.pc-execution-owner` / managed dispatch identity → `worker`), then ask if ambiguous.
 Cross-check the assigned role and task against the owning Run's durable Dispatch and Attempt identity.
 Never infer the role from what the session has been discussing.
 
