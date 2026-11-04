@@ -278,6 +278,7 @@ export async function driveEpic(
           config,
           run.turns,
           'Validated EPIC readiness and all scoped child results against original objective',
+          runner,
         );
         run.status = 'delivered';
         delete run.error;

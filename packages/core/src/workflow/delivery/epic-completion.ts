@@ -340,6 +340,7 @@ export async function completeEpic(
           config,
           run.turns.filter((t) => !t.retired),
           'Validated EPIC acceptance, human closure, Pipeline disposition and report publication',
+          runner,
         );
         if (owner && run.finalization!.report) {
           updateRunRegistry(config, (registry) => {

@@ -19,6 +19,11 @@ export {
   startupRecoveryStatus,
   ensureStartupRecovery,
   stopStartupRecovery,
+  superviseStartup,
+  setStartupSupervisorLauncher,
+  getStartupSupervisorLauncher,
+  type StartupSupervisorLauncher,
+  type SuperviseStartupOptions,
 } from '../runtime/startup-supervisor.js';
 
 function attempts(registry: RunRegistry, runId: string): ManagedAttempt[] {

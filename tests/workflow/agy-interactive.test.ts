@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgyInteractive } from '../../packages/core/src/workflow/runtime/agy-interactive.js';
-import { AgyRunner } from '../../packages/core/src/workflow/runtime/runtime.js';
+import { AgyRunner } from '../../packages/core/src/workflow/runtime/agy-runner.js';
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),

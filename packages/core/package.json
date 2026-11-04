@@ -112,6 +112,21 @@
       "types": "./dist/workflow/runtime/runtime.d.ts",
       "default": "./dist/workflow/runtime/runtime.js"
     },
+    "./workflow/runtime/agy": {
+      "paper-craft-source": "./src/workflow/runtime/agy-runner.ts",
+      "types": "./dist/workflow/runtime/agy-runner.d.ts",
+      "default": "./dist/workflow/runtime/agy-runner.js"
+    },
+    "./workflow/runtime/codex": {
+      "paper-craft-source": "./src/workflow/runtime/codex-interactive.ts",
+      "types": "./dist/workflow/runtime/codex-interactive.d.ts",
+      "default": "./dist/workflow/runtime/codex-interactive.js"
+    },
+    "./workflow/runtime/claude": {
+      "paper-craft-source": "./src/workflow/runtime/claude-interactive.ts",
+      "types": "./dist/workflow/runtime/claude-interactive.d.ts",
+      "default": "./dist/workflow/runtime/claude-interactive.js"
+    },
     "./workflow/issue-driver": {
       "paper-craft-source": "./src/workflow/delivery/issue-driver.ts",
       "types": "./dist/workflow/delivery/issue-driver.d.ts",

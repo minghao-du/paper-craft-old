@@ -1,14 +1,30 @@
 /** Local adapter for detached per-Run startup supervision. */
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { stateDirectory } from '../handoff.js';
 import type { FleetConfig } from '../fleet/fleet-config.js';
 import type { RunnerAdapter } from './runtime.js';
 import type { RunRegistry } from '../run/run-driver.js';
-import { startupPending } from '../run/startup.js';
+import { claimDriver } from '../run/driver-lock.js';
+import { reconcileStartup, startupPending } from '../run/startup.js';
+
+/** Host launcher function injected by foreground/background hosts. */
+export type StartupSupervisorLauncher = (config: FleetConfig, runId: string) => void;
+
+let hostSupervisorLauncher: StartupSupervisorLauncher | undefined;
+
+/** Set the host-provided supervisor process launcher. */
+export function setStartupSupervisorLauncher(
+  launcher: StartupSupervisorLauncher | undefined,
+): void {
+  hostSupervisorLauncher = launcher;
+}
+
+/** Get the currently configured host supervisor process launcher. */
+export function getStartupSupervisorLauncher(): StartupSupervisorLauncher | undefined {
+  return hostSupervisorLauncher;
+}
 
 /** Startup helper evidence is scoped to the immutable Run identity. */
 export function startupDirectory(config: FleetConfig, runId: string): string {
@@ -46,11 +62,12 @@ export function startupRecoveryStatus(config: FleetConfig, runId: string, regist
   return { active, pending, evidenceDirectory, error };
 }
 
-/** Launch only the provider adapter's opt-in helper; test/custom adapters stay in-process. */
+/** Launch only the provider adapter's opt-in helper; host owns script location and process launch. */
 export function ensureStartupRecovery(
   config: FleetConfig,
   runner: RunnerAdapter,
   runId: string,
+  launcher?: StartupSupervisorLauncher,
 ): void {
   if (
     !runner.automaticStartup ||
@@ -58,29 +75,75 @@ export function ensureStartupRecovery(
     startupRecoveryStatus(config, runId).active
   )
     return;
-  const directory = startupDirectory(config, runId);
-  mkdirSync(directory, { recursive: true });
-  const log = openSync(join(directory, 'startup.log'), 'a', 0o600);
+
+  const launch = launcher ?? hostSupervisorLauncher;
+  if (launch) {
+    launch(config, runId);
+  }
+}
+
+export interface SuperviseStartupOptions {
+  intervalMs?: number;
+  signal?: AbortSignal;
+  onReconciled?: () => void;
+  launcher?: StartupSupervisorLauncher;
+}
+
+/**
+ * Supervise startup for a Run: claims the startup lock and repeatedly reconciles startup
+ * until the Run is no longer pending or the process is stopped.
+ * Supervision algorithm remains in Core behind an explicit host dependency.
+ */
+export async function superviseStartup(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  runId: string,
+  options?: SuperviseStartupOptions,
+): Promise<void> {
+  const lock = join(startupDirectory(config, runId), 'startup.lock');
+  let owned = false;
+  let stopped = false;
+  const onSignal = () => {
+    stopped = true;
+  };
+  process.on('SIGTERM', onSignal);
+  process.on('SIGINT', onSignal);
+  if (options?.signal) {
+    if (options.signal.aborted) stopped = true;
+    else options.signal.addEventListener('abort', onSignal, { once: true });
+  }
+  const interval = options?.intervalMs ?? 2000;
   try {
-    const extension = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
-    const entry = fileURLToPath(new URL('../runtime/startup-watch' + extension, import.meta.url));
-    const loaderArgs: string[] = [];
-    for (let i = 0; i < process.execArgv.length; i++) {
-      const arg = process.execArgv[i];
-      if (/^--(import|require|loader|conditions)(=|$)/.test(arg)) {
-        loaderArgs.push(arg);
-        if (!arg.includes('=')) loaderArgs.push(process.execArgv[++i]);
+    claimDriver(lock);
+    owned = true;
+    while (!stopped) {
+      try {
+        const stillPending = await reconcileStartup(config, runner, runId);
+        if (!stillPending) {
+          options?.onReconciled?.();
+          break;
+        }
+      } catch (error) {
+        console.error(new Date().toISOString(), String(error));
+      }
+      if (stopped) break;
+      await new Promise((resolve) => setTimeout(resolve, interval));
+    }
+  } catch (error) {
+    if (owned) throw error;
+  } finally {
+    process.removeListener('SIGTERM', onSignal);
+    process.removeListener('SIGINT', onSignal);
+    if (options?.signal) {
+      options.signal.removeEventListener('abort', onSignal);
+    }
+    if (owned) {
+      rmSync(lock, { recursive: true, force: true });
+      // Release ownership before checking again: a concurrent dispatch cannot lose its wake-up.
+      if (!stopped) {
+        ensureStartupRecovery(config, runner, runId, options?.launcher);
       }
     }
-    const child = spawn(process.execPath, [...loaderArgs, entry, config.file, runId], {
-      cwd: config.project,
-      detached: true,
-      stdio: ['ignore', log, log],
-    });
-    child.on('error', (error) => console.error('Startup helper failed:', error.message));
-    child.unref();
-  } finally {
-    closeSync(log);
   }
 }
 
@@ -137,4 +200,3 @@ export async function stopStartupRecovery(
     return true;
   }
 }
-

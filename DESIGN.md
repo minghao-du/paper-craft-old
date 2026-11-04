@@ -75,6 +75,10 @@ The pnpm workspace separates `packages/core`, `packages/cli` and `packages/mcp`.
 Core exposes domain data and services without Commander, MCP or model-host
 contexts. CLI and MCP depend on Core's public package exports; Core never imports
 an adapter. Host-specific registration, response formatting and process lifecycle
-belong in adapters. A future native DeepSeek plugin follows the same direction.
+belong in adapters. Foreground and background entry points compose execution
+dependencies explicitly; Core supervision algorithms receive host launch seams
+without importing concrete providers. General shell-quoting helpers remain in Core
+to serve callers across hosts rather than being provider-exclusive. A future native
+DeepSeek plugin follows the same direction.
 Shared skills remain at the repository root. CLI commands, configuration paths and
 JSONL formats are explicit public contracts.

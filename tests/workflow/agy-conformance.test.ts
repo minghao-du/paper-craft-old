@@ -2,7 +2,8 @@ import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { AgyRunner, type ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
+import { AgyRunner } from '../../packages/core/src/workflow/runtime/agy-runner.js';
+import type { ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
 import {
   startRun,
   recoverRun,

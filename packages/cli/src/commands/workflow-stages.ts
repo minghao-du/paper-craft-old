@@ -5,7 +5,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadFleetConfig, type FleetConfig } from '@paper-craft/core/workflow/fleet-config';
-import { managedRunner } from '@paper-craft/core/workflow/runtime';
+import { managedRunner } from '../workflow/composition.js';
 import {
   inspectRuns,
   closeStageEpic,

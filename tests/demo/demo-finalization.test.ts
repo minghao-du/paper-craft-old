@@ -273,11 +273,17 @@ test('real Agy Pipeline specialist dispatch and acceptance with not_applicable o
       outcome: 'completed',
       evidence: [{ path: evidenceFile, hash: evidenceHash, evidence: 'audit' }],
     });
-    await acceptStageReceipt(env.config, run.orchestratorId, receipt.id, async () => ({
-      currentRevision: env.head,
-      ownership: true,
-      evidence: 'accepted audit receipt',
-    }));
+    await acceptStageReceipt(
+      env.config,
+      run.orchestratorId,
+      receipt.id,
+      async () => ({
+        currentRevision: env.head,
+        ownership: true,
+        evidence: 'accepted audit receipt',
+      }),
+      mockAgyRunner,
+    );
 
     // Normal workflow pipeline disposition
     dispositionStagePipeline(env.config, run.id, run.orchestratorId, dispatch.id);
@@ -367,11 +373,17 @@ test('changes_needed or acceptance-invalidating audit stops and retains diagnost
       outcome: 'completed',
       evidence: [{ path: evidenceFile, hash: evidenceHash, evidence: 'audit' }],
     });
-    await acceptStageReceipt(env.config, run.orchestratorId, receipt.id, async () => ({
-      currentRevision: env.head,
-      ownership: true,
-      evidence: 'accepted changes receipt',
-    }));
+    await acceptStageReceipt(
+      env.config,
+      run.orchestratorId,
+      receipt.id,
+      async () => ({
+        currentRevision: env.head,
+        ownership: true,
+        evidence: 'accepted changes receipt',
+      }),
+      mockAgyRunner,
+    );
 
     // Disposition must stop round and throw retention error
     await expect(
@@ -519,11 +531,17 @@ Bounded synthetic diagnostic test.
       outcome: 'completed',
       evidence: [{ path: receiptFile, hash: receiptHash, evidence: 'report' }],
     });
-    await acceptStageReceipt(env.config, run.orchestratorId, receipt.id, async () => ({
-      currentRevision: env.head,
-      ownership: true,
-      evidence: 'accepted report receipt',
-    }));
+    await acceptStageReceipt(
+      env.config,
+      run.orchestratorId,
+      receipt.id,
+      async () => ({
+        currentRevision: env.head,
+        ownership: true,
+        evidence: 'accepted report receipt',
+      }),
+      mockAgyRunner,
+    );
 
     // 3. Publish report using normal workflow publishStageReport with coordinator
     const coordinator = {

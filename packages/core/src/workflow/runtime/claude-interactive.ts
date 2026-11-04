@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { statSync, existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { quote, type ManagedAttempt, type ExecutionObservation } from './runtime.js';
+import { StreamRunner } from './codex-interactive.js';
 const delay = () => new Promise((resolve) => setTimeout(resolve, 100));
 type Hook = {
   transcript_path?: string;
@@ -354,3 +355,59 @@ export class ClaudeInteractive {
     };
   }
 }
+
+/**
+ * Temporary legacy internal contract retained for migration slices (#146-#150).
+ * Removed in ticket #150.
+ */
+export class ClaudeRunner extends StreamRunner {
+  readonly name = 'claude';
+  readonly automaticStartup = true;
+  readonly cancellation = true;
+  readonly interactive: boolean = true;
+  protected resumeFlag = '--resume';
+  private readonly tui = new ClaudeInteractive();
+  preflight() {
+    return this.tui.preflight();
+  }
+  start(a: ManagedAttempt) {
+    return this.tui.start(a);
+  }
+  recoverReceipt(a: ManagedAttempt) {
+    return this.tui.recoverReceipt(a);
+  }
+  messageReceipt(a: ManagedAttempt, m: { id: string; brief: string }) {
+    return this.tui.messageReceipt(a, m);
+  }
+  stopped(a: ManagedAttempt) {
+    return this.tui.terminated(a);
+  }
+  termination(a: ManagedAttempt) {
+    return this.tui.terminated(a);
+  }
+  cancel(a: ManagedAttempt) {
+    return this.tui.cancel(a);
+  }
+  send(a: ManagedAttempt, m: { id: string; brief: string }) {
+    return this.tui.send(a, m);
+  }
+  result(a: ManagedAttempt, id: string) {
+    return this.tui.result(a, id);
+  }
+  observe(a: ManagedAttempt) {
+    return this.tui.observe(a);
+  }
+  /** Persistent completion uses correlated native turn output, never process exit. */
+  async collect(a: ManagedAttempt): Promise<string> {
+    for (;;) {
+      const output = await this.tui.result(a, a.dispatchId ?? a.id);
+      if (output !== undefined) return output;
+      if (await this.stopped(a)) throw new Error('Claude exited without a correlated task result');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  collectable(a: ManagedAttempt): boolean {
+    return existsSync(join(a.directory, 'claude-hooks'));
+  }
+}
+
