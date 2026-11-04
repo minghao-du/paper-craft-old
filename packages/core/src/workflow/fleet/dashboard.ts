@@ -1,6 +1,6 @@
 import type { WorkflowRole } from '../runtime/workflow-role.js';
 import type { ManagedAttempt } from '../runtime/runtime.js';
-import { inspectRuns, type WorkflowRun, type RunRegistry } from '../run/run-registry.js';
+import { inspectRuns, type WorkflowRun, type RunRegistry } from '../run/run-observation.js';
 /** File-backed evidence shared by Dashboard and JSON CLI; never scheduling authority. */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';

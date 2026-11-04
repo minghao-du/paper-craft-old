@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
-import { inspectRunViews } from '../run/run-driver.js';
+import { inspectRunViews } from '../run/run-observation.js';
 import { pipelineAccepted } from '../delivery/epic-finalization.js';
 import type { DemoRound } from './round.js';
 
