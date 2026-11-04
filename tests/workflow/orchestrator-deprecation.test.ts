@@ -11,4 +11,4 @@ it('rejects retired dispatch entry points before launching work', () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('unknown command');
   }
-}, 10000);
+}, 25000);

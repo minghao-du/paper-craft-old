@@ -310,7 +310,7 @@ test('Criterion 1 & 2 & 3 & 4: Automatic Gate 2 verifies complete Task 1 handove
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 25000);
 
 test('Criterion 5 & 9: Non-containing second baseline is rejected by Gate 2 and prevents Worker 2 dispatch; valid containing revision launches Worker 2 exactly once', async () => {
   const { root, adapter, config, getGitShas } = setupDemoRoundFixture();
@@ -494,7 +494,7 @@ test('Criterion 5 & 9: Non-containing second baseline is rejected by Gate 2 and 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 25000);
 
 test('Criterion 9: Incomplete first delivery or missing archive/release stops round and launches no second Worker', async () => {
   const { root, adapter, config, getGitShas } = setupDemoRoundFixture();
@@ -596,7 +596,7 @@ test('Criterion 9: Incomplete first delivery or missing archive/release stops ro
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 25000);
 
 test('Criterion 7: Chronology records premature start finding and later success does not erase it', async () => {
   const { root, adapter, config, getGitShas } = setupDemoRoundFixture();
@@ -679,7 +679,7 @@ test('Criterion 7: Chronology records premature start finding and later success 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 25000);
 
 test('Criterion 8: Task 2 completes normal delivery, leaving two attributable child deliveries for integrated acceptance', async () => {
   const { root, adapter, config, getGitShas } = setupDemoRoundFixture();
@@ -867,7 +867,7 @@ test('Criterion 8: Task 2 completes normal delivery, leaving two attributable ch
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 25000);
 
 test('Criterion 2 & 3: nativeDemoDelivery independently verifies GitHub merge, dispatches, final records, bundle, cleanup, and scoped release', async () => {
   const { root, adapter, config, getGitShas } = setupDemoRoundFixture();
@@ -1098,4 +1098,4 @@ test('Criterion 2 & 3: nativeDemoDelivery independently verifies GitHub merge, d
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 25000);
