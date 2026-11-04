@@ -11,26 +11,18 @@ import {
 import { setDemoRunnerResolver } from '@paper-craft/core/workflow/demo-execution';
 import { AgyRunner } from '@paper-craft/core/workflow/runtime/agy';
 
+/**
+ * Runner composition interface combining standard RunnerAdapter with stopped verification.
+ */
 export type ComposedRunner = RunnerAdapter & {
   stopped(attempt: ManagedAttempt): Promise<boolean>;
-  collectable?(attempt: ManagedAttempt): boolean;
 };
-
-let customRunnerFactory: ((provider: string) => ComposedRunner) | undefined;
-
-/** Override the runner factory (useful in test environments). */
-export function setRunnerFactory(factory: ((provider: string) => ComposedRunner) | undefined): void {
-  customRunnerFactory = factory;
-}
 
 /**
  * Shared host runner composition.
  * Resolves concrete RunnerAdapter for foreground and background hosts.
  */
 export function createRunner(provider: string): ComposedRunner {
-  if (customRunnerFactory) {
-    return customRunnerFactory(provider);
-  }
   switch (provider) {
     case 'agy':
       return new AgyRunner();
@@ -38,9 +30,6 @@ export function createRunner(provider: string): ComposedRunner {
       throw new Error(`Unsupported managed provider '${provider}'. Only 'agy' is supported.`);
   }
 }
-
-/** Legacy alias for createRunner. */
-export const managedRunner = createRunner;
 
 /**
  * Host launcher for detached startup supervision.

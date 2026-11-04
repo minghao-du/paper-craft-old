@@ -46,6 +46,7 @@ const pending = (a: ManagedAttempt) =>
   !a.startupStopped &&
   (a.status !== 'running' || (a.startupGate && a.activation?.status !== 'delivered'));
 
+/** Reconciliation outcome of an Attempt's startup phase. */
 export type StartupOutcome = 'ready' | 'pending' | 'failed';
 
 /** Inspect the durable startup outcome for an attempt. */
@@ -70,6 +71,7 @@ export interface RequestManagedStartupOptions {
   role?: string;
 }
 
+/** Result returned when requesting managed startup reconciliation. */
 export interface ManagedStartupResult {
   outcome: StartupOutcome;
   attempt?: ManagedAttempt;

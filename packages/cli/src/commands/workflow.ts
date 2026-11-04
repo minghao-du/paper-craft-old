@@ -23,7 +23,7 @@ import { loadFleetConfig, type FleetConfig } from '@paper-craft/core/workflow/fl
 import { preserveState } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { quote } from '@paper-craft/core/workflow/runtime';
-import { managedRunner } from '../workflow/composition.js';
+import { createRunner } from '../workflow/composition.js';
 import { inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
@@ -42,7 +42,7 @@ interface Options {
 
 /** Controlled runners can be supplied by isolated CLI scenarios. */
 export interface WorkflowBoundary {
-  runner?: (provider: string) => ReturnType<typeof managedRunner>;
+  runner?: (provider: string) => ReturnType<typeof createRunner>;
 }
 
 function configured(command: Command): Command {
@@ -70,7 +70,7 @@ async function inspection(
   config: FleetConfig,
   detailed = true,
   registry?: RunRegistry,
-  getRunner: (provider: string) => ReturnType<typeof managedRunner> = managedRunner,
+  getRunner: (provider: string) => ReturnType<typeof createRunner> = createRunner,
 ) {
   const attempt = run.orchestrator;
   let usable = false;
@@ -162,7 +162,7 @@ export function registerWorkflowCommands(
   opts: { human: () => boolean },
   boundary: WorkflowBoundary = {},
 ): void {
-  const getRunner = boundary.runner ?? managedRunner;
+  const getRunner = boundary.runner ?? createRunner;
   const workflow = program
     .command('workflow')
     .description('Portable file-based task handoff and preservation');

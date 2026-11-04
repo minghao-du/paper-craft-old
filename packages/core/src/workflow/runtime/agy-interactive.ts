@@ -399,8 +399,6 @@ export class AgyInteractive {
     const windowId = execFileSync('tmux', ['display-message', '-p', '-t', paneId, '#{window_id}'], {
       encoding: 'utf8',
     }).trim();
-    a.paneId = paneId;
-    a.windowId = windowId;
     a.providerState = {
       ...(a.providerState ?? {}),
       session,
@@ -490,8 +488,6 @@ export class AgyInteractive {
         throw new Error('Durable terminal address mismatch');
       a.address ??= terminal.address;
       a.terminalSession ??= terminal.session;
-      a.paneId ??= terminal.paneId ?? (state.paneId as string | undefined);
-      a.windowId ??= terminal.windowId ?? (state.windowId as string | undefined);
       a.providerState = {
         ...state,
         session: terminal.session ?? state.session,
@@ -504,8 +500,6 @@ export class AgyInteractive {
     } else if (a.providerState) {
       a.address ??= state.address as string | undefined;
       a.terminalSession ??= stateSession;
-      a.paneId ??= state.paneId as string | undefined;
-      a.windowId ??= state.windowId as string | undefined;
       a.conversation ??= state.conversation as string | undefined;
     }
     const session = (a.providerState?.session as string | undefined) ?? a.terminalSession;

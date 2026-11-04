@@ -81,6 +81,7 @@ export function ensureStartupRecovery(
   }
 }
 
+/** Configuration options for supervising detached Run startup. */
 export interface SuperviseStartupOptions {
   intervalMs?: number;
   signal?: AbortSignal;

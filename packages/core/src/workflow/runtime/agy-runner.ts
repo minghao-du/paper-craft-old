@@ -1,5 +1,3 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { AgyInteractive } from './agy-interactive.js';
 import type { RunnerAdapter, ManagedAttempt, ExecutionObservation, ExecutionTermination } from './runtime.js';
 
@@ -19,88 +17,65 @@ export class AgyRunner implements RunnerAdapter {
     return this.tui.preflight();
   }
 
-  start(a: ManagedAttempt): Promise<{ conversation: string; address: string; evidence: string }> {
-    return this.tui.start(a);
+  start(attempt: ManagedAttempt): Promise<{ conversation: string; address: string; evidence: string }> {
+    return this.tui.start(attempt);
   }
 
   recoverReceipt(
-    a: ManagedAttempt,
+    attempt: ManagedAttempt,
   ): Promise<{ conversation: string; address: string; evidence: string } | undefined> {
-    return this.tui.recoverReceipt(a);
+    return this.tui.recoverReceipt(attempt);
   }
 
   messageReceipt(
-    a: ManagedAttempt,
-    m: { id: string; brief: string },
+    attempt: ManagedAttempt,
+    message: { id: string; brief: string },
   ): Promise<string | undefined> {
-    return this.tui.messageReceipt(a, m);
+    return this.tui.messageReceipt(attempt, message);
   }
 
-  stopped(a: ManagedAttempt): Promise<boolean> {
-    return this.tui.stopped(a);
+  stopped(attempt: ManagedAttempt): Promise<boolean> {
+    return this.tui.stopped(attempt);
   }
 
-  termination(a: ManagedAttempt): Promise<boolean> {
-    return this.tui.terminated(a);
+  termination(attempt: ManagedAttempt): Promise<boolean> {
+    return this.tui.terminated(attempt);
   }
 
-  async terminate(a: ManagedAttempt): Promise<ExecutionTermination> {
-    try {
-      if (await this.stopped(a)) {
-        return {
-          status: 'terminated',
-          evidence: 'Owned Agy process already exited or terminated',
-        };
-      }
-      const receipt = await this.cancel(a);
-      if (!(await this.stopped(a))) {
-        return {
-          status: 'unconfirmed',
-          error: 'Agy pane termination unverified after cancellation',
-        };
-      }
-      return {
-        status: 'terminated',
-        evidence: receipt.evidence,
-      };
-    } catch (error) {
-      return {
-        status: 'unconfirmed',
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+  terminate(attempt: ManagedAttempt): Promise<ExecutionTermination> {
+    return this.tui.terminate(attempt);
   }
 
-  cancel(a: ManagedAttempt): Promise<{ evidence: string }> {
-    return this.tui.cancel(a);
+  cancel(attempt: ManagedAttempt): Promise<{ evidence: string }> {
+    return this.tui.cancel(attempt);
   }
 
   send(
-    a: ManagedAttempt,
-    m: { id: string; brief: string },
+    attempt: ManagedAttempt,
+    message: { id: string; brief: string },
   ): Promise<{ status: 'delivered' | 'uncertain'; evidence: string }> {
-    return this.tui.send(a, m);
+    return this.tui.send(attempt, message);
   }
 
-  result(a: ManagedAttempt, id: string): Promise<string | undefined> {
-    return this.tui.result(a, id);
+  result(attempt: ManagedAttempt, id: string): Promise<string | undefined> {
+    return this.tui.result(attempt, id);
   }
 
-  observe(a: ManagedAttempt): Promise<ExecutionObservation> {
-    return this.tui.observe(a);
+  observe(attempt: ManagedAttempt): Promise<ExecutionObservation> {
+    return this.tui.observe(attempt);
   }
 
   /** Persistent completion uses correlated native turn output, never process exit. */
   async collect(
-    a: ManagedAttempt,
+    attempt: ManagedAttempt,
     options?: { timeoutMs?: number; dispatchId?: string },
   ): Promise<string> {
-    const id = options?.dispatchId ?? a.dispatchId ?? a.id;
+    const id = options?.dispatchId ?? attempt.dispatchId ?? attempt.id;
     const deadline = options?.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;
     for (;;) {
-      const output = await this.result(a, id);
+      const output = await this.result(attempt, id);
       if (output !== undefined) return output;
-      if (await this.stopped(a)) {
+      if (await this.stopped(attempt)) {
         throw new Error(
           'agy exited without a correlated task result (Runner stopped without a correlated task result)',
         );
@@ -110,9 +85,5 @@ export class AgyRunner implements RunnerAdapter {
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-  }
-
-  collectable(a: ManagedAttempt): boolean {
-    return existsSync(join(a.directory, 'agy-native.json'));
   }
 }

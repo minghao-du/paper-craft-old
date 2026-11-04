@@ -40,9 +40,6 @@ export interface ManagedAttempt {
   address?: string;
   /** Opaque provider-specific recovery information; Core persists this without reading or relying on internal fields. */
   providerState?: Record<string, unknown>;
-  /** Deprecated interim provider fields; providers must encapsulate state in providerState. */
-  windowId?: string;
-  paneId?: string;
   evidence?: string;
   error?: string;
   /** End initialization before explicit activation input; persisted across caller exit. */

@@ -821,15 +821,19 @@ test.each([false, true])(
       expect(managed).toMatchObject({
         address: 'tmux:%401',
         terminalSession: 'pc-run-run-independent',
-        paneId: '%401',
-        windowId: '@91',
+        providerState: {
+          paneId: '%401',
+          windowId: '@91',
+        },
       });
       await expect(new AgyInteractive().recoverReceipt(persisted)).resolves.toBeUndefined();
       expect(persisted).toMatchObject({
         address: 'tmux:%401',
         terminalSession: 'pc-run-run-independent',
-        paneId: '%401',
-        windowId: '@91',
+        providerState: {
+          paneId: '%401',
+          windowId: '@91',
+        },
       });
       live = true;
       const transcript = join(directory, 'native.jsonl');

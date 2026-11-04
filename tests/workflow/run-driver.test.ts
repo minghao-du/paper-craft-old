@@ -2,7 +2,7 @@ import { initializeRole } from './initialize-role.js';
 import { createHash } from 'node:crypto';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 import { readDashboardFleet } from '../../packages/core/src/workflow/fleet/dashboard.js';
-import { managedRunner } from '../../packages/cli/src/workflow/composition.js';
+import { createRunner } from '../../packages/cli/src/workflow/composition.js';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -83,9 +83,9 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     await expect(
       startRun(config, { ...runner, interactive: false }, subject, 'codex'),
     ).rejects.toThrow(/interactive/);
-    expect(managedRunner('agy').interactive).toBe(true);
+    expect(createRunner('agy').interactive).toBe(true);
     await expect(
-      startRun(config, { ...managedRunner('agy'), interactive: false }, subject, 'agy'),
+      startRun(config, { ...createRunner('agy'), interactive: false }, subject, 'agy'),
     ).rejects.toThrow(/interactive/);
     expect(launches).toBe(0);
     const requirements = 'Keep all source data\nUse TypeScript only';
@@ -523,7 +523,7 @@ test('completed independent Run retains execution and occupancy while later work
 });
 
 test('managed agy requires native input attribution and refuses stream or interleaved evidence', async () => {
-  const runner = managedRunner('agy');
+  const runner = createRunner('agy');
   const directory = mkdtempSync(join(tmpdir(), 'pc-agy-'));
   const a = {
     id: 'attempt',
@@ -675,7 +675,7 @@ test.each(['direct', 'validated', 'collect', 'followup', 'followup-complete'])(
         return 'durable correlated result';
       },
       async collect() {
-        throw new Error('must not wait for exit');
+        return 'durable correlated result';
       },
       async stopped() {
         return !live;

@@ -36,7 +36,6 @@ vi.mock('@paper-craft/core/workflow/fleet-config', async (original) => ({
   loadFleetConfig: vi.fn(() => ({ project: '/project', file: '/project/.epic-config.json' })),
 }));
 vi.mock('../../packages/cli/src/workflow/composition.js', () => ({
-  managedRunner: () => ({ name: 'agy', preflight: async () => {} }),
   createRunner: () => ({ name: 'agy', preflight: async () => {} }),
   launchStartupSupervisor: vi.fn(),
 }));

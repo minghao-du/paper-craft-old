@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { writeFileSync, readFileSync, appendFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { managedRunner } from '../../packages/cli/src/workflow/composition.js';
+import { createRunner } from '../../packages/cli/src/workflow/composition.js';
 import { inspectRuns } from '../../packages/core/src/workflow/run/run-driver.js';
 import { reconcileStartup } from '../../packages/core/src/workflow/run/startup.js';
 import {
@@ -24,7 +24,7 @@ if (provider !== 'agy')
   throw new Error(
     'Explicit provider required: pnpm exec tsx scripts/demos/workflow-live-demo.ts agy',
   );
-const native = managedRunner(provider);
+const native = createRunner(provider);
 let demo: Awaited<ReturnType<typeof prepareScriptedEpic>> | undefined;
 let busy = false;
 const requests: unknown[] = [];
