@@ -17,30 +17,25 @@ For SSH access forward the same local port and open the startup link through tha
 Omit `--config` to inspect remembered registrations.
 Build with `pnpm run build` before launch.
 
-Runs dispatched through `pc run` / `pc worker` are discovered under the configured project's
-`.runtime/<fleet>/runs/`. Dashboard and `pc worker status` share the dispatch inventory.
-Rows distinguish `in-flight`, `completed` (receipt present) and `exited-without-receipt`;
-`handled` records acknowledgement, not acceptance or successful validation.
+Managed execution projects authoritative Runs and stage dispatches from the RunRegistry.
+Configured directories (`config.slots` or `config.worktrees`) without managed tasks show Git, worklog, and terminal observations; legacy slot status does not establish an independent Worker execution identity or duplicate Managed tasks.
+Old lightweight records do not produce extra execution rows.
 Missing legacy `.epic-status.json` files are not collection errors. Invalid evidence still reports an error.
-Worker rows use their recorded worktree for terminal observations and their dispatch's `worker.log`
-for the default Logs view. Logs may be absent if the runner does not write that file.
 
 Expand each row for attributed sources, observation times, blockers and collection failures.
-Runtime occupancy and execution attempts remain unknown.
-A phase record does not establish a running agent, completion or slot availability.
+A recorded phase does not establish a live agent, completion or slot availability.
 Refresh is bounded by the collection schedule; clients share cached observations.
 The Dashboard writes only its own registration/cache data and exposes no workflow controls.
 
 Expand “Git checkout constraints” for per-Fleet branch, changed files, cached-base relation, holds and collision evidence.
-Checks include worktrees from the current dispatch inventory as well as legacy configured slots.
+Checks cover managed checkouts as well as configured slots.
 Completed dispatches whose worktrees have been removed retain their task records but are omitted from Git checkout checks; missing in-flight worktrees remain probe failures.
 Git observations refresh independently every 60 seconds (configure with `--git-interval` in milliseconds), with bounded probes and per-Fleet failure backoff.
 Failed collections retain attributed stale successes.
 Reads never fetch Git refs; a clean checkout does not establish slot availability.
 
 Runtime details show exact-directory tmux pane observations and the pane PID’s process name without reading process arguments.
-An ordinary shell, dead pane, missing tmux or a recorded Ralph session cannot establish a live agent or free slot.
-Existing Ralph header identities are labelled recorded and unverified; unsupported Runner capabilities remain unknown.
+An ordinary shell, dead pane, missing tmux or a recorded session cannot establish a live agent or free slot.
 Runtime observations default to 15 seconds; use `--runtime-interval <milliseconds>` to change this independently.
 Runtime failures retain marked stale successes with their last successful observation time and use bounded probes with per-task backoff.
 No processes are launched or terminated by observation except the short-lived read-only probes themselves.
@@ -56,15 +51,16 @@ For `awaiting-results`, a valid future `awaiting.next_check_at` means planned wa
 Missing schedules and runtime evidence remain unknown.
 File activity uses the latest status/worklog modification time; hand-written `updated_at`, quiet output and an open PR alone do not establish stalled work or a request for approval.
 
-Expand a task’s Logs to read its worklog by default, switch to a currently verified terminal, refresh, copy or load the next segment.
+Expand a task’s Logs to read its worklog (`.epic-worklog.md`) by default, switch to a currently verified terminal, refresh, copy or load the next segment.
 Worklogs use complete-line segments of at most 16 KiB with a 1 MiB context-read ceiling; oversized lines are explicitly omitted and deeper offsets are refused; terminal capture is limited to 200 recent lines and 16 KiB.
 Each response names the source and read time; absent files, unavailable capability and read errors remain distinct.
 Terminal reads recheck exact physical directory and pane/PID association before and after capture, refusing ambiguous panes.
 Runner transcripts remain unavailable without a safe verified identity/source contract.
-Reads accept source choices and byte offsets, never arbitrary paths.
+Reads accept source choices and byte offsets, never arbitrary paths; out-of-scope paths are explicitly unavailable and registration does not expand filesystem permissions.
 Sensitive credential lines and recognized private prompt blocks are omitted; logs are read on demand and never continuously archived.
 Terminal redaction covers only the captured window; it cannot identify prompt context that began earlier in scrollback.
 Use worklogs when terminal output may contain private prompts.
+
 Expand “Associated remote compute tasks” for explicitly registered Slurm jobs.
 In the authoritative `.epic-config.json`, optionally set `remote_hosts` to SSH host aliases and `remote_tasks` to objects such as `{"slot":"worker","host":"cluster","job_id":"12345"}`.
 Only configured slots, allowlisted host aliases and numeric job IDs are supported; unsupported or incomplete associations remain unknown.
@@ -76,6 +72,7 @@ Resolve missing login/host-key/scheduler setup from a terminal.
 Missing scheduler rows mean absence from the active queue, not proven completion.
 Observations refresh every 5 minutes (`--remote-interval` milliseconds), sharing results across clients with per-task failure backoff and stale-success retention.
 Remote observations never authorize local slot reclaim.
+
 Expand GitHub delivery to inspect explicitly recorded Issue/PR status, CI checks and reviews.
 Reads reuse `gh` authentication and the checkout's explicit github.com origin; mismatched PR repository links remain unknown.
 Run `gh auth login` in a terminal when authentication is unavailable.
@@ -99,5 +96,6 @@ Timestamped running, idle, waiting, error, exited and unknown observations remai
 Missing observations and observations older than five minutes are marked stale; neither implies completion or availability.
 Receipt claims retain attempt attribution; missing or mismatched accepted receipts are conflicting evidence.
 Resolved startup failures remain visible alongside current errors.
+Configured directory observations without managed tasks retain unknown execution identity; a recorded phase does not establish a live agent, completion or slot availability.
 Refresh reads existing durable evidence only and never launches, messages, recovers or terminates an execution.
-Monitoring gaps and unknown attempts remain unknown; the view is not a complete execution audit.
+Monitoring gaps and unobserved attempts remain unknown; the view is not a complete execution audit.
