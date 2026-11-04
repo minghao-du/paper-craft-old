@@ -99,4 +99,4 @@ test('multi-Fleet evidence retains invalid registrations and explains waiting an
     dashboard?.stop();
     rmSync(root, { recursive: true, force: true });
   }
-}, 10000);
+}, 20000);

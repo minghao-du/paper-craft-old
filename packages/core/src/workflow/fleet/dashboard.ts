@@ -1,11 +1,10 @@
 import type { WorkflowRole } from '../runtime/workflow-role.js';
 import type { ManagedAttempt } from '../runtime/runtime.js';
-import { readWorkerInventory } from './worker-inventory.js';
 import { inspectRuns, type WorkflowRun, type RunRegistry } from '../run/run-driver.js';
 /** File-backed evidence shared by Dashboard and JSON CLI; never scheduling authority. */
 import { readFile, realpath, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { loadFleetConfig, workflowSource, within } from './fleet-config.js';
 
 /** Registered monitoring source; project is an optional research association. */
@@ -178,6 +177,7 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         summary: dispatch.stage,
         blockers: [],
         runId: dispatch.runId,
+        dispatchId: dispatch.id,
         runtime: 'unknown',
         executionIdentity: attempt?.id ?? 'unknown',
         observedAt,
@@ -187,29 +187,6 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
           { runs, ...execution },
           dispatch.id,
         ),
-      });
-    }
-    const workers = readWorkerInventory(config.project);
-    for (const worker of workers) {
-      fleet.tasks.push({
-        id: `${registration.id}:dispatch:${worker.fleet_id}:${worker.dispatch_id}`,
-        slot: `${worker.role}-${worker.dispatch_id}`,
-        path: worker.worktree,
-        role: worker.role,
-        source: worker.source,
-        phase: worker.state,
-        summary: worker.receipt?.match(/^summary:\s*(.*)$/m)?.[1] ?? '',
-        blockers: [],
-        issue: worker.issue_id,
-        runId: worker.run_id,
-        dispatchId: worker.dispatch_id,
-        fleetId: worker.fleet_id,
-        handled: worker.handled,
-        runtime: 'unknown',
-        executionIdentity: 'unknown',
-        observedAt,
-        stale: false,
-        modifiedAt: worker.modifiedAt,
       });
     }
     const names = config.worktrees
@@ -291,7 +268,7 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         if (typeof record.pr === 'string') task.pr = record.pr;
       } catch (error) {
         const missing = error instanceof Error && 'code' in error && error.code === 'ENOENT';
-        if (missing && workers.length && location.slot === 'orchestrator') continue;
+        if (missing && fleet.runs?.length && location.slot === 'orchestrator') continue;
         if (missing) task.summary = 'No legacy status record';
         else task.error = error instanceof Error ? error.message : 'Cannot read status';
       }
@@ -313,20 +290,21 @@ export function dashboardTaskSource(
     const directory = workflowSource(config, task.path);
     return { directory, log: join(directory, '.epic-worklog.md') };
   }
-  const worker = readWorkerInventory(config.project).find(
-    (w) =>
-      w.dispatch_id === task.dispatchId && w.run_id === task.runId && w.fleet_id === task.fleetId,
+  const { dispatches } = inspectRuns(config);
+  const dispatch = dispatches?.find(
+    (d) => d.id === task.dispatchId && (!task.runId || d.runId === task.runId),
   );
-  if (!worker || worker.source !== task.source || worker.worktree !== task.path)
+  if (!dispatch) throw new Error('Unknown or missing dispatch');
+  const attempt = dispatch.attempts.at(-1);
+  const checkout = attempt?.checkout ?? config.project;
+  if (dispatch.briefReference.path !== task.source || checkout !== task.path)
     throw new Error('Dispatch source changed');
-  // Removed worktrees remain visible as historical records, but cannot be probed.
-  const directory = workflowSourceDirectory(worker.worktree);
-  return { directory, log: join(worker.source, '..', 'worker.log') };
-}
-
-function workflowSourceDirectory(path: string): string {
-  if (!existsSync(path)) return path;
-  const physical = realpathSync(path);
-  if (physical !== path) throw new Error('Worker checkout must not be redirected');
-  return physical;
+  if (!existsSync(checkout)) {
+    if (!within(config.project, checkout) && !within(config.root, checkout)) {
+      throw new Error(`Dispatch checkout is outside configured project or root: ${checkout}`);
+    }
+    return { directory: checkout, log: join(checkout, '.epic-worklog.md') };
+  }
+  const directory = workflowSource(config, checkout);
+  return { directory, log: join(directory, '.epic-worklog.md') };
 }
