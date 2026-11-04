@@ -32,8 +32,8 @@ Refresh is bounded by the collection schedule; clients share cached observations
 The Dashboard writes only its own registration/cache data and exposes no workflow controls.
 
 Expand “Git checkout constraints” for per-Fleet branch, changed files, cached-base relation, holds and collision evidence.
-Checks include worktrees from the current dispatch inventory as well as legacy configured slots.
-Completed dispatches whose worktrees have been removed retain their task records but are omitted from Git checkout checks; missing in-flight worktrees remain probe failures.
+Checks include checkouts from Managed Registry resources as well as configured slots.
+Missing registered checkouts report probe failures (unknown), never inferred as released; releasing a checkout requires explicit resource table removal rather than run completion.
 Git observations refresh independently every 60 seconds (configure with `--git-interval` in milliseconds), with bounded probes and per-Fleet failure backoff.
 Failed collections retain attributed stale successes.
 Reads never fetch Git refs; a clean checkout does not establish slot availability.
