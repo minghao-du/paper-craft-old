@@ -1,6 +1,6 @@
 /** Detached adapter entry: reconcile startup only, never schedule scientific/business work. */
 import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
-import { inspectRuns } from '@paper-craft/core/workflow/run-driver';
+import { inspectRuns } from '@paper-craft/core/workflow/run-observation';
 import { superviseStartup } from '@paper-craft/core/workflow/startup';
 import { createRunner } from './composition.js';
 

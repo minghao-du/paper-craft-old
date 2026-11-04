@@ -137,6 +137,11 @@
       "types": "./dist/workflow/run/run-driver.d.ts",
       "default": "./dist/workflow/run/run-driver.js"
     },
+    "./workflow/run-observation": {
+      "paper-craft-source": "./src/workflow/run/run-observation.ts",
+      "types": "./dist/workflow/run/run-observation.d.ts",
+      "default": "./dist/workflow/run/run-observation.js"
+    },
     "./workflow/run-registry": {
       "paper-craft-source": "./src/workflow/run/run-registry.ts",
       "types": "./dist/workflow/run/run-registry.d.ts",
