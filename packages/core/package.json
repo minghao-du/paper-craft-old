@@ -137,10 +137,30 @@
       "types": "./dist/workflow/run/run-driver.d.ts",
       "default": "./dist/workflow/run/run-driver.js"
     },
+    "./workflow/run-observation": {
+      "paper-craft-source": "./src/workflow/run/run-observation.ts",
+      "types": "./dist/workflow/run/run-observation.d.ts",
+      "default": "./dist/workflow/run/run-observation.js"
+    },
+    "./workflow/run-ownership": {
+      "paper-craft-source": "./src/workflow/run/run-ownership.ts",
+      "types": "./dist/workflow/run/run-ownership.d.ts",
+      "default": "./dist/workflow/run/run-ownership.js"
+    },
+    "./workflow/run-control": {
+      "paper-craft-source": "./src/workflow/run/run-control.ts",
+      "types": "./dist/workflow/run/run-control.d.ts",
+      "default": "./dist/workflow/run/run-control.js"
+    },
     "./workflow/run-subject": {
       "paper-craft-source": "./src/workflow/run/run-subject.ts",
       "types": "./dist/workflow/run/run-subject.d.ts",
       "default": "./dist/workflow/run/run-subject.js"
+    },
+    "./workflow/stage-execution": {
+      "paper-craft-source": "./src/workflow/run/stage-execution.ts",
+      "types": "./dist/workflow/run/stage-execution.d.ts",
+      "default": "./dist/workflow/run/stage-execution.js"
     },
     "./workflow/startup": {
       "paper-craft-source": "./src/workflow/run/startup.ts",

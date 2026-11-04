@@ -18,6 +18,10 @@ import {
   type WorkflowRun,
   type ManagedAttempt,
 } from '../../packages/core/src/workflow/run/run-driver.js';
+import {
+  inspectRun as inspectRunDirect,
+  inspectRunViews,
+} from '../../packages/core/src/workflow/run/run-observation.js';
 
 function createFixture() {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-control-')));
@@ -59,6 +63,11 @@ test('inspectRun exposes stable narrow public view of run identity, attempts, he
   try {
     const run = await startRun(config, runner, subject, 'codex');
     const view = inspectRun(config, run.id);
+    const directView = inspectRunDirect(config, run.id);
+    expect(directView).toEqual(view);
+    const views = inspectRunViews(config);
+    expect(views).toHaveLength(1);
+    expect(views[0]).toEqual(view);
 
     expect(view.id).toBe(run.id);
     expect(view.provider).toBe('codex');
@@ -526,4 +535,6 @@ test('CLI stop and release commands execute verified control operations and reje
     rmSync(project, { recursive: true, force: true });
   }
 }, 25000);
+
+
 

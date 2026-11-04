@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
-import { inspectRunViews } from '../run/run-driver.js';
+import { inspectRunViews } from '../run/run-observation.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 import type { DemoRound } from './round.js';
 

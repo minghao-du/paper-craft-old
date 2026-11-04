@@ -15,13 +15,21 @@ import { Command } from 'commander';
 import { afterEach, expect, it, vi } from 'vitest';
 import { registerWorkflowCommands } from '../../packages/cli/src/commands/workflow.js';
 import { outputRegistry } from './fixtures/concise-output/registry.js';
-import { inspectRuns, startRun, recoverRun } from '@paper-craft/core/workflow/run-driver';
+import { inspectRuns } from '@paper-craft/core/workflow/run-observation';
+import { startRun } from '@paper-craft/core/workflow/startup';
+import { recoverRun } from '@paper-craft/core/workflow/recovery';
 
 const fixture = JSON.parse(JSON.stringify(outputRegistry()));
-vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
-  ...(await original<typeof import('@paper-craft/core/workflow/run-driver')>()),
+vi.mock('@paper-craft/core/workflow/run-observation', async (original) => ({
+  ...(await original<typeof import('@paper-craft/core/workflow/run-observation')>()),
   inspectRuns: vi.fn(),
+}));
+vi.mock('@paper-craft/core/workflow/startup', async (original) => ({
+  ...(await original<typeof import('@paper-craft/core/workflow/startup')>()),
   startRun: vi.fn(async () => fixture.runs[0]),
+}));
+vi.mock('@paper-craft/core/workflow/recovery', async (original) => ({
+  ...(await original<typeof import('@paper-craft/core/workflow/recovery')>()),
   recoverRun: vi.fn(async () => ({
     blockers: ['Occupancy unknown'],
     pendingDispatches: ['pending-0'],

@@ -5,22 +5,24 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadFleetConfig, type FleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import { createRunner } from '../workflow/composition.js';
+import { inspectRuns } from '@paper-craft/core/workflow/run-observation';
 import {
-  inspectRuns,
   closeStageEpic,
   dispositionStagePipeline,
   publishStageReport,
+  epicDeliveries,
+  canonicalDeliveryFingerprint,
+} from '@paper-craft/core/workflow/run-driver';
+import {
   dispatchStage,
   collectBusinessTurn,
   acceptStageReceipt,
   retryStage,
   sendStageMessage,
-  epicDeliveries,
-  canonicalDeliveryFingerprint,
   type StageRequest,
   type StageDispatch,
   type StageFacts,
-} from '@paper-craft/core/workflow/run-driver';
+} from '@paper-craft/core/workflow/stage-execution';
 import {
   executeDeliveryStage,
   deliveryFacts,

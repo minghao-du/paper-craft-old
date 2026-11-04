@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
-import { stopRun, releaseRun, inspectRuns } from '../run/run-driver.js';
+import { inspectRuns } from '../run/run-registry.js';
+import { stopRun, releaseRun } from '../run/run-control.js';
 import type { RunnerAdapter } from '../runtime/runtime.js';
 import type { DemoExecution } from './control.js';
 
