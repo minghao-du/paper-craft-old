@@ -70,7 +70,6 @@ export function ensureStartupRecovery(
   launcher?: StartupSupervisorLauncher,
 ): void {
   if (
-    !runner.automaticStartup ||
     !startupPending(config, runId) ||
     startupRecoveryStatus(config, runId).active
   )

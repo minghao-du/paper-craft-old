@@ -40,11 +40,16 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
   };
   let launches = 0;
   let verifiedStopped = true;
+  let first: any;
   const runner = {
     interactive: true,
     name: 'codex',
-    async stopped() {
+    async stopped(attempt?: any) {
+      if (first && attempt?.id === first.orchestratorId) return false;
       return verifiedStopped;
+    },
+    async send() {
+      return { status: 'delivered' as const, evidence: 'activation ack' };
     },
     async preflight() {},
     async start() {
@@ -88,7 +93,7 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     ).rejects.toThrow(/interactive/);
     expect(launches).toBe(0);
     const requirements = 'Keep all source data\nUse TypeScript only';
-    const first = await startRun(config, runner, subject, 'codex', requirements);
+    first = await startRun(config, runner, subject, 'codex', requirements);
     expect(readFileSync(first.brief.path, 'utf8')).toContain(requirements);
     await expect(startRun(config, runner, subject, 'codex', 'Discard source data')).rejects.toThrow(
       /Requirements conflict/,

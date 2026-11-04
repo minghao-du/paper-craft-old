@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { writeResearchReport } from '../delivery/research-report.js';
 import { ensureStartupRecovery, reconcileStartup, stopStartupRecovery, startupRecoveryStatus } from './startup.js';
 import { assertStageRole, assertWorkflowRole } from '../runtime/workflow-role.js';
-import { initializationInstructions, verifyRoleInitialization } from './role-initialization.js';
+import { verifyRoleInitialization } from './role-initialization.js';
 /** Run intake and authoritative Fleet relationships; managed execution belongs to one Run. */
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -240,7 +240,7 @@ export async function startRun(
     if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
       throw new Error('Existing Run provider or scope conflict');
     ensureStartupRecovery(config, runner, reconnect.id);
-    return inspectRuns(config).runs.find((r) => r.id === reconnect.id)!;
+    return reconnect;
   }
   mkdirSync(home(config), { recursive: true });
   const lock = join(home(config), 'registry.lock');
@@ -249,6 +249,7 @@ export async function startRun(
   } catch {
     throw new Error('Registry occupied; inspect before retry');
   }
+  let run: WorkflowRun;
   try {
     const registry = inspectRuns(config);
     const ownership = registry.subjects?.find(
@@ -337,7 +338,7 @@ export async function startRun(
     const brief = `Manage only ${subject.kind} ${subject.repository}#${subject.number}. Run ${id}. Provider ${provider}.\n${subject.parent ? `Parent context #${subject.parent}; no sibling or parent closure authorization.\n` : ''}${subject.title}\n${subject.body}${requirements === undefined ? '' : `\n\n## Run Requirements\n\n${requirements}`}`;
     const path = join(directory, 'brief.md');
     writeFileSync(path, brief, { mode: 0o400, flag: 'wx' });
-    const run: WorkflowRun = {
+    run = {
       id,
       subject,
       provider,
@@ -805,7 +806,7 @@ export async function dispatchStage(
       ...(run.dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
       dispatchId: id,
       persistent: !!runner.result,
-      ...(runner.automaticStartup || runner.separateActivation ? { startupGate: true } : {}),
+      ...(runner.separateActivation || runner.result ? { startupGate: true } : {}),
       brief: request.brief,
       initialization: runner.result
         ? {
@@ -824,13 +825,11 @@ export async function dispatchStage(
       created: new Date().toISOString(),
       directory,
       checkout,
-      terminalSession: run.provider === 'agy' ? undefined : request.terminalSession,
+      terminalSession: request.terminalSession,
       writableDirectories: request.writableDirectories,
     };
     if (attempt.initialization) {
       attempt.initialization.attempt = attempt.id;
-      if (runner.name !== 'agy')
-        attempt.brief += initializationInstructions(attempt.initialization, attempt.directory);
     }
     const next: StageDispatch = {
       ...request,
@@ -1131,7 +1130,7 @@ export async function retryStage(
     const next: ManagedAttempt = {
       ...prior,
       predecessor: prior.id,
-      ...(runner.automaticStartup || runner.separateActivation ? { startupGate: true } : {}),
+      ...(runner.separateActivation || runner.result || prior.startupGate ? { startupGate: true } : {}),
       activation: undefined,
       startupStopped: undefined,
       id,
@@ -1149,8 +1148,6 @@ export async function retryStage(
     };
     if (next.initialization) {
       next.initialization = { ...next.initialization, attempt: next.id };
-      if (runner.name !== 'agy')
-        next.brief += initializationInstructions(next.initialization, next.directory);
     }
     current.attempts.push(next);
     current.lifecycle = 'reserved';
@@ -1289,7 +1286,7 @@ export async function recoverRun(
   for (const attempt of [...(orchestrator?.run === runId ? [orchestrator] : []), ...attempts]) {
     if (runner.observe) {
       attempt.observation = await runner.observe(attempt);
-      if (runner.name === 'agy' && attempt.observation.status === 'unknown') {
+      if (attempt.observation.status === 'unknown') {
         attempt.status = 'unknown';
       }
     }
@@ -1307,7 +1304,7 @@ export async function recoverRun(
       if (ack?.conversation && ack.address && ack.evidence) {
         try {
           if (attempt.initialization) verifyRoleInitialization(attempt);
-          else if (runner.name === 'agy') throw new Error('Missing initialization context');
+          else if (attempt.persistent) throw new Error('Missing initialization context');
           recovered.set(attempt.id, ack);
           if (runner.observe) attempt.observation = await runner.observe(attempt);
         } catch (error) {
@@ -1315,7 +1312,7 @@ export async function recoverRun(
         }
       }
     }
-    if (runner.name === 'agy' && attempt.observation?.status === 'unknown')
+    if (attempt.observation?.status === 'unknown')
       blockers.push(`${attempt.id}: ${attempt.observation.evidence}; occupancy unresolved`);
   }
   let replacement: ManagedAttempt | undefined;
@@ -1343,7 +1340,7 @@ export async function recoverRun(
         observation: undefined,
         error: undefined,
         startupFailures: undefined,
-        ...(runner.automaticStartup || runner.separateActivation ? { startupGate: true } : {}),
+        ...(runner.separateActivation || runner.result || orchestrator.startupGate ? { startupGate: true } : {}),
         activation: undefined,
         startupStopped: undefined,
         predecessor: orchestrator.id,
@@ -1369,11 +1366,6 @@ export async function recoverRun(
         authority: replacement.id,
         briefHash: createHash('sha256').update(replacement.brief).digest('hex'),
       };
-      if (runner.name !== 'agy')
-        replacement.brief += initializationInstructions(
-          replacement.initialization,
-          replacement.directory,
-        );
     }
     writeFileSync(join(replacement.directory, 'brief.md'), replacement.brief, {
       mode: 0o400,
@@ -1394,9 +1386,7 @@ export async function recoverRun(
           });
           delete current.orchestrator.error;
         }
-        Object.assign(current.orchestrator, ack, { status: 'running' });
-        if (runner.automaticStartup && runner.name === 'agy')
-          current.orchestrator.startupGate = true;
+        Object.assign(current.orchestrator, ack, { status: 'running', startupGate: true });
       }
     }
     if (replacement) {
@@ -1684,6 +1674,18 @@ export async function collectBusinessTurn(
   validate?: (result: string) => void,
   options?: { timeoutMs?: number; messageIds?: string[] },
 ): Promise<string> {
+  const registryAttempt = attempt.dispatchId
+    ? inspectRuns(config).dispatches?.find((d) => d.id === attempt.dispatchId)?.attempts.find((a) => a.id === attempt.id)
+    : inspectRuns(config).runs.find((r) => r.id === attempt.run)?.orchestrator;
+  const current = registryAttempt ?? attempt;
+  if (
+    current.status !== 'running' ||
+    (current.startupGate && current.activation?.status !== 'delivered')
+  ) {
+    throw new Error(
+      'Attempt startup incomplete: activation delivery required before business execution',
+    );
+  }
   let result: string | undefined;
   if (runner.interactive && runner.result && attempt.dispatchId) {
     const deadline = options?.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;
