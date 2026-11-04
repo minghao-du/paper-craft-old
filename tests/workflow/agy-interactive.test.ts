@@ -795,3 +795,117 @@ test.each(['missing', 'unreadable', 'mismatched'])(
     }
   },
 );
+
+test('recoverReceipt validates and updates encapsulated providerState and refuses corrupt evidence', async () => {
+  const child = await import('node:child_process');
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-rec-'));
+  const transcriptPath = join(directory, 'transcript.jsonl');
+  const tui = new AgyInteractive();
+
+  const attempt: import('../../packages/core/src/workflow/runtime/runtime.js').ManagedAttempt = {
+    id: 'att-1',
+    run: 'r1',
+    directory,
+    checkout: directory,
+    fleet: 'f',
+    role: 'orchestrator',
+    runner: 'agy',
+    brief: 'brief text',
+    status: 'running',
+    created: '',
+    address: 'tmux:%5',
+    providerState: {
+      session: 'pc-run-r1',
+      paneId: '%5',
+      windowId: '@1',
+      address: 'tmux:%5',
+      run: 'r1',
+    },
+  };
+
+  vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
+    const a = args as string[];
+    if (a[0] === 'list-panes') return '%5 0\n';
+    if (a[0] === 'display-message') return 'pc-run-r1 r1 %5';
+    return '';
+  });
+
+  try {
+    // 1. Mismatched Run ownership in providerState
+    await expect(
+      tui.recoverReceipt({
+        ...attempt,
+        providerState: { ...attempt.providerState, run: 'r-foreign' },
+      }),
+    ).rejects.toThrow(/Durable terminal Run ownership mismatch/);
+
+    // 2. Mismatched session in providerState
+    await expect(
+      tui.recoverReceipt({
+        ...attempt,
+        providerState: { ...attempt.providerState, session: 'pc-run-other' },
+      }),
+    ).rejects.toThrow(/Durable terminal Run ownership mismatch/);
+
+    // 3. Mismatched address in providerState
+    await expect(
+      tui.recoverReceipt({
+        ...attempt,
+        address: 'tmux:%5',
+        providerState: { ...attempt.providerState, address: 'tmux:%99' },
+      }),
+    ).rejects.toThrow(/Durable terminal address mismatch/);
+
+    // 4. Corrupt terminal.json throws explicit error
+    writeFileSync(join(directory, 'terminal.json'), '{ broken json');
+    await expect(tui.recoverReceipt(attempt)).rejects.toThrow(
+      /Corrupt terminal recovery evidence/,
+    );
+    rmSync(join(directory, 'terminal.json'));
+
+    // 5. Corrupt agy-native.json throws explicit error
+    writeFileSync(join(directory, 'agy-native.json'), '{ broken json');
+    await expect(tui.recoverReceipt(attempt)).rejects.toThrow(
+      /Corrupt native recovery evidence/,
+    );
+
+    // 6. Valid native output and transcript recovery updates providerState
+    writeFileSync(
+      join(directory, 'agy-native.json'),
+      JSON.stringify({ conversation_id: 'conv-rec', transcript_path: transcriptPath }),
+    );
+    writeFileSync(join(directory, 'agy-input.txt'), 'brief text');
+    writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          step_index: 0,
+          type: 'USER_INPUT',
+          source: 'USER_EXPLICIT',
+          status: 'DONE',
+          content: '<USER_REQUEST>\nbrief text\n</USER_REQUEST>',
+        }),
+        JSON.stringify({
+          step_index: 1,
+          type: 'PLANNER_RESPONSE',
+          source: 'MODEL',
+          status: 'DONE',
+          content: '[pc ready role=orchestrator attempt=att-1]\nready output',
+        }),
+      ].join('\n'),
+    );
+
+    const testAttempt = { ...attempt, conversation: undefined };
+    const receipt = await tui.recoverReceipt(testAttempt);
+    expect(receipt).toEqual({
+      conversation: 'conv-rec',
+      address: 'tmux:%5',
+      evidence: 'Native agy exact conversation and complete submitted brief',
+    });
+    expect(testAttempt.providerState?.conversation).toBe('conv-rec');
+    expect(testAttempt.providerState?.session).toBe('pc-run-r1');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+

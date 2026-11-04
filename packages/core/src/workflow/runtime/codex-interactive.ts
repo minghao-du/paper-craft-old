@@ -247,7 +247,7 @@ export class InteractiveCodexRunner implements RunnerAdapter {
         : ['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', name, script],
       { encoding: 'utf8' },
     ).trim();
-    attempt.paneId = output;
+    attempt.providerState = { ...(attempt.providerState ?? {}), paneId: output };
     attempt.address = `tmux:${output}`;
     writeFileSync(
       join(attempt.directory, 'terminal.json'),
@@ -529,7 +529,8 @@ export class CodexRunner implements RunnerAdapter {
       if (!/^@\d+$/.test(windowId ?? '') || !/^%\d+$/.test(paneId ?? ''))
         throw new Error('Expected actual tmux window and pane identities');
       address = `${specialist ? attempt.terminalSession : session}:${windowId}`;
-      Object.assign(attempt, { windowId, paneId, address: `tmux:${address}` });
+      attempt.providerState = { ...(attempt.providerState ?? {}), windowId, paneId };
+      Object.assign(attempt, { address: `tmux:${address}` });
       writeFileSync(
         join(attempt.directory, 'terminal.json'),
         JSON.stringify({ address: attempt.address, windowId, paneId }),

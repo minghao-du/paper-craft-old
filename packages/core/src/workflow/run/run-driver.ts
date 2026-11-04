@@ -803,7 +803,9 @@ export async function dispatchStage(
       run: run.id,
       role: request.role,
       runner: run.provider,
-      ...(run.dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
+      ...(run.dangerouslySkipPermissions
+        ? { dangerouslySkipPermissions: true, providerState: { dangerouslySkipPermissions: true } }
+        : {}),
       dispatchId: id,
       persistent: !!runner.result,
       ...(runner.separateActivation || runner.result ? { startupGate: true } : {}),
@@ -1279,11 +1281,43 @@ export async function recoverRun(
     string,
     Awaited<ReturnType<NonNullable<RunnerAdapter['recoverReceipt']>>>
   >();
-  const orchestrator = run.orchestrator ?? inspectOrchestrator(config, runId);
-  const attempts =
-    snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts.slice(-1)) ??
-    [];
-  for (const attempt of [...(orchestrator?.run === runId ? [orchestrator] : []), ...attempts]) {
+  let orchestrator = run.orchestrator;
+  if (!orchestrator) {
+    try {
+      orchestrator = inspectOrchestrator(config, runId);
+    } catch (error) {
+      blockers.push(`Orchestrator recovery evidence corrupt: ${String(error)}`);
+    }
+  }
+  if (orchestrator) {
+    if (orchestrator.run && orchestrator.run !== runId) {
+      throw new Error(
+        `Run orchestrator ownership mismatch: expected ${runId}, received ${orchestrator.run}`,
+      );
+    }
+    if (orchestrator.runner && orchestrator.runner !== run.provider) {
+      throw new Error(
+        `Run provider mismatch: expected provider ${run.provider}, but received ${orchestrator.runner}`,
+      );
+    }
+  }
+  const dispatches = snapshot.dispatches?.filter((d) => d.runId === runId) ?? [];
+  for (const dispatch of dispatches) {
+    for (const attempt of dispatch.attempts) {
+      if (attempt.run && attempt.run !== runId) {
+        throw new Error(
+          `Dispatch attempt Run ownership mismatch: expected ${runId}, received ${attempt.run}`,
+        );
+      }
+      if (attempt.runner && attempt.runner !== run.provider) {
+        throw new Error(
+          `Attempt provider mismatch: expected provider ${run.provider}, but received ${attempt.runner}`,
+        );
+      }
+    }
+  }
+  const attempts = dispatches.flatMap((d) => d.attempts.slice(-1));
+  for (const attempt of [...(orchestrator ? [orchestrator] : []), ...attempts]) {
     if (runner.observe) {
       attempt.observation = await runner.observe(attempt);
       if (attempt.observation.status === 'unknown') {
@@ -1335,8 +1369,7 @@ export async function recoverRun(
       mkdirSync(directory, { recursive: true });
       replacement = {
         ...orchestrator,
-        paneId: undefined,
-        windowId: undefined,
+        providerState: undefined,
         observation: undefined,
         error: undefined,
         startupFailures: undefined,
@@ -1375,7 +1408,7 @@ export async function recoverRun(
   updateRunRegistry(config, (registry) => {
     if (registry.revision !== snapshot.revision) throw new Error('Recovery inputs changed; retry');
     const current = registry.runs.find((r) => r.id === runId)!;
-    if (orchestrator?.run === runId) {
+    if (orchestrator) {
       current.orchestrator = orchestrator;
       const ack = recovered.get(orchestrator.id);
       if (ack) {

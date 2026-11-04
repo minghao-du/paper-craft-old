@@ -78,7 +78,10 @@ an adapter. Host-specific registration, response formatting and process lifecycl
 belong in adapters. Foreground and background entry points compose execution
 dependencies explicitly; Core supervision algorithms receive host launch seams
 without importing concrete providers. General shell-quoting helpers remain in Core
-to serve callers across hosts rather than being provider-exclusive. A future native
-DeepSeek plugin follows the same direction.
+to serve callers across hosts rather than being provider-exclusive. Core persists
+opaque provider recovery state without interpreting provider-specific internal
+fields; provider adapters validate their own session, pane, permission and execution
+location evidence, while Dashboard observation remains strictly read-only and free
+of execution dependencies. A future native DeepSeek plugin follows the same direction.
 Shared skills remain at the repository root. CLI commands, configuration paths and
 JSONL formats are explicit public contracts.

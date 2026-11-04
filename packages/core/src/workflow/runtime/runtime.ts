@@ -38,6 +38,9 @@ export interface ManagedAttempt {
   dangerouslySkipPermissions?: boolean;
   conversation?: string;
   address?: string;
+  /** Opaque provider-specific recovery information; Core persists this without reading or relying on internal fields. */
+  providerState?: Record<string, unknown>;
+  /** Deprecated interim provider fields; providers must encapsulate state in providerState. */
   windowId?: string;
   paneId?: string;
   evidence?: string;
@@ -105,9 +108,18 @@ export function inspectOrchestrator(config: FleetConfig, run: string): ManagedAt
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   const path = join(home(config), `orchestrator-${run}.json`);
   if (!existsSync(path)) return undefined;
-  const attempt = JSON.parse(readFileSync(path, 'utf8')) as ManagedAttempt;
+  let attempt: ManagedAttempt;
+  try {
+    attempt = JSON.parse(readFileSync(path, 'utf8')) as ManagedAttempt;
+  } catch (error) {
+    throw new Error(`Corrupt orchestrator recovery evidence at ${path}: ${String(error)}`, {
+      cause: error,
+    });
+  }
   assertWorkflowRole(attempt.role, path);
   if (attempt.role !== 'orchestrator') throw new Error(`${path}: expected orchestrator role`);
+  if (attempt.run && attempt.run !== run)
+    throw new Error(`${path}: expected run ${run}; received ${attempt.run}`);
   return attempt;
 }
 /** Exclusively claim the Run orchestrator, preserving failed/unknown launches for recovery. */
@@ -149,7 +161,9 @@ export async function startOrchestrator(
     created: new Date().toISOString(),
     directory,
     checkout: config.project,
-    ...(dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
+    ...(dangerouslySkipPermissions
+      ? { dangerouslySkipPermissions: true, providerState: { dangerouslySkipPermissions: true } }
+      : {}),
   };
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   const path = join(home(config), `orchestrator-${run}.json`);

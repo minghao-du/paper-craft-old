@@ -180,7 +180,12 @@ export async function reconcileStartup(
     }
   }
   if (owner.launchStarted === true && !owner.orchestrator) {
-    const durable = inspectOrchestrator(config, runId);
+    let durable;
+    try {
+      durable = inspectOrchestrator(config, runId);
+    } catch {
+      return false;
+    }
     if (!durable || durable.run !== runId || durable.id !== owner.orchestratorId) return true;
     updateRunRegistry(config, (registry) => {
       const run = registry.runs.find((r) => r.id === runId);
