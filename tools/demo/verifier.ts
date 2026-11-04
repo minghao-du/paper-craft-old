@@ -1,15 +1,15 @@
 import { demoArtifacts } from './artifacts.js';
 import { demoChronology } from './delivery.js';
-import { pipelineAccepted } from '../delivery/epic-finalization.js';
+import { pipelineAccepted } from '@paper-craft/core/workflow/run-driver';
 /** Independent round inspection. Controlled samples exercise detection, never live acceptance. */
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import type { DemoRound } from './round.js';
-import { inspectRunViews, type WorkflowRunView } from '../run/run-observation.js';
-import { loadFleetConfig } from '../fleet/fleet-config.js';
-import { type ManagedAttempt, inspectAttemptControl } from '../runtime/runtime.js';
+import { inspectRunViews, type WorkflowRunView } from '@paper-craft/core/workflow/run-observation';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
+import { type ManagedAttempt, inspectAttemptControl } from '@paper-craft/core/workflow/runtime';
 import { DemoFinalization, nativeDemoFinalization, type DemoFinalizationView } from './finalization.js';
 import type { GateAuthorization } from './delivery.js';
 

@@ -1,7 +1,7 @@
 /** Durable startup reconciliation; provider executions and business acceptance remain separate. */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { FleetConfig } from '../fleet/fleet-config.js';
 import {
   inspectOrchestrator,
@@ -16,7 +16,6 @@ import {
   inspectRuns,
   save,
   updateRunRegistry,
-  type RunConstraints,
   type RunRegistry,
   type RunSubject,
   type WorkflowRun,
@@ -197,7 +196,6 @@ export async function startRun(
   provider: string,
   requirements?: string,
   dangerouslySkipPermissions?: boolean,
-  constraints?: RunConstraints,
 ): Promise<WorkflowRun> {
   if (
     !/^[\w.-]+\/[\w.-]+$/.test(subject.repository) ||
@@ -213,25 +211,9 @@ export async function startRun(
     );
   if (dangerouslySkipPermissions && provider !== 'agy')
     throw new Error('--dangerously-skip-permissions requires --provider agy');
-  if (!constraints && config.demo?.round) {
-    constraints = {
-      kind: 'demo',
-      roundId: config.demo.round,
-      demoConfigPath: config.demo.config,
-    };
-  }
   const verifyPermissions = (run: WorkflowRun) => {
     if (dangerouslySkipPermissions && !run.dangerouslySkipPermissions)
       throw new Error('Permission mode conflicts with the existing Run; reuse its stored mode');
-  };
-  const verifyConstraints = (run: WorkflowRun) => {
-    if (run.constraints && constraints) {
-      if (
-        run.constraints.kind !== constraints.kind ||
-        run.constraints.roundId !== constraints.roundId
-      )
-        throw new Error('Constraints conflict with existing Run; reuse stored constraints');
-    }
   };
   requireInteractive(runner);
   await runner.preflight();
@@ -245,7 +227,6 @@ export async function startRun(
   if (reconnect) {
     verifyPermissions(reconnect);
     verifyRunRequirements(reconnect, requirements);
-    verifyConstraints(reconnect);
     if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
       throw new Error('Existing Run provider or scope conflict');
     ensureStartupRecovery(config, runner, reconnect.id);
@@ -268,7 +249,6 @@ export async function startRun(
     if (owningRun && owningRun.subject.number !== subject.number) {
       verifyPermissions(owningRun);
       verifyRunRequirements(owningRun, requirements);
-      verifyConstraints(owningRun);
       if (owningRun.provider !== provider)
         throw new Error('Existing child execution provider conflict');
       ensureStartupRecovery(config, runner, owningRun.id);
@@ -288,57 +268,10 @@ export async function startRun(
     if (existing) {
       verifyPermissions(existing);
       verifyRunRequirements(existing, requirements);
-      verifyConstraints(existing);
       if (existing.provider !== provider || existing.subject.kind !== subject.kind)
         throw new Error('Existing Run provider or scope conflict');
       ensureStartupRecovery(config, runner, existing.id);
       return existing;
-    }
-
-    if (constraints?.kind === 'demo') {
-      const roundRoot = dirname(config.project);
-      const roundFile = join(roundRoot, 'round.json');
-      if (!existsSync(roundFile)) {
-        throw new Error(`Demo round ${constraints.roundId} manifest not found`);
-      }
-      const round = JSON.parse(readFileSync(roundFile, 'utf8'));
-      if (round.id !== constraints.roundId) {
-        throw new Error(`Demo round ID mismatch: expected ${constraints.roundId}, found ${round.id}`);
-      }
-      const expectedRepo = `${round.repository?.owner}/${round.repository?.name}`;
-      if (subject.repository !== expectedRepo) {
-        throw new Error(
-          `Repository mismatch for demo round: expected ${expectedRepo}, received ${subject.repository}`,
-        );
-      }
-      if (subject.number !== round.parent) {
-        throw new Error(
-          `Parent mismatch for demo round: expected ${round.parent}, received ${subject.number}`,
-        );
-      }
-      if (provider !== 'agy') {
-        throw new Error(`Provider mismatch for demo round: expected agy, received ${provider}`);
-      }
-      if (config.project !== round.checkout || config.root !== round.worktrees) {
-        throw new Error('Configuration path mismatch for demo round');
-      }
-      const controlFile = join(roundRoot, 'control.json');
-      if (!existsSync(controlFile)) {
-        throw new Error(`Demo round ${round.id} is not armed; run pc demo arm first`);
-      }
-      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-      if (!control.armed) {
-        throw new Error(`Demo round ${round.id} is not armed; run pc demo arm first`);
-      }
-      if (control.stopped) {
-        throw new Error(`Demo round ${round.id} is stopped; cannot start Run`);
-      }
-      if (control.activeMs >= control.budgetMs) {
-        throw new Error(`Demo round ${round.id} budget expired; cannot start Run`);
-      }
-      if (control.runId) {
-        throw new Error(`Demo round ${round.id} already bound to Run ${control.runId}`);
-      }
     }
 
     const id = randomUUID();
@@ -355,9 +288,6 @@ export async function startRun(
       policy: { name: 'managed-run', revision: 1 },
       lifecycle: 'reserved',
       ...(requirements === undefined ? {} : { requirements }),
-      ...(constraints === undefined
-        ? {}
-        : { constraints: { ...constraints, boundAt: new Date().toISOString() } }),
       orchestratorId: id,
       launchStarted: false,
       brief: { path, hash: createHash('sha256').update(brief).digest('hex') },
@@ -365,15 +295,6 @@ export async function startRun(
     registry.runs.push(run);
     reserveSubject(registry, run.id, `${subject.repository}#${subject.number}`);
     save(config, registry);
-
-    if (constraints?.kind === 'demo') {
-      const roundRoot = dirname(config.project);
-      const controlFile = join(roundRoot, 'control.json');
-      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-      control.runId = id;
-      control.execution = 'running';
-      writeFileSync(controlFile, JSON.stringify(control, null, 2));
-    }
 
     // The durable reservation survives a crash or failed launch and blocks replacement.
     try {
@@ -423,25 +344,6 @@ export async function reconcileStartup(
     );
   if (owner.lifecycle === 'completed') return false;
   verifyRunRequirements(owner);
-  if (owner.constraints?.kind === 'demo') {
-    const roundRoot = dirname(config.project);
-    const controlFile = join(roundRoot, 'control.json');
-    if (existsSync(controlFile)) {
-      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-      if (control.stopped || control.activeMs >= control.budgetMs) {
-        updateRunRegistry(config, (registry) => {
-          for (const a of attempts(registry, runId)) {
-            a.startupStopped = true;
-            a.status = 'unknown';
-            a.error = 'Demo round budget expired or stopped during startup; occupancy retained';
-          }
-          const run = registry.runs.find((r) => r.id === runId);
-          if (run) run.lifecycle = 'blocked';
-        });
-        return false;
-      }
-    }
-  }
   if (owner.launchStarted === true && !owner.orchestrator) {
     let durable;
     try {

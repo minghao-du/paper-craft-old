@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
-import { inspectRunViews } from '../run/run-observation.js';
-import { loadFleetConfig } from '../fleet/fleet-config.js';
+import { inspectRunViews } from '@paper-craft/core/workflow/run-observation';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import type { DemoRound } from './round.js';
 
 /** Authorization bound to Round, Run, task Issue, stage and inputs. */
@@ -67,7 +67,7 @@ export class DemoDelivery {
     if (stage === 'worker1') {
       const controlFile = join(this.round.root, 'control.json');
       let roundArmed = false;
-      let control: { stopped?: boolean; releasing?: boolean; activeMs?: number; budgetMs?: number; stoppedReason?: string } | undefined;
+      let control: { stopped?: boolean; releasing?: boolean; activeMs?: number; budgetMs?: number; stoppedReason?: string; runId?: string } | undefined;
       if (existsSync(controlFile)) {
         control = JSON.parse(readFileSync(controlFile, 'utf8'));
         roundArmed = !control?.stopped && !control?.releasing && (control?.activeMs ?? 0) < (control?.budgetMs ?? Infinity);
@@ -79,7 +79,13 @@ export class DemoDelivery {
         try {
           const runs = inspectRunViews(loadFleetConfig(workflowConfigPath));
           const bound = runs.find(
-            (r) => r.constraints?.kind === 'demo' && r.constraints.roundId === this.round.id && r.lifecycle !== 'completed',
+            (r) =>
+              (r.id === control?.runId ||
+                (this.round.repository &&
+                  r.subject.repository ===
+                    `${this.round.repository.owner}/${this.round.repository.name}` &&
+                  r.subject.number === this.round.parent)) &&
+              r.lifecycle !== 'completed',
           );
           if (bound) {
             runBound = true;
@@ -101,7 +107,32 @@ export class DemoDelivery {
         task1 = facts.children[0];
         task2 = facts.children[1];
       }
-      const pass = Boolean(roundArmed && runBound && parentValid && exactChildren && facts.nativeDependency && noExtra && task1 !== undefined);
+      const savedTasksFile = join(this.round.root, 'demo-tasks.json');
+      if (existsSync(savedTasksFile)) {
+        try {
+          const saved = JSON.parse(readFileSync(savedTasksFile, 'utf8'));
+          task1 ??= saved.task1;
+          task2 ??= saved.task2;
+        } catch {
+          // ignore error reading demo-tasks
+        }
+      } else if (task1 !== undefined && task2 !== undefined) {
+        writeFileSync(
+          savedTasksFile,
+          JSON.stringify({ roundId: this.round.id, parent: this.round.parent, task1, task2 }, null, 2),
+        );
+      }
+
+      const pass = Boolean(
+        roundArmed &&
+        runBound &&
+        parentValid &&
+        exactChildren &&
+        facts.nativeDependency &&
+        noExtra &&
+        task1 !== undefined &&
+        task2 !== undefined,
+      );
 
       let failureReason: string | undefined;
       if (!pass) {
@@ -110,7 +141,7 @@ export class DemoDelivery {
           failureReason = `No active bound Run found for round ${this.round.id}: expected an active Run bound to round ${this.round.id}, received none`;
         else if (!parentValid) failureReason = 'Parent identity mismatch';
         else if (!exactChildren) failureReason = `Expected exactly two child tasks, found ${facts.children.length}`;
-        else if (!facts.nativeDependency) failureReason = 'Native dependency direction violated (second child must be blocked by first)';
+        else if (!facts.nativeDependency) failureReason = 'Native dependency direction violated';
         else if (!noExtra) failureReason = 'Extra tasks detected';
         else failureReason = 'Unknown prerequisite failure';
       }
@@ -129,16 +160,7 @@ export class DemoDelivery {
         throw new Error('Gate 1 verification failed: ' + failureReason);
       }
 
-      // Persist stable task identities
-      const taskIdentities: DemoTaskIdentities = {
-        roundId: this.round.id,
-        parent: this.round.parent ?? 1,
-        task1: task1!,
-        task2: task2!,
-      };
-      writeFileSync(join(this.round.root, 'demo-tasks.json'), JSON.stringify(taskIdentities, null, 2));
-
-      // Issue durable Gate authorization
+      // Issue durable Gate authorization for task 1
       const authorization: GateAuthorization = {
         id: randomUUID(),
         roundId: this.round.id,
@@ -169,7 +191,7 @@ export class DemoDelivery {
     if (stage === 'worker2') {
       const controlFile = join(this.round.root, 'control.json');
       let roundArmed = false;
-      let control: { stopped?: boolean; releasing?: boolean; activeMs?: number; budgetMs?: number; stoppedReason?: string } | undefined;
+      let control: { stopped?: boolean; releasing?: boolean; activeMs?: number; budgetMs?: number; stoppedReason?: string; runId?: string } | undefined;
       if (existsSync(controlFile)) {
         control = JSON.parse(readFileSync(controlFile, 'utf8'));
         roundArmed = !control?.stopped && !control?.releasing && (control?.activeMs ?? 0) < (control?.budgetMs ?? Infinity);
@@ -183,7 +205,13 @@ export class DemoDelivery {
         try {
           const runs = inspectRunViews(loadFleetConfig(workflowConfigPath));
           const bound = runs.find(
-            (r) => r.constraints?.kind === 'demo' && r.constraints.roundId === this.round.id && r.lifecycle !== 'completed',
+            (r) =>
+              (r.id === control?.runId ||
+                (this.round.repository &&
+                  r.subject.repository ===
+                    `${this.round.repository.owner}/${this.round.repository.name}` &&
+                  r.subject.number === this.round.parent)) &&
+              r.lifecycle !== 'completed',
           );
           if (bound) {
             runBound = true;
@@ -317,6 +345,36 @@ export class DemoDelivery {
     if (!pass)
       throw new Error('Native structure or complete sequential delivery prerequisite failed');
     return facts;
+  }
+
+  /** Durably claim a Gate authorization before worker execution. */
+  claim(
+    stage: 'worker1' | 'worker2',
+    options?: { launchId?: string; attemptId?: string },
+  ): GateAuthorization | undefined {
+    const authFile = join(this.round.root, `gate-${stage}-authorization.json`);
+    const fallbackFile = join(this.round.root, 'gate-authorization.json');
+    let claimedAuth: GateAuthorization | undefined;
+    for (const file of [authFile, fallbackFile]) {
+      if (existsSync(file)) {
+        try {
+          const auth: GateAuthorization = JSON.parse(readFileSync(file, 'utf8'));
+          if (auth.claimed) {
+            throw new Error(`Gate authorization for ${stage} is already claimed`);
+          }
+          auth.claimed = true;
+          auth.claimedAt = new Date().toISOString();
+          auth.claimedLaunchId = options?.launchId;
+          auth.claimedAttemptId = options?.attemptId;
+          writeFileSync(file, JSON.stringify(auth, null, 2));
+          claimedAuth ??= auth;
+        } catch (e) {
+          if (String(e).includes('already claimed')) throw e;
+          // ignore parsing error
+        }
+      }
+    }
+    return claimedAuth;
   }
   /** Present the actual version before accepting a human decision. */
   async request() {

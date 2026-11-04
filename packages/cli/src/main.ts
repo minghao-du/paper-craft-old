@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { registerDemoCommands } from './commands/demo.js';
 /**
  * `pc` — agent-first research workflow CLI.
  *
@@ -59,7 +58,6 @@ registerCheckCommand(program, opts);
 registerNewCommand(program, opts);
 registerDiffCommand(program, opts);
 registerWorkflowCommands(program, opts);
-registerDemoCommands(program);
 
 registerDashboardCommand(program);
 

@@ -11,7 +11,6 @@ export {
   claimDriver,
   validateRegistryRoles,
   type RunSubject,
-  type RunConstraints,
   type WorkflowRun,
   type RunRegistry,
   type StageRequest,
@@ -98,3 +97,5 @@ export {
   type StageReportOptions,
   type StageReportResult,
 } from './epic-completion.js';
+
+export { pipelineAccepted } from '../delivery/epic-finalization.js';

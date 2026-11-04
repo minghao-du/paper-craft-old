@@ -1,7 +1,7 @@
 /** Batch recovery delegates authority and evidence reconciliation to each Run. */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type { FleetConfig } from '../fleet/fleet-config.js';
 import {
   inspectOrchestrator,
@@ -50,31 +50,9 @@ export async function recoverRun(
       `Run provider mismatch: expected provider ${run.provider}, but received ${runner.name}`,
     );
   verifyRunRequirements(run);
-  if (run.constraints?.kind === 'demo') {
-    if (options.replaceOrchestrator) {
-      throw new Error(`Replacement Orchestrator not authorized for demo-constrained Run ${run.id}`);
-    }
-  }
   if (run.lifecycle === 'completed')
     throw new Error('Completed Run authority has ended; start a new Run after resolving occupancy');
   const blockers: string[] = [];
-  if (run.constraints?.kind === 'demo') {
-    const roundRoot = dirname(config.project);
-    const controlFile = join(roundRoot, 'control.json');
-    if (existsSync(controlFile)) {
-      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-      if (control.stopped || control.activeMs >= control.budgetMs) {
-        blockers.push(`Demo round ${run.constraints.roundId} is stopped or expired`);
-        updateRunRegistry(config, (registry) => {
-          const r = registry.runs.find((x) => x.id === runId);
-          if (r) r.lifecycle = 'blocked';
-        });
-        if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
-          return { blockers, pendingDispatches: [] };
-        }
-      }
-    }
-  }
   if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
     updateRunRegistry(config, (registry) => {
       if (registry.revision !== snapshot.revision)

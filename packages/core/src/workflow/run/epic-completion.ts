@@ -2,12 +2,9 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  existsSync,
   readFileSync,
   writeFileSync,
-  realpathSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
 import { writeResearchReport, type ResearchReport } from '../delivery/research-report.js';
 import { pipelineAccepted, type PipelineDisposition } from '../delivery/epic-finalization.js';
 import type { FleetConfig } from '../fleet/fleet-config.js';
@@ -386,34 +383,6 @@ export function dispositionStagePipeline(
       readFileSync(receipt.evidence[0].path, 'utf8'),
     ) as PipelineDisposition;
 
-    if (run.constraints?.kind === 'demo') {
-      const roundRoot = dirname(config.project);
-      const controlFile = join(roundRoot, 'control.json');
-      const isCleanNoChanges =
-        ['not_applicable', 'completed_no_changes'].includes(result.disposition) &&
-        pipelineAccepted(result) &&
-        result.head === run.epicClosure.head &&
-        Object.values(result.inspectedVersions ?? {}).includes(run.epicClosure.head) &&
-        (receipt.evidence?.length ?? 0) > 0;
-
-      if (!isCleanNoChanges) {
-        if (existsSync(controlFile)) {
-          const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-          control.stopped = true;
-          control.stoppedReason =
-            result.disposition === 'changes_needed'
-              ? 'Pipeline changes require retention; no repair or third delivery'
-              : 'Pipeline disposition invalidates acceptance; retaining diagnostic round';
-          writeFileSync(controlFile, JSON.stringify(control, null, 2));
-        }
-        throw new Error(
-          result.disposition === 'changes_needed'
-            ? 'Pipeline changes require retention; no repair or third delivery'
-            : 'Pipeline disposition blocks reporting',
-        );
-      }
-    }
-
     if (result.head !== run.epicClosure.head || !pipelineAccepted(result))
       throw new Error('Pipeline disposition blocks reporting');
     run.pipeline = result;
@@ -466,35 +435,6 @@ export async function publishStageReport(
   )
     throw new Error('Report artifact changed since accepted result');
 
-  if (run.constraints?.kind === 'demo') {
-    const roundRoot = dirname(config.project);
-    const roundFile = join(roundRoot, 'round.json');
-    if (existsSync(roundFile)) {
-      const round = JSON.parse(readFileSync(roundFile, 'utf8'));
-      if (
-        coordinator.identity !== round.config.coordinator ||
-        coordinator.brief !== round.config.brief ||
-        coordinator.entry !== round.entry ||
-        realpathSync(round.research) !== round.research ||
-        dirname(round.entry) !== round.research ||
-        round.entry !== join(round.research, 'report.md')
-      ) {
-        throw new Error('Isolated physical report destination and operator coordinator configuration required');
-      }
-    }
-
-    const artifactContent = readFileSync(result.artifact, 'utf8');
-    const hasSummaryValues =
-      /\b10\b/.test(artifactContent) &&
-      /\b55\b/.test(artifactContent) &&
-      /\b100\b/.test(artifactContent);
-    const hasReferences = /#\d+|PR\s*\d+|Issue\s*\d+/i.test(artifactContent);
-    const hasPipelineConclusion = /(not_applicable|completed_no_changes|pipeline)/i.test(artifactContent);
-
-    if (!hasSummaryValues || !hasReferences || !hasPipelineConclusion) {
-      throw new Error('Demo report does not satisfy required checks, baseline values, or sections');
-    }
-  }
   const observedHead = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: config.project,
     encoding: 'utf8',
@@ -523,15 +463,6 @@ export async function publishStageReport(
     current.report = report;
     current.phase = 'completed';
     current.lifecycle = 'completed';
-    if (current.constraints?.kind === 'demo') {
-      const roundRoot = dirname(config.project);
-      const controlFile = join(roundRoot, 'control.json');
-      if (existsSync(controlFile)) {
-        const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-        control.completed = true;
-        writeFileSync(controlFile, JSON.stringify(control, null, 2));
-      }
-    }
   });
   return report;
 }

@@ -2,9 +2,9 @@ import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DemoRounds, type DemoAdapter, type DemoConfig } from '../../packages/core/src/workflow/demo/round.js';
-import { DemoControl, type DemoExecution } from '../../packages/core/src/workflow/demo/control.js';
-import { DemoDelivery, type DemoDeliveryAdapter, type DemoDeliverySnapshot } from '../../packages/core/src/workflow/demo/delivery.js';
+import { DemoRounds, type DemoAdapter, type DemoConfig } from '../../tools/demo/round.js';
+import { DemoControl, type DemoExecution } from '../../tools/demo/control.js';
+import { DemoDelivery, type DemoDeliveryAdapter, type DemoDeliverySnapshot } from '../../tools/demo/delivery.js';
 import {
   startRun,
   dispatchStage,

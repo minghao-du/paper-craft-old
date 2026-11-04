@@ -25,14 +25,6 @@ export interface RunSubject extends IssueInput {
   kind: 'issue' | 'epic';
 }
 
-/** Minimal per-Run constraint contract; fixed at intake and immutable across reconnects. */
-export interface RunConstraints {
-  kind: 'demo';
-  roundId: string;
-  demoConfigPath?: string;
-  boundAt?: string;
-}
-
 /** One requested workflow with a fixed provider and dedicated execution identity. */
 export interface WorkflowRun {
   id: string;
@@ -43,7 +35,6 @@ export interface WorkflowRun {
   policy: { name: string; revision: number };
   lifecycle: 'reserved' | 'running' | 'blocked' | 'completed';
   phase?: 'post_closure_finalization' | 'completed';
-  constraints?: RunConstraints;
   pipeline?: PipelineDisposition;
   pipelineApprovals?: Record<string, { source: 'human'; ledger: string; evidence: string }>;
   pipelineMaintenance?: EpicFinalization['maintenanceDeliveries'];

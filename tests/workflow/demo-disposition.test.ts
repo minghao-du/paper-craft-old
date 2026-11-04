@@ -3,8 +3,8 @@ import { realpathSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { DemoDisposition } from '../../packages/core/src/workflow/demo/disposition.js';
-import type { DemoRound } from '../../packages/core/src/workflow/demo/round.js';
+import { DemoDisposition } from '../../tools/demo/disposition.js';
+import type { DemoRound } from '../../tools/demo/round.js';
 
 test('disposition retains uncertainty and late observations, deletes only verified owned clean rounds', async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-dispose-')));
@@ -99,7 +99,7 @@ test('disposition retains uncertainty and late observations, deletes only verifi
 });
 
 test('clean release preserves business semantics and refuses another round lock', async () => {
-  const { DemoControl } = await import('../../packages/core/src/workflow/demo/control.js');
+  const { DemoControl } = await import('../../tools/demo/control.js');
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-release-')));
   const id = randomUUID();
   const dir = join(root, id);

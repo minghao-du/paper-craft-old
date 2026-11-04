@@ -3,8 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { demoArtifacts } from '../../packages/core/src/workflow/demo/artifacts.js';
-import type { DemoRound } from '../../packages/core/src/workflow/demo/round.js';
+import { demoArtifacts } from '../../tools/demo/artifacts.js';
+import type { DemoRound } from '../../tools/demo/round.js';
 test('immutable merged scripts must compute changed input rather than replay committed summary', async () => {
   const root = mkdtempSync(join(tmpdir(), 'demo-artifacts-'));
   const git = (...args: string[]) =>

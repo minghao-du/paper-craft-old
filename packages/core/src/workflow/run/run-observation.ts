@@ -11,7 +11,6 @@ import {
   inspectRuns,
   type RunRegistry,
   type WorkflowRun,
-  type RunConstraints,
   type RunSubject,
   type StageDispatch,
 } from './run-registry.js';
@@ -20,7 +19,6 @@ export {
   inspectRuns,
   type RunRegistry,
   type WorkflowRun,
-  type RunConstraints,
   type RunSubject,
   type StageDispatch,
 } from './run-registry.js';
@@ -54,7 +52,6 @@ export interface WorkflowRunView {
   provider: string;
   lifecycle: WorkflowRun['lifecycle'];
   phase?: WorkflowRun['phase'];
-  constraints?: RunConstraints;
   subject: RunSubject;
   orchestratorId: string;
   orchestrator?: ManagedAttempt;
@@ -134,7 +131,6 @@ export function inspectRun(config: FleetConfig, runId: string): WorkflowRunView 
     provider: run.provider,
     lifecycle: run.lifecycle,
     phase: run.phase,
-    constraints: run.constraints,
     subject: run.subject,
     orchestratorId: run.orchestratorId,
     orchestrator: run.orchestrator,

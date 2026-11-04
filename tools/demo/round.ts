@@ -89,7 +89,7 @@ export function buildDemoRequirements(round: DemoRound): string {
   const repository = round.repository ? `${round.repository.owner}/${round.repository.name}` : '';
   return `Diagnostic demo round ${round.id}. Parent: ${repository}#${round.parent}. Demo configuration: ${demoConfigPath}. Workflow configuration: ${workflowConfigPath}.
 Read skills/pc-demo/SKILL.md from the paper-craft installation.
-Use pc demo --config ${demoConfigPath} gate ${round.id} worker1 before Worker1 and gate ${round.id} worker2 before Worker2 dispatch; failed gate stops the round.
+Use pnpm demo --config ${demoConfigPath} gate ${round.id} worker1 before Worker1 and gate ${round.id} worker2 before Worker2 dispatch; failed gate stops the round.
 Worker dispatch without matching gate authorization is strictly denied.
 Planning may proceed under common controls.
 Exactly two native child Issues, second natively blocked by first.
@@ -245,10 +245,6 @@ export class DemoRounds {
         clone_names: [],
         local_worktrees: true,
         base_branch: 'main',
-        demo: {
-          round: round.id,
-          config: demoConfigFile,
-        },
       };
       writeFileSync(workflowConfigFile, JSON.stringify(workflowConfig, null, 2));
       round.workflowConfigFile = workflowConfigFile;

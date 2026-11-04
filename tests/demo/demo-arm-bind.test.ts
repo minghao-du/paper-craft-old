@@ -2,8 +2,9 @@ import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DemoRounds, type DemoAdapter, type DemoConfig } from '../../packages/core/src/workflow/demo/round.js';
-import { DemoControl, type DemoExecution } from '../../packages/core/src/workflow/demo/control.js';
+import { DemoRounds, type DemoAdapter, type DemoConfig } from '../../tools/demo/round.js';
+import { DemoControl, type DemoExecution } from '../../tools/demo/control.js';
+import { DemoDelivery, type DemoDeliveryAdapter } from '../../tools/demo/delivery.js';
 import {
   startRun,
   dispatchStage,
@@ -64,10 +65,7 @@ test('1 & 2: Provisioning returns distinguished Demo config, Workflow config and
     const parsedWorkflowConfig = JSON.parse(readFileSync(result.workflowConfigFile, 'utf8'));
     expect(parsedWorkflowConfig.main_checkout).toBe(result.checkout);
     expect(parsedWorkflowConfig.clone_root).toBe(result.worktrees);
-    expect(parsedWorkflowConfig.demo).toEqual({
-      round: result.id,
-      config: result.demoConfigFile,
-    });
+    expect(parsedWorkflowConfig.demo).toBeUndefined();
 
     // Immutable orchestrator requirements containing round/parent/repository identity, control refs & diagnostic restrictions
     expect(result.requirements).toBeDefined();
@@ -150,10 +148,6 @@ test('4 & 5: Normal Workflow intake uniquely binds Round to one Run and enforces
       slots: [],
       worktrees: true,
       base: 'main',
-      demo: {
-        round: round.id,
-        config: round.demoConfigFile,
-      },
     };
 
     const runner = {
@@ -180,51 +174,31 @@ test('4 & 5: Normal Workflow intake uniquely binds Round to one Run and enforces
       body: 'Epic body',
     };
 
-    // Attempting to start before arming fails
-    await expect(startRun(fleetConfig, runner, subject, 'agy', round.requirements)).rejects.toThrow(/not armed/i);
+    // Attempting to bind before arming fails
+    expect(() => control.bindRun('any-run-id')).toThrow(/not armed/i);
 
     // Arm the round
     await control.arm(3600000);
 
-    // Starting with mismatched repository fails
-    await expect(
-      startRun(fleetConfig, runner, { ...subject, repository: 'other/repo' }, 'agy', round.requirements),
-    ).rejects.toThrow(/mismatch/i);
-
-    // Starting with mismatched provider fails
-    const codexRunner = { ...runner, name: 'codex' };
-    await expect(
-      startRun(fleetConfig, codexRunner, subject, 'codex', round.requirements),
-    ).rejects.toThrow(/mismatch/i);
-
-    // Successful normal intake binds round uniquely to the Run
+    // Successful normal intake starts a workflow Run
     const run = await startRun(fleetConfig, runner, subject, 'agy', round.requirements);
     expect(run.id).toBeDefined();
-    expect(run.constraints).toEqual({
-      kind: 'demo',
-      roundId: round.id,
-      demoConfigPath: round.demoConfigFile,
-      boundAt: expect.any(String),
-    });
+
+    // Control uniquely binds Round to this Run
+    control.bindRun(run.id);
 
     // Control state is durably bound to this Run
     const boundControl = control.status();
     expect(boundControl.runId).toBe(run.id);
+    expect(boundControl.execution).toBe('running');
+
+    // Conflicting bind rejects
+    expect(() => control.bindRun('different-run-id')).toThrow(/already bound/i);
 
     // Reconnect / repeated start reuses the existing Run and does NOT create a new Attempt or Run
     const reconnect = await startRun(fleetConfig, runner, subject, 'agy');
     expect(reconnect.id).toBe(run.id);
     expect(reconnect.orchestrator?.id).toBe(run.orchestrator?.id);
-    // Constraints contract is preserved even when omitted in reconnect
-    expect(reconnect.constraints?.roundId).toBe(round.id);
-
-    // Conflicting constraints reject
-    await expect(
-      startRun(fleetConfig, runner, subject, 'agy', undefined, undefined, {
-        kind: 'demo',
-        roundId: 'different-round-id',
-      }),
-    ).rejects.toThrow(/conflict/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -252,10 +226,6 @@ test('6: Worker dispatch is denied without matching Gate evidence, but planning 
       slots: [],
       worktrees: true,
       base: 'main',
-      demo: {
-        round: round.id,
-        config: round.demoConfigFile,
-      },
     };
 
     const runner = {
@@ -280,6 +250,7 @@ test('6: Worker dispatch is denied without matching Gate evidence, but planning 
     };
 
     const run = await startRun(fleetConfig, runner, subject, 'agy', round.requirements);
+    control.bindRun(run.id);
 
     // Planning stage (role: epic) proceeds under common controls
     const epicDispatch = await dispatchStage(fleetConfig, runner, {
@@ -295,19 +266,21 @@ test('6: Worker dispatch is denied without matching Gate evidence, but planning 
     expect(epicDispatch.id).toBeDefined();
     expect(epicDispatch.role).toBe('epic');
 
-    // Worker dispatch without matching Gate evidence is denied
-    await expect(
-      dispatchStage(fleetConfig, runner, {
-        runId: run.id,
-        authority: run.orchestratorId,
-        subject: `${subject.repository}#2`,
-        role: 'worker',
-        stage: 'task-1',
-        inputRevision: 'rev-1',
-        brief: 'Implement generator',
-        prerequisites: [],
-      }),
-    ).rejects.toThrow(/Gate authorization required/i);
+    // Demo delivery gate check: worker1 gate fails without required decomposition
+    const deliveryAdapter: DemoDeliveryAdapter = {
+      async inspect() {
+        return {
+          version: 'v0',
+          children: [],
+          nativeDependency: false,
+          firstReleased: false,
+          secondBaseline: false,
+          accepted: false,
+        };
+      },
+    };
+    const delivery = new DemoDelivery(round, deliveryAdapter);
+    await expect(delivery.gate('worker1')).rejects.toThrow(/Gate 1 verification failed/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -335,10 +308,6 @@ test('7: Expiry or stop before Run binding prevents later launch; replacement Or
       slots: [],
       worktrees: true,
       base: 'main',
-      demo: {
-        round: round.id,
-        config: round.demoConfigFile,
-      },
     };
 
     const runner = {
@@ -366,8 +335,8 @@ test('7: Expiry or stop before Run binding prevents later launch; replacement Or
     await control.checkpoint(undefined, control.status().tick + 600);
     expect(control.status().stopped).toBe(true);
 
-    // Launch is denied on expired/stopped round
-    await expect(startRun(fleetConfig, runner, subject, 'agy', round.requirements)).rejects.toThrow(/stopped|expired/i);
+    // Binding a stopped or expired round is denied
+    expect(() => control.bindRun('any-run-id')).toThrow(/stopped/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -388,10 +357,6 @@ test('8: Detached Watchdog invokes stopRun on expiry and stops scheduling', asyn
       slots: [],
       worktrees: true,
       base: 'main',
-      demo: {
-        round: round.id,
-        config: round.demoConfigFile,
-      },
     };
 
     let runnerStopped = false;
@@ -432,6 +397,7 @@ test('8: Detached Watchdog invokes stopRun on expiry and stops scheduling', asyn
     };
 
     const run = await startRun(fleetConfig, runner, subject, 'agy', round.requirements);
+    control.bindRun(run.id);
 
     // Trigger budget expiry via checkpoint (as watchdog does)
     runnerStopped = true;

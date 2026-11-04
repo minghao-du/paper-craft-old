@@ -2,11 +2,10 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { inspectRun } from '../run/run-observation.js';
-import { inspectRuns } from '../run/run-registry.js';
-import { canonicalDeliveryFingerprint } from '../run/epic-completion.js';
-import { inspectAttemptControl } from '../runtime/runtime.js';
-import { loadFleetConfig } from '../fleet/fleet-config.js';
+import { inspectRun } from '@paper-craft/core/workflow/run-observation';
+import { inspectRuns, canonicalDeliveryFingerprint } from '@paper-craft/core/workflow/run-driver';
+import { inspectAttemptControl } from '@paper-craft/core/workflow/runtime';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import type { DemoRound } from './round.js';
 import type { DemoDeliveryAdapter } from './delivery.js';
 /** Real native relationship, delivery and closure boundary. No scheduling decisions. */

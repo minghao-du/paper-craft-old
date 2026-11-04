@@ -8,7 +8,6 @@ import {
   startupDirectory,
   setStartupSupervisorLauncher,
 } from '@paper-craft/core/workflow/startup';
-import { setDemoRunnerResolver } from '@paper-craft/core/workflow/demo-execution';
 import { AgyRunner } from '@paper-craft/core/workflow/runtime/agy';
 
 /**
@@ -62,6 +61,5 @@ export function launchStartupSupervisor(config: FleetConfig, runId: string): voi
   }
 }
 
-// Automatically configure Core with this host's supervisor launcher and demo runner resolver
+// Automatically configure Core with this host's supervisor launcher
 setStartupSupervisorLauncher(launchStartupSupervisor);
-setDemoRunnerResolver(createRunner);

@@ -1,14 +1,12 @@
 /** Stage execution workflow: dispatch, retry, result submission/acceptance, turns, messaging and release. */
-import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
   writeFileSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
 import {
   requireInteractive,
@@ -95,37 +93,6 @@ export interface ReconcileStageMessageResult {
   evidence?: string;
 }
 
-
-function resolveGateAuthFile(roundRoot: string, subject?: string): string {
-  const defaultFile = join(roundRoot, 'gate-authorization.json');
-  if (existsSync(defaultFile)) {
-    if (!subject) return defaultFile;
-    try {
-      const defaultAuth = JSON.parse(readFileSync(defaultFile, 'utf8'));
-      if (subject.endsWith('#' + defaultAuth.issue)) return defaultFile;
-      for (const specific of ['gate-worker1-authorization.json', 'gate-worker2-authorization.json']) {
-        const specPath = join(roundRoot, specific);
-        if (existsSync(specPath)) {
-          try {
-            const specAuth = JSON.parse(readFileSync(specPath, 'utf8'));
-            if (subject.endsWith('#' + specAuth.issue)) return specPath;
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-    return defaultFile;
-  }
-  for (const specific of ['gate-worker1-authorization.json', 'gate-worker2-authorization.json']) {
-    const specPath = join(roundRoot, specific);
-    if (existsSync(specPath)) return specPath;
-  }
-  return defaultFile;
-}
-
 /** Find all child subjects (both referenced external subjects and owned child subjects) for a Run. */
 export function epicChildSubjects(registry: RunRegistry, runId: string): string[] {
   const epicRun = registry.runs.find((r) => r.id === runId);
@@ -162,93 +129,6 @@ export async function dispatchStage(
   await runner.preflight();
   const snapshot = inspectRuns(config);
   const owningRun = authorize(snapshot, request.runId, request.authority);
-  if (owningRun.constraints?.kind === 'demo') {
-    const roundRoot = dirname(config.project);
-    const controlFile = join(roundRoot, 'control.json');
-    if (existsSync(controlFile)) {
-      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-      if (control.stopped || control.releasing || control.activeMs >= control.budgetMs) {
-        throw new Error(
-          `Demo round ${owningRun.constraints.roundId} is stopped or expired; cannot dispatch stage`,
-        );
-      }
-    }
-    if (request.role === 'pipeline-audit' || request.role === 'research-state') {
-      if (!owningRun.epicClosure || owningRun.epicClosure.status !== 'closed') {
-        throw new Error('Verified actual Parent closure required before specialist dispatch');
-      }
-      if (owningRun.provider !== 'agy') {
-        throw new Error('Agy specialist dispatch required');
-      }
-    }
-    if (request.role === 'worker') {
-      const authFile = resolveGateAuthFile(roundRoot, request.subject);
-      if (!existsSync(authFile)) {
-        throw new Error(
-          `Worker dispatch denied: matching Gate authorization required for demo round ${owningRun.constraints.roundId}`,
-        );
-      }
-      const auth = JSON.parse(readFileSync(authFile, 'utf8'));
-      if (auth.roundId !== owningRun.constraints.roundId) {
-        throw new Error(
-          `Worker dispatch denied: Gate authorization round mismatch: expected ${owningRun.constraints.roundId}, received ${auth.roundId}`,
-        );
-      }
-      if (auth.runId !== owningRun.id) {
-        throw new Error(
-          `Worker dispatch denied: Gate authorization Run mismatch: expected ${owningRun.id}, received ${auth.runId}`,
-        );
-      }
-      if (request.stage === 'final-records') {
-        if (!request.subject.endsWith('#' + auth.issue)) {
-          throw new Error(
-            `Worker continuation denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
-          );
-        }
-      } else {
-        if (!request.subject.endsWith('#' + auth.issue)) {
-          throw new Error(
-            `Worker dispatch denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
-          );
-        }
-        if (auth.claimed) {
-          throw new Error('Worker dispatch denied: Gate authorization already claimed');
-        }
-        if (auth.inputRevision && auth.inputRevision !== request.inputRevision) {
-          throw new Error(
-            `Worker dispatch denied: input revision ${request.inputRevision} does not match authorized revision ${auth.inputRevision}`,
-          );
-        }
-        if (auth.stage && auth.stage !== request.stage) {
-          throw new Error(
-            `Worker dispatch denied: authorized for stage ${auth.stage}, cannot launch ${request.stage}`,
-          );
-        }
-        if (auth.briefHash) {
-          const rawHash = createHash('sha256').update(request.brief).digest('hex');
-          if (rawHash !== auth.briefHash) {
-            throw new Error('Worker dispatch denied: brief does not match authorized brief');
-          }
-        }
-        if (auth.requiredAncestorSha) {
-          const targetRev = request.inputRevision;
-          const checkoutDir = request.checkout ? workflowSource(config, request.checkout) : config.project;
-          const gitCwd = existsSync(checkoutDir) ? checkoutDir : config.project;
-          try {
-            execFileSync('git', ['merge-base', '--is-ancestor', auth.requiredAncestorSha, targetRev], {
-              cwd: gitCwd,
-              encoding: 'utf8',
-              stdio: 'pipe',
-            });
-          } catch {
-            throw new Error(
-              `Worker dispatch denied: task 2 revision ${targetRev} does not contain Task 1 merge ${auth.requiredAncestorSha} as an ancestor`,
-            );
-          }
-        }
-      }
-    }
-  }
   if (!request.brief.trim()) throw new Error('Incomplete stage inputs');
   request = { ...request, brief: assignmentWithRequirements(owningRun, request.brief) };
   const checkout = workflowSource(config, request.checkout ?? config.project);
@@ -277,79 +157,6 @@ export async function dispatchStage(
     if (registry.revision !== snapshot.revision)
       throw new Error('Execution ownership changed during termination verification; retry');
     const run = authorize(registry, request.runId, request.authority);
-    if (run.constraints?.kind === 'demo') {
-      const roundRoot = dirname(config.project);
-      const controlFile = join(roundRoot, 'control.json');
-      if (existsSync(controlFile)) {
-        const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-        if (control.stopped || control.releasing || control.activeMs >= control.budgetMs) {
-          throw new Error(
-            `Demo round ${run.constraints.roundId} is stopped or expired; cannot dispatch stage`,
-          );
-        }
-      }
-      if (request.role === 'worker') {
-        const authFile = resolveGateAuthFile(roundRoot, request.subject);
-        if (!existsSync(authFile)) {
-          throw new Error(
-            `Worker dispatch denied: matching Gate authorization required for demo round ${run.constraints.roundId}`,
-          );
-        }
-        const auth = JSON.parse(readFileSync(authFile, 'utf8'));
-        if (auth.roundId !== run.constraints.roundId) {
-          throw new Error(
-            `Worker dispatch denied: Gate authorization round mismatch: expected ${run.constraints.roundId}, received ${auth.roundId}`,
-          );
-        }
-        if (auth.runId !== run.id) {
-          throw new Error(
-            `Worker dispatch denied: Gate authorization Run mismatch: expected ${run.id}, received ${auth.runId}`,
-          );
-        }
-        if (request.stage === 'final-records') {
-          if (!request.subject.endsWith('#' + auth.issue)) {
-            throw new Error(
-              `Worker continuation denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
-            );
-          }
-        } else {
-          if (!request.subject.endsWith('#' + auth.issue)) {
-            throw new Error(
-              `Worker dispatch denied: Gate authorization is for issue #${auth.issue}, cannot launch ${request.subject}`,
-            );
-          }
-          if (auth.claimed) {
-            throw new Error('Worker dispatch denied: Gate authorization already claimed');
-          }
-          if (auth.inputRevision && auth.inputRevision !== request.inputRevision) {
-            throw new Error(
-              `Worker dispatch denied: input revision ${request.inputRevision} does not match authorized revision ${auth.inputRevision}`,
-            );
-          }
-          if (auth.stage && auth.stage !== request.stage) {
-            throw new Error(
-              `Worker dispatch denied: authorized for stage ${auth.stage}, cannot launch ${request.stage}`,
-            );
-          }
-          if (auth.requiredAncestorSha) {
-            const targetRev = request.inputRevision;
-            const checkoutDir = request.checkout ? workflowSource(config, request.checkout) : config.project;
-            const gitCwd = existsSync(checkoutDir) ? checkoutDir : config.project;
-            try {
-              execFileSync('git', ['merge-base', '--is-ancestor', auth.requiredAncestorSha, targetRev], {
-                cwd: gitCwd,
-                encoding: 'utf8',
-                stdio: 'pipe',
-              });
-            } catch {
-              throw new Error(
-                `Worker dispatch denied: task 2 revision ${targetRev} does not contain Task 1 merge ${auth.requiredAncestorSha} as an ancestor`,
-              );
-            }
-          }
-        }
-      }
-    }
     if (runner.name !== run.provider)
       throw new Error(
         `Run provider mismatch: expected provider ${run.provider}, but received ${runner.name}`,
@@ -497,48 +304,6 @@ export async function dispatchStage(
     return dispatch;
   }
   const attempt = dispatch.attempts[0];
-  if (
-    owningRun.constraints?.kind === 'demo' &&
-    request.role === 'worker' &&
-    request.stage !== 'final-records'
-  ) {
-    const roundRoot = dirname(config.project);
-    const authFile = resolveGateAuthFile(roundRoot, request.subject);
-    if (existsSync(authFile)) {
-      const auth = JSON.parse(readFileSync(authFile, 'utf8'));
-      auth.claimed = true;
-      auth.claimedAt = new Date().toISOString();
-      auth.claimedLaunchId = dispatch.id;
-      auth.claimedAttemptId = attempt.id;
-      writeFileSync(authFile, JSON.stringify(auth, null, 2));
-
-      // Also ensure default and stage-specific authorization files with matching id/issue are marked claimed
-      const filesToUpdate = new Set([
-        join(roundRoot, 'gate-authorization.json'),
-        join(roundRoot, 'gate-worker1-authorization.json'),
-        join(roundRoot, 'gate-worker2-authorization.json'),
-      ]);
-      filesToUpdate.delete(authFile);
-      for (const otherPath of filesToUpdate) {
-        if (existsSync(otherPath)) {
-          try {
-            const other = JSON.parse(readFileSync(otherPath, 'utf8'));
-            if (other.id === auth.id || other.issue === auth.issue) {
-              Object.assign(other, {
-                claimed: true,
-                claimedAt: auth.claimedAt,
-                claimedLaunchId: auth.claimedLaunchId,
-                claimedAttemptId: auth.claimedAttemptId,
-              });
-              writeFileSync(otherPath, JSON.stringify(other, null, 2));
-            }
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    }
-  }
   try {
     const ack = await runner.start(attempt);
     if (!ack.conversation || !ack.address || !ack.evidence)
@@ -736,9 +501,6 @@ export async function retryStage(
     throw new Error(
       `Run provider mismatch: expected provider ${run.provider}, but received ${runner.name}`,
     );
-  if (run.constraints?.kind === 'demo') {
-    throw new Error('Stage retries prohibited for demo-constrained Runs');
-  }
   requireInteractive(runner);
   await runner.preflight();
   if (dispatch.remediation?.exhausted)
@@ -748,33 +510,6 @@ export async function retryStage(
   const attempt = updateRunRegistry(config, (registry) => {
     const current = findDispatch(registry, dispatchId);
     authorize(registry, dispatch.runId, authority);
-    if (run.constraints?.kind === 'demo') {
-      const roundRoot = dirname(config.project);
-      const controlFile = join(roundRoot, 'control.json');
-      if (existsSync(controlFile)) {
-        const control = JSON.parse(readFileSync(controlFile, 'utf8'));
-        if (control.stopped || control.releasing || control.activeMs >= control.budgetMs) {
-          throw new Error(
-            `Demo round ${run.constraints.roundId} is stopped or expired; cannot retry stage`,
-          );
-        }
-      }
-      if (current.role === 'worker') {
-        const boundaryFile = join(roundRoot, 'delivery-boundaries.jsonl');
-        const boundaries = existsSync(boundaryFile)
-          ? readFileSync(boundaryFile, 'utf8')
-              .trim()
-              .split('\n')
-              .filter(Boolean)
-              .map((line) => JSON.parse(line))
-          : [];
-        if (!boundaries.some((b: { pass?: boolean }) => b.pass === true)) {
-          throw new Error(
-            `Worker dispatch denied: matching Gate authorization required for demo round ${run.constraints.roundId}`,
-          );
-        }
-      }
-    }
     if (
       registry.revision !== snapshot.revision ||
       current.acceptedReceipt ||
