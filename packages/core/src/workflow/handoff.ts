@@ -33,31 +33,19 @@ function regularFile(path: string): void {
   if (!lstatSync(path).isFile()) throw new Error(`Expected regular file, not symlink: ${path}`);
 }
 
-/** A verified archive records hashes; optional missing worklogs are explicit. */
+/** A verified archive records file hashes. */
 export interface Preservation {
   status: 'preserved';
   path: string;
   files: Record<string, string>;
-  worklogMissing: boolean;
 }
 
 /** Copy and verify checkout files, leaving source files intact on success and failure. */
 export function preserveState(config: FleetConfig, path: string, reason: string): Preservation {
   const source = workflowSource(config, path);
-  const statusPath = join(source, '.epic-status.json');
-  let statusBytes: Buffer | undefined;
-  if (pathExists(statusPath)) {
-    regularFile(statusPath);
-    statusBytes = readFileSync(statusPath);
-    const parsed: unknown = JSON.parse(statusBytes.toString('utf8'));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error(`Expected a JSON status object: ${statusPath}`);
-    }
-  }
   const parent = stateDirectory(config, '.preserved');
   const dest = mkdtempSync(join(parent, `${basename(source)}-`));
   const hashes: Record<string, string> = {};
-  const worklogMissing = !pathExists(join(source, '.epic-worklog.md'));
   try {
     const entries = readdirSync(source, { withFileTypes: true });
     for (const entry of entries) {
@@ -68,8 +56,7 @@ export function preserveState(config: FleetConfig, path: string, reason: string)
       }
       if (entry.isDirectory()) continue;
       regularFile(from);
-      const original =
-        entry.name === '.epic-status.json' && statusBytes ? statusBytes : readFileSync(from);
+      const original = readFileSync(from);
       const to = join(dest, entry.name);
       copyFileSync(from, to, constants.COPYFILE_EXCL);
       if (!original.equals(readFileSync(to)) || !original.equals(readFileSync(from))) {
@@ -88,9 +75,6 @@ export function preserveState(config: FleetConfig, path: string, reason: string)
         );
       }
     }
-    if (worklogMissing && pathExists(join(source, '.epic-worklog.md'))) {
-      throw new Error('Worklog appeared during preservation; retry before deleting anything');
-    }
     writeFileSync(
       join(dest, 'manifest.json'),
       JSON.stringify(
@@ -99,14 +83,13 @@ export function preserveState(config: FleetConfig, path: string, reason: string)
           reason,
           created_at: new Date().toISOString(),
           files: hashes,
-          worklogMissing,
         },
         null,
         2,
       ),
       { flag: 'wx' },
     );
-    return { status: 'preserved', path: dest, files: hashes, worklogMissing };
+    return { status: 'preserved', path: dest, files: hashes };
   } catch (error) {
     rmSync(dest, { recursive: true });
     throw error;

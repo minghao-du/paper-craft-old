@@ -95,6 +95,11 @@ export async function executeDeliveryStage(
     updateRunRegistry(config, (r) => {
       r.resources = r.resources?.filter((x) => x.path !== checkout);
       r.deliveries!.find((d) => d.dispatches.includes(dispatch.id))!.released = true;
+      const run = r.runs.find((x) => x.id === dispatch.runId);
+      if (run && run.subject.kind === 'issue') {
+        run.phase = 'completed';
+        run.lifecycle = 'completed';
+      }
     });
     const result = { archive: retained.archive, released: true, checkout, pr };
     writeFileSync(
@@ -160,6 +165,11 @@ export async function executeDeliveryStage(
   );
   updateRunRegistry(config, (r) => {
     r.deliveries!.find((d) => d.dispatches.includes(dispatch.id))!.released = true;
+    const run = r.runs.find((x) => x.id === dispatch.runId);
+    if (run && run.subject.kind === 'issue') {
+      run.phase = 'completed';
+      run.lifecycle = 'completed';
+    }
   });
   writeFileSync(evidence, JSON.stringify(result));
   return result;

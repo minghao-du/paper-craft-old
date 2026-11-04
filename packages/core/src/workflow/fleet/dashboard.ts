@@ -133,13 +133,8 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
     fleet.runs = runs;
     fleet.execution = execution;
     for (const run of fleet.runs) {
-      const runData = run as unknown as Record<string, unknown>;
-      const runBlockers = Array.isArray(runData.blockers)
-        ? runData.blockers.filter((b): b is string => typeof b === 'string')
-        : [];
       const blockers = [
         ...(run.subject.blockedBy ?? []).map((n) => `Dependency #${n} remains open`),
-        ...runBlockers,
         ...(run.orchestrator?.error ? [run.orchestrator.error] : []),
         ...(run.reconciliation?.blockers ?? []),
         ...(run.pipeline?.blockers ?? []),
@@ -149,29 +144,14 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
           : []),
       ];
       const interventions = blockers.map((reason) => ({ reason, source: run.brief.path }));
-      if (['needs-human', 'blocked'].includes(run.phase ?? run.lifecycle) && !blockers.length)
+      if (['blocked'].includes(run.phase ?? run.lifecycle) && !blockers.length)
         interventions.push({
           reason: 'Recorded phase requests human intervention',
           source: run.brief.path,
         });
       const lastAttempt = run.orchestrator ?? run.priorOrchestrators?.at(-1);
       const modifiedAt = lastAttempt?.observation?.at ?? lastAttempt?.created ?? observedAt;
-      const awaiting = runData.awaiting as { next_check_at?: unknown } | undefined;
-      const appointment =
-        typeof awaiting?.next_check_at === 'string' ? Date.parse(awaiting.next_check_at) : NaN;
-      let waiting: DashboardTask['waiting'] = undefined;
-      if ((run.phase as string) === 'awaiting-results') {
-        waiting = Number.isFinite(appointment)
-          ? appointment > Date.now()
-            ? 'planned'
-            : 'overdue'
-          : 'unknown';
-        if (waiting === 'overdue')
-          interventions.push({
-            reason: 'Saved next check is overdue; investigate',
-            source: run.brief.path,
-          });
-      }
+      const runDelivery = (execution.deliveries ?? []).find((d) => d.runId === run.id);
       fleet.tasks.push({
         id: `${registration.id}:run:${run.id}`,
         slot: `run-${run.id}`,
@@ -180,14 +160,12 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         source: run.brief.path,
         phase: run.phase ?? run.lifecycle,
         summary:
-          (typeof runData.summary === 'string' ? runData.summary : undefined) ??
           run.subject.title ??
           `${run.subject.repository}#${run.subject.number} (${run.provider})${run.subject.parent ? `; child of #${run.subject.parent}` : ''}`,
         issue: run.subject.number,
-        pr: runData.pr ? String(runData.pr) : undefined,
+        pr: runDelivery?.pr ? String(runDelivery.pr) : undefined,
         blockers,
         interventions,
-        waiting,
         modifiedAt,
         runId: run.id,
         orchestratorId: run.orchestratorId,

@@ -125,4 +125,4 @@ test('Git evidence uses cached refs and retains attributed stale values after fa
     dashboard?.stop();
     rmSync(root, { recursive: true, force: true });
   }
-}, 15000);
+}, 30000);

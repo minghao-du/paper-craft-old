@@ -478,9 +478,18 @@ function findDispatch(registry: RunRegistry, id: string): StageDispatch {
   if (!dispatch) throw new Error('Unknown Dispatch');
   return dispatch;
 }
-function authorize(registry: RunRegistry, runId: string, authority: string): WorkflowRun {
+function authorize(
+  registry: RunRegistry,
+  runId: string,
+  authority: string,
+  allowCompleted = false,
+): WorkflowRun {
   const run = registry.runs.find((r) => r.id === runId);
-  if (!run || run.orchestratorId !== authority || run.lifecycle !== 'running')
+  if (
+    !run ||
+    run.orchestratorId !== authority ||
+    (run.lifecycle !== 'running' && (!allowCompleted || run.lifecycle !== 'completed'))
+  )
     throw new Error('Inactive or wrong Orchestrator authority');
   return run;
 }
@@ -963,7 +972,7 @@ export async function acceptStageReceipt(
   const receipt = snapshot.receipts?.find((r) => r.id === receiptId);
   if (!receipt) throw new Error('Unknown Receipt');
   const dispatch = findDispatch(snapshot, receipt.dispatchId);
-  authorize(snapshot, dispatch.runId, authority);
+  authorize(snapshot, dispatch.runId, authority, dispatch.stage === 'preservation-cleanup');
   const release = async () => {
     const current = findDispatch(inspectRuns(config), dispatch.id);
     if (
@@ -985,7 +994,7 @@ export async function acceptStageReceipt(
   let rejection: string | undefined;
   updateRunRegistry(config, (registry) => {
     const current = findDispatch(registry, dispatch.id);
-    authorize(registry, current.runId, authority);
+    authorize(registry, current.runId, authority, current.stage === 'preservation-cleanup');
     if (current.acceptedReceipt === receiptId) return;
     if (registry.revision !== snapshot.revision)
       throw new Error('Registry changed during fact verification; retry');
@@ -1061,6 +1070,13 @@ export async function acceptStageReceipt(
       }
       current.acceptedReceipt = receiptId;
       current.lifecycle = 'accepted';
+      if (current.stage === 'preservation-cleanup') {
+        const run = registry.runs.find((r) => r.id === current.runId);
+        if (run && run.subject.kind === 'issue') {
+          run.phase = 'completed';
+          run.lifecycle = 'completed';
+        }
+      }
       if (current.remediation) {
         current.remediation.consecutive = 0;
         current.remediation.exhausted = false;
@@ -1526,6 +1542,12 @@ export async function recoverRun(
         if (current.lifecycle !== 'blocked') {
           current.lifecycle = 'running';
         }
+      }
+    } else if (current.subject.kind === 'issue') {
+      const delivery = registry.deliveries?.find((d) => d.runId === current.id);
+      if (delivery?.status === 'done' && delivery?.released) {
+        current.phase = 'completed';
+        current.lifecycle = 'completed';
       }
     }
     current.reconciliation = { at: new Date().toISOString(), blockers, pendingDispatches };
@@ -2118,6 +2140,14 @@ export function confirmStageEpic(
   });
 }
 
+/** Invalidate cached human confirmation upon delivery revision changes. */
+function invalidateHumanConfirmation(config: FleetConfig, runId: string): void {
+  updateRunRegistry(config, (registry) => {
+    const current = registry.runs.find((r) => r.id === runId);
+    if (current?.humanConfirmation) delete current.humanConfirmation;
+  });
+}
+
 /** Commit externally verified closure after accepted integrated goal judgment and delivery. */
 export async function closeStageEpic(
   config: FleetConfig,
@@ -2192,19 +2222,13 @@ export async function closeStageEpic(
     const version = canonicalDeliveryFingerprint(facts.head, deliveries);
     if (dispatch.inputRevision !== facts.head) {
       if (run.humanConfirmation) {
-        updateRunRegistry(config, (registry) => {
-          const current = registry.runs.find((r) => r.id === runId);
-          if (current?.humanConfirmation) delete current.humanConfirmation;
-        });
+        invalidateHumanConfirmation(config, runId);
       }
       throw new Error('Delivery changed after acceptance; obtain renewed acceptance and confirmation');
     }
     if (humanConf.deliveryVersion !== version) {
       if (run.humanConfirmation) {
-        updateRunRegistry(config, (registry) => {
-          const current = registry.runs.find((r) => r.id === runId);
-          if (current?.humanConfirmation) delete current.humanConfirmation;
-        });
+        invalidateHumanConfirmation(config, runId);
       }
       throw new Error(
         `Delivery version mismatch: expected ${version}, but received ${humanConf.deliveryVersion}. Prior confirmation invalidated.`,
@@ -2242,10 +2266,7 @@ export async function closeStageEpic(
   const head = await (actions.head ? actions.head() : git('rev-parse', 'HEAD'));
   if (dispatch.inputRevision !== head) {
     if (run.humanConfirmation) {
-      updateRunRegistry(config, (registry) => {
-        const current = registry.runs.find((r) => r.id === runId);
-        if (current?.humanConfirmation) delete current.humanConfirmation;
-      });
+      invalidateHumanConfirmation(config, runId);
     }
     throw new Error('Delivery changed after acceptance; obtain renewed acceptance and confirmation');
   }
@@ -2254,10 +2275,7 @@ export async function closeStageEpic(
 
   if (humanConf.deliveryVersion !== version) {
     if (run.humanConfirmation) {
-      updateRunRegistry(config, (registry) => {
-        const current = registry.runs.find((r) => r.id === runId);
-        if (current?.humanConfirmation) delete current.humanConfirmation;
-      });
+      invalidateHumanConfirmation(config, runId);
     }
     throw new Error(
       `Delivery version mismatch: expected ${version}, but received ${humanConf.deliveryVersion}. Prior confirmation invalidated.`,

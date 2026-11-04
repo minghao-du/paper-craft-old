@@ -23,15 +23,13 @@ test('multi-Fleet evidence retains invalid registrations and explains waiting an
     updateRunRegistry(alphaConfig, (registry) => {
       registry.runs.push({
         id: 'run-alpha',
-        subject: { repository: 'example/repo', number: 42, title: 'Experiment' },
+        subject: { repository: 'example/repo', number: 42, title: 'Experiment', kind: 'issue' },
         provider: 'codex',
         policy: { name: 'default', revision: 1 },
         lifecycle: 'running',
-        phase: 'awaiting-results' as any,
         orchestratorId: 'orch-alpha',
         brief: { path: alphaBrief, hash: 'h' },
-        awaiting: { next_check_at: '2099-01-01T00:00:00Z' },
-      } as any);
+      });
     });
 
     const betaConfig = loadFleetConfig(configs[1]);
@@ -40,16 +38,29 @@ test('multi-Fleet evidence retains invalid registrations and explains waiting an
     updateRunRegistry(betaConfig, (registry) => {
       registry.runs.push({
         id: 'run-beta',
-        subject: { repository: 'example/repo', number: 42, title: 'Choose parameter' },
+        subject: { repository: 'example/repo', number: 42, title: 'Choose parameter', kind: 'issue' },
         provider: 'codex',
         policy: { name: 'default', revision: 1 },
-        lifecycle: 'running',
-        phase: 'needs-human' as any,
+        lifecycle: 'blocked',
         orchestratorId: 'orch-beta',
         brief: { path: betaBrief, hash: 'h' },
-        blockers: ['Choose cutoff'],
-        pr: 'https://github.com/example/repo/pull/3',
-      } as any);
+        reconciliation: {
+          at: new Date().toISOString(),
+          blockers: ['Choose cutoff'],
+          pendingDispatches: [],
+        },
+      });
+      registry.deliveries = [
+        {
+          runId: 'run-beta',
+          repository: 'example/repo',
+          issue: 42,
+          pr: 3,
+          status: 'ready',
+          evidence: 'delivery.json',
+          dispatches: [],
+        },
+      ];
     });
     const options = {
       dataDir: join(root, 'data'),
@@ -68,7 +79,8 @@ test('multi-Fleet evidence retains invalid registrations and explains waiting an
     const all = await read('/api/snapshot');
     expect(all.fleets).toHaveLength(3);
     expect(all.fleets[0].project).toBe('Research A');
-    expect(all.fleets[0].tasks[0]).toMatchObject({ waiting: 'planned', interventions: [] });
+    expect(all.fleets[0].tasks[0]).toMatchObject({ interventions: [] });
+    expect(all.fleets[1].tasks[0].pr).toBe('3');
     expect(all.fleets[1].tasks[0].interventions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -84,18 +96,22 @@ test('multi-Fleet evidence retains invalid registrations and explains waiting an
     );
     expect((await read('/api/snapshot?fleet=' + all.fleets[0].id)).fleets).toHaveLength(1);
     updateRunRegistry(alphaConfig, (reg) => {
-      (reg.runs[0] as any).awaiting = { next_check_at: '2000-01-01T00:00:00Z' };
+      reg.runs[0].lifecycle = 'blocked';
+      reg.runs[0].reconciliation = {
+        at: new Date().toISOString(),
+        blockers: ['Intervention needed'],
+        pendingDispatches: [],
+      };
     });
     await dashboard.refresh(true);
-    const overdue = (await read('/api/snapshot')).fleets[0].tasks[0];
-    expect(overdue.waiting).toBe('overdue');
-    expect(overdue.interventions).toContainEqual({
-      reason: 'Saved next check is overdue; investigate',
+    const updated = (await read('/api/snapshot')).fleets[0].tasks[0];
+    expect(updated.interventions).toContainEqual({
+      reason: 'Intervention needed',
       source: alphaBrief,
     });
     updateRunRegistry(alphaConfig, (reg) => {
-      reg.runs[0].phase = 'implementing' as any;
-      (reg.runs[0] as any).awaiting = undefined;
+      reg.runs[0].lifecycle = 'running';
+      delete reg.runs[0].reconciliation;
     });
     await dashboard.refresh(true);
     expect((await read('/api/snapshot')).fleets[0].tasks[0].interventions).toEqual([]);
