@@ -8,13 +8,19 @@ import {
   releaseRun,
   orchestratorForSubject,
   closeStageEpic,
+  collectBusinessTurn,
   type EpicClosureActions,
   type WorkflowRun,
   type RunRegistry,
+  type StageDispatch,
 } from '@paper-craft/core/workflow/run-driver';
 import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
 import { finishEpic } from '../workflow/epic-completion.js';
-import { landDelivery } from '@paper-craft/core/workflow/postmerge';
+import {
+  executeDeliveryStage,
+  stagePullRequests,
+  type StagePullRequests,
+} from '@paper-craft/core/workflow/stage-delivery';
 import { registerStageCommands } from './workflow-stages.js';
 import { registerSubagentCommands } from './workflow-subagents.js';
 /** Portable workflow CLI shared by agents with filesystem and command execution access. */
@@ -25,9 +31,7 @@ import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { quote } from '@paper-craft/core/workflow/runtime';
 import { createRunner } from '../workflow/composition.js';
 import { inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
-import { readIssue } from '@paper-craft/core/workflow/issue-driver';
-import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
-import { inspectIssueRun } from '@paper-craft/core/workflow/issue-driver';
+import { readIssue } from '@paper-craft/core/workflow/run-subject';
 import { readFileSync, existsSync } from 'node:fs';
 import { output } from '../utils/output.js';
 import { conciseError, diagnosticError } from '../workflow/diagnostics.js';
@@ -43,6 +47,7 @@ interface Options {
 /** Controlled runners can be supplied by isolated CLI scenarios. */
 export interface WorkflowBoundary {
   runner?: (provider: string) => ReturnType<typeof createRunner>;
+  pullRequests?: StagePullRequests;
 }
 
 function configured(command: Command): Command {
@@ -804,42 +809,105 @@ export function registerWorkflowCommands(
       '--confirmation-file <file>',
       'EPIC professional confirmation JSON: epic, head, evidence',
     )
-    .action(async (number: string, options: Options & { confirmationFile?: string }) => {
-      try {
-        const config = loadFleetConfig(options.config);
-        const issue = readIssue(config.project, Number(number));
-        const runner = getRunner(
-          orchestratorForSubject(config, issue.repository, issue.number).runner,
-        );
-        const task = inspectIssueRun(config, issue.repository, issue.number);
-        if (!task || task.status !== 'done')
-          throw new Error('Expected delivered Issue stages before landing');
-        output(
-          await landDelivery(
-            config,
-            runner,
-            new GitHubPullRequests(
-              existsSync(task.checkout) ? task.checkout : config.project,
-              issue.repository,
-            ),
-            {
+    .option('--pr <number>', 'PR whose current external facts must match the assignment')
+    .option('--dispatch <id>', 'Specific landing dispatch to execute')
+    .action(
+      async (
+        number: string,
+        options: Options & { confirmationFile?: string; pr?: string; dispatch?: string },
+      ) => {
+        try {
+          const config = loadFleetConfig(options.config);
+          const issue = readIssue(config.project, Number(number));
+          const registry = inspectRuns(config);
+          const run =
+            registry.runs.find(
+              (r) =>
+                r.subject.number === issue.number &&
+                r.subject.repository === issue.repository &&
+                r.lifecycle !== 'completed',
+            ) ??
+            registry.runs.find(
+              (r) => r.subject.number === issue.number && r.subject.repository === issue.repository,
+            );
+          if (!run) throw new Error('Expected delivered Issue stages before landing');
+
+          const runner = getRunner(run.provider);
+          const subjectKey = `${issue.repository}#${issue.number}`;
+          const dispatches =
+            registry.dispatches?.filter(
+              (d) => d.runId === run.id && d.subject === subjectKey,
+            ) ?? [];
+
+          const cleanupDispatch = dispatches.filter((d) => d.stage === 'preservation-cleanup').at(-1);
+          const finalRecordsAccepted = dispatches.some(
+            (d) => d.stage === 'final-records' && d.lifecycle === 'accepted',
+          );
+          const mergeDispatch = dispatches.filter((d) => d.stage === 'pr-merge').at(-1);
+          const prQualityAccepted = dispatches.some(
+            (d) => d.stage === 'pr-quality' && d.lifecycle === 'accepted',
+          );
+
+          let targetDispatch: StageDispatch | undefined;
+          if (options.dispatch) {
+            targetDispatch = registry.dispatches?.find(
+              (d) => d.id === options.dispatch && d.runId === run.id,
+            );
+            if (!targetDispatch) throw new Error('Expected Dispatch belonging to this Run');
+          } else if (cleanupDispatch && finalRecordsAccepted) {
+            targetDispatch = cleanupDispatch;
+          } else if (mergeDispatch && prQualityAccepted) {
+            targetDispatch = mergeDispatch;
+          } else if (cleanupDispatch) {
+            targetDispatch = cleanupDispatch;
+          } else if (mergeDispatch) {
+            targetDispatch = mergeDispatch;
+          } else {
+            throw new Error('Expected delivered Issue stages before landing');
+          }
+
+          let pr = options.pr ? Number(options.pr) : undefined;
+          if (!pr) {
+            const delivery = registry.deliveries?.find(
+              (d) => d.runId === run.id && d.issue === issue.number,
+            );
+            pr = delivery?.pr;
+          }
+          if (!pr) {
+            const prRecord = registry.pullRequests?.find(
+              (p) => p.runId === run.id && p.issue === issue.number,
+            );
+            pr = prRecord?.pr;
+          }
+          const checkout = targetDispatch.attempts.at(-1)?.checkout ?? config.project;
+          const provider = (boundary.pullRequests ?? stagePullRequests)(config, targetDispatch);
+          if (!pr) {
+            pr = await provider.ensure({
               repository: issue.repository,
               issue: issue.number,
-              checkout: task.checkout,
-              epic: issue.parent,
-              confirmation: options.confirmationFile
-                ? JSON.parse(readFileSync(options.confirmationFile, 'utf8'))
-                : undefined,
-            },
-          ),
-          opts.human(),
-        );
-      } catch (error) {
-        run(() => {
-          throw error;
-        });
-      }
-    });
+              checkout,
+            });
+          }
+
+          if (
+            !registry.receipts?.some(
+              (r) =>
+                r.dispatchId === targetDispatch.id &&
+                r.attemptId === targetDispatch.attempts.at(-1)?.id,
+            )
+          ) {
+            await collectBusinessTurn(config, runner, targetDispatch.attempts.at(-1)!);
+          }
+
+          const result = await executeDeliveryStage(config, targetDispatch, runner, pr, provider);
+          output(result, opts.human());
+        } catch (error) {
+          run(() => {
+            throw error;
+          });
+        }
+      },
+    );
   configured(
     workflow.command('preserve').description('Copy and verify slot state; retain all originals'),
   )

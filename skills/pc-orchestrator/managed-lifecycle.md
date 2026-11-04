@@ -48,7 +48,7 @@ Inspect `pullRequests` alongside dispatches in the read-only registry projection
 
 ## Post-merge delivery
 
-Resume through `finishDelivery`/`landDelivery` after verified merge. Worker final records are a distinct `final-records` Dispatch: include assessment, final worklog, follow-up attribution (an explicit empty list when none), and execution-release evidence. Independently verify prior and Worker termination before accepting records and dispatching `preservation-cleanup` to PR-Land. Unknown occupancy retains the checkout and leaves delivery pending.
+Resume through Managed Stage execution or `pc workflow orchestrator land` after verified merge. Worker final records are a distinct `final-records` Dispatch: include assessment, final worklog, follow-up attribution (an explicit empty list when none), and execution-release evidence. Independently verify prior and Worker termination before accepting records and dispatching `preservation-cleanup` to PR-Land. Unknown occupancy retains the checkout and leaves delivery pending.
 
 PR-Land uses the existing verified archive and Git bundle checks before cleanup. The driver verifies all execution termination, retains checkout ownership through verified bundle validation and worktree removal, then releases the reservation and accepts cleanup. Inspect `deliveries` for records, archive, cleanup, and delivered status; the associated immutable stage Receipts retain evidence after removal. Issue closure and Issue-Run completion follow verified cleanup. An EPIC Run remains active for its own acceptance/finalization. Resume retained completion state after failure; never rerun a verified merge or discard accepted records to retry cleanup.
 

@@ -103,9 +103,10 @@ and a new worker release. A merge result alone does not dispatch cleanup.
    independently from merge success. Release ownership and notify the orchestrator; only
    verified cleanup releases a fleet resource for another task.
 
-Managed delivery and the `pc workflow orchestrator land` continuation follow [Shared Issue Delivery](../pc-orchestrator/SKILL.md#shared-issue-delivery) through final records, preservation and verified cleanup after merge.
+Managed delivery and `pc workflow orchestrator land` execute delivery stages (`pr-merge`, `preservation-cleanup`) through Managed Stage execution (`executeDeliveryStage`), progressing solely through RunRegistry without unmanaged side records.
 Unknown execution occupancy or unaccounted checkout files retain the checkout.
 A blocked completion resumes its persisted stages; inspect the original execution before retrying a missing receipt.
+Interrupted merge recovery verifies the actual merge result on GitHub and does not repeat a successful merge.
 EPIC closure remains a separate user decision.
 
 ## Managed completion
@@ -116,7 +117,7 @@ Post-merge completion follows the [shared lifecycle](../pc-orchestrator/managed-
 
 For CLI-dispatched assignments, use the [supported stage operations](../pc-orchestrator/managed-lifecycle.md#cli-stage-assignments).
 The Orchestrator selects the merge or cleanup Dispatch, collects your result, executes
-that stage with `stage execute --dispatch <id> --pr <number>`, then independently
+that stage with `stage execute --dispatch <id> --pr <number>` or `pc workflow orchestrator land <issue>`, then independently
 accepts its Receipt. Cleanup requires accepted Worker final records and verified
 termination of every execution using the checkout. Completion retains the verified
 archive and resource-release evidence.
