@@ -23,10 +23,6 @@ vi.mock('@paper-craft/core/workflow/fleet-config', () => ({
   loadFleetConfig: () => ({ project: '/project', file: '/project/.epic-config.json' }),
 }));
 vi.mock('../../packages/cli/src/workflow/composition.js', () => ({
-  managedRunner: vi.fn((provider: string) => {
-    if (provider !== 'agy') throw new Error(`Unsupported managed provider '${provider}'. Only 'agy' is supported.`);
-    return { name: 'agy', preflight: async () => {} };
-  }),
   createRunner: vi.fn((provider: string) => {
     if (provider !== 'agy') throw new Error(`Unsupported managed provider '${provider}'. Only 'agy' is supported.`);
     return { name: 'agy', preflight: async () => {} };

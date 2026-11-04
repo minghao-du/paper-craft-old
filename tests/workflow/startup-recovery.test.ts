@@ -20,7 +20,7 @@ import {
 import {
   type ManagedAttempt,
 } from '../../packages/core/src/workflow/runtime/runtime.js';
-import { managedRunner } from '../../packages/cli/src/workflow/composition.js';
+import { createRunner } from '../../packages/cli/src/workflow/composition.js';
 import { initializeRole } from './initialize-role.js';
 
 test.each(['agy'])(
@@ -314,10 +314,10 @@ if (args[0] === 'list-panes') {
       `
     import { loadFleetConfig } from ${JSON.stringify(source + '/fleet/fleet-config' + extension)};
     import { startRun, inspectRuns } from ${JSON.stringify(source + '/run/run-driver' + extension)};
-    import { managedRunner } from ${JSON.stringify(cliSource + '/composition' + extension)};
+    import { createRunner } from ${JSON.stringify(cliSource + '/composition' + extension)};
     const config = loadFleetConfig(process.argv[2]);
     const run = inspectRuns(config).runs[0];
-    const runner = managedRunner('agy');
+    const runner = createRunner('agy');
     runner.preflight = async () => {};
     runner.start = async () => { throw new Error('Repeated start must never launch another provider'); };
     await startRun(config, runner, run.subject, 'agy');
@@ -418,7 +418,7 @@ test.each(['agy'])(
       },
     );
     save();
-    const provider = managedRunner(name);
+    const provider = createRunner(name);
     try {
       expect(await provider.result!(stale, stale.id)).toBeUndefined();
       f.ready = true;

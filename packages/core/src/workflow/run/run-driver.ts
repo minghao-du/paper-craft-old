@@ -1726,26 +1726,10 @@ export async function collectBusinessTurn(
       'Attempt startup incomplete: activation delivery required before business execution',
     );
   }
-  let result: string | undefined;
-  if (runner.result && attempt.dispatchId) {
-    const deadline = options?.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;
-    for (;;) {
-      result = await runner.result(attempt, attempt.dispatchId);
-      if (result !== undefined) break;
-      if (runner.stopped && (await runner.stopped(attempt))) {
-        throw new Error('Runner stopped without a correlated task result');
-      }
-      if (deadline !== undefined && Date.now() >= deadline) {
-        throw new Error('Timed out waiting for correlated task result');
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  } else {
-    result = await runner.collect(attempt, {
-      timeoutMs: options?.timeoutMs,
-      dispatchId: attempt.dispatchId,
-    });
-  }
+  const result = await runner.collect(attempt, {
+    timeoutMs: options?.timeoutMs,
+    dispatchId: attempt.dispatchId,
+  });
   if (result === undefined) throw new Error('No correlated task result; execution remains pending');
   const dispatch = inspectRuns(config).dispatches?.find((d) =>
     d.attempts.some((a) => a.id === attempt.id),
@@ -2527,6 +2511,72 @@ export function inspectRunViews(config: FleetConfig): WorkflowRunView[] {
   return registry.runs.map((r) => inspectRun(config, r.id));
 }
 
+async function terminateAndVerifyAttempt(
+  config: FleetConfig,
+  adapter: RunnerAdapter,
+  runId: string,
+  attempt: ManagedAttempt,
+  options?: { stopped?: (attempt: ManagedAttempt) => Promise<boolean> },
+): Promise<{
+  result: StopRunResult['attempts'][number];
+  blocker?: string;
+}> {
+  let term: ExecutionTermination;
+  if (options?.stopped) {
+    const alreadyStopped = await options.stopped(attempt);
+    if (alreadyStopped) {
+      term = { status: 'terminated', evidence: 'Verified stopped by predicate' };
+    } else {
+      term = await terminateAttempt(attempt, adapter);
+      if (term.status === 'terminated' && !(await options.stopped(attempt))) {
+        term = { status: 'unconfirmed', error: 'Termination unverified by stopped predicate' };
+      }
+    }
+  } else {
+    term = await terminateAttempt(attempt, adapter);
+  }
+
+  const stopped = term.status === 'terminated';
+  const cancellationControl = inspectAttemptControl(attempt).cancellation;
+  const error = term.error;
+  let blocker: string | undefined;
+
+  if (stopped) {
+    await reconcileAttempt(attempt, { termination: async () => true, stopped: async () => true });
+    updateRunRegistry(config, (registry) => {
+      const r = registry.runs.find((entry) => entry.id === runId);
+      if (!r) return;
+      const all = [
+        ...(r.priorOrchestrators ?? []),
+        ...(r.orchestrator ? [r.orchestrator] : []),
+        ...(registry.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
+      ];
+      const match = all.find((a) => a.id === attempt.id);
+      if (match) {
+        match.status = 'unknown';
+        match.startupStopped = true;
+      }
+    });
+  } else {
+    const ctrl = inspectAttemptControl(attempt);
+    ctrl.execution = { status: 'unknown' };
+    writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(ctrl));
+    blocker = `Attempt ${attempt.id} (${attempt.role}) termination unverified; occupancy remains reserved`;
+  }
+
+  return {
+    result: {
+      id: attempt.id,
+      role: attempt.role,
+      status: stopped ? 'unknown' : attempt.status,
+      terminated: stopped,
+      cancellation: cancellationControl,
+      error,
+    },
+    blocker,
+  };
+}
+
 /** Revoke scheduling and activation before terminating owned executions and helpers, preserving business records. */
 export async function stopRun(
   config: FleetConfig,
@@ -2596,58 +2646,17 @@ export async function stopRun(
   const attemptResults: StopRunResult['attempts'] = [];
 
   for (const attempt of attempts) {
-    let term: ExecutionTermination;
-    if (opts.stopped) {
-      const alreadyStopped = await opts.stopped(attempt);
-      if (alreadyStopped) {
-        term = { status: 'terminated', evidence: 'Verified stopped by predicate' };
-      } else {
-        term = await terminateAttempt(attempt, adapter);
-        if (term.status === 'terminated' && !(await opts.stopped(attempt))) {
-          term = { status: 'unconfirmed', error: 'Termination unverified by stopped predicate' };
-        }
-      }
-    } else {
-      term = await terminateAttempt(attempt, adapter);
+    const { result, blocker } = await terminateAndVerifyAttempt(
+      config,
+      adapter,
+      runId,
+      attempt,
+      opts,
+    );
+    if (blocker) {
+      blockers.push(blocker);
     }
-
-    const stopped = term.status === 'terminated';
-    const cancellationControl = inspectAttemptControl(attempt).cancellation;
-    const error = term.error;
-
-    if (stopped) {
-      await reconcileAttempt(attempt, { termination: async () => true, stopped: async () => true });
-      updateRunRegistry(config, (registry) => {
-        const r = registry.runs.find((entry) => entry.id === runId);
-        if (!r) return;
-        const all = [
-          ...(r.priorOrchestrators ?? []),
-          ...(r.orchestrator ? [r.orchestrator] : []),
-          ...(registry.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
-        ];
-        const match = all.find((a) => a.id === attempt.id);
-        if (match) {
-          match.status = 'unknown';
-          match.startupStopped = true;
-        }
-      });
-    } else {
-      const ctrl = inspectAttemptControl(attempt);
-      ctrl.execution = { status: 'unknown' };
-      writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(ctrl));
-      blockers.push(
-        `Attempt ${attempt.id} (${attempt.role}) termination unverified; occupancy remains reserved`,
-      );
-    }
-
-    attemptResults.push({
-      id: attempt.id,
-      role: attempt.role,
-      status: stopped ? 'unknown' : attempt.status,
-      terminated: stopped,
-      cancellation: cancellationControl,
-      error,
-    });
+    attemptResults.push(result);
   }
 
   // Release checkouts only if explicit cleanup callback is provided
@@ -2754,58 +2763,17 @@ export async function releaseRun(
   const attemptResults: ReleaseRunResult['attempts'] = [];
 
   for (const attempt of attempts) {
-    let term: ExecutionTermination;
-    if (opts.stopped) {
-      const alreadyStopped = await opts.stopped(attempt);
-      if (alreadyStopped) {
-        term = { status: 'terminated', evidence: 'Verified stopped by predicate' };
-      } else {
-        term = await terminateAttempt(attempt, adapter);
-        if (term.status === 'terminated' && !(await opts.stopped(attempt))) {
-          term = { status: 'unconfirmed', error: 'Termination unverified by stopped predicate' };
-        }
-      }
-    } else {
-      term = await terminateAttempt(attempt, adapter);
+    const { result, blocker } = await terminateAndVerifyAttempt(
+      config,
+      adapter,
+      runId,
+      attempt,
+      opts,
+    );
+    if (blocker) {
+      blockers.push(blocker);
     }
-
-    const stopped = term.status === 'terminated';
-    const cancellationControl = inspectAttemptControl(attempt).cancellation;
-    const error = term.error;
-
-    if (stopped) {
-      await reconcileAttempt(attempt, { termination: async () => true, stopped: async () => true });
-      updateRunRegistry(config, (registry) => {
-        const r = registry.runs.find((entry) => entry.id === runId);
-        if (!r) return;
-        const all = [
-          ...(r.priorOrchestrators ?? []),
-          ...(r.orchestrator ? [r.orchestrator] : []),
-          ...(registry.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
-        ];
-        const match = all.find((a) => a.id === attempt.id);
-        if (match) {
-          match.status = 'unknown';
-          match.startupStopped = true;
-        }
-      });
-    } else {
-      const ctrl = inspectAttemptControl(attempt);
-      ctrl.execution = { status: 'unknown' };
-      writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(ctrl));
-      blockers.push(
-        `Attempt ${attempt.id} (${attempt.role}) termination unverified; occupancy remains reserved`,
-      );
-    }
-
-    attemptResults.push({
-      id: attempt.id,
-      role: attempt.role,
-      status: stopped ? 'unknown' : attempt.status,
-      terminated: stopped,
-      cancellation: cancellationControl,
-      error,
-    });
+    attemptResults.push(result);
   }
 
   // Release checkouts only if explicit cleanup callback is provided

@@ -301,7 +301,7 @@ process.on('SIGHUP', () => {
 
     const workerAttempt = dispatch.attempts[0];
     expect(workerAttempt.address).toMatch(/^tmux:%[0-9]+$/);
-    expect(workerAttempt.paneId).toBeDefined();
+    expect(workerAttempt.providerState?.paneId).toBeDefined();
 
     // Activate Worker
     await reconcileStartup(config, runner, run.id);

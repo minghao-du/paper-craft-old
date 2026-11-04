@@ -46,12 +46,12 @@ describe('Compose Agy execution explicitly in foreground and background hosts (#
 
     // Supervision must not contain script paths or concrete providers
     expect(supervisorSource).not.toMatch(/new\s+AgyRunner/);
-    expect(supervisorSource).not.toMatch(/managedRunner/);
+    expect(supervisorSource).not.toMatch(/(managedRunner|createRunner)/);
     expect(supervisorSource).not.toMatch(/startup-watch/);
     expect(supervisorSource).not.toMatch(/child_process/);
 
-    // Run driver must not import managedRunner
-    expect(runDriverSource).not.toMatch(/import.*managedRunner/);
+    // Run driver must not import managedRunner or createRunner
+    expect(runDriverSource).not.toMatch(/import.*(managedRunner|createRunner)/);
 
     // Core background startup-watch script must be removed from Core
     expect(
@@ -173,6 +173,10 @@ describe('Compose Agy execution explicitly in foreground and background hosts (#
       return { evidence: 'termination-verified' };
     };
     runner.stopped = async () => stoppedConfirmed;
+    runner.terminate = async () => {
+      stoppedConfirmed = true;
+      return { status: 'terminated', evidence: 'termination-verified' };
+    };
 
     const previousLauncher = getStartupSupervisorLauncher();
     try {
