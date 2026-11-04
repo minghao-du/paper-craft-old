@@ -132,6 +132,11 @@
       "types": "./dist/workflow/run/recovery.d.ts",
       "default": "./dist/workflow/run/recovery.js"
     },
+    "./workflow/epic-completion": {
+      "paper-craft-source": "./src/workflow/run/epic-completion.ts",
+      "types": "./dist/workflow/run/epic-completion.d.ts",
+      "default": "./dist/workflow/run/epic-completion.js"
+    },
     "./workflow/run-driver": {
       "paper-craft-source": "./src/workflow/run/run-driver.ts",
       "types": "./dist/workflow/run/run-driver.d.ts",
