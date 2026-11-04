@@ -19,16 +19,13 @@ vi.mock('@paper-craft/core/workflow/run-subject', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/run-subject')>()),
   readIssue: vi.fn(),
 }));
-vi.mock('@paper-craft/core/workflow/issue-driver', async (original) => ({
-  ...(await original<typeof import('@paper-craft/core/workflow/issue-driver')>()),
-  readIssue: vi.fn(),
-}));
 vi.mock('@paper-craft/core/workflow/fleet-config', () => ({
   loadFleetConfig: () => ({ project: '/project', file: '/project/.epic-config.json' }),
 }));
 vi.mock('../../packages/cli/src/workflow/composition.js', () => ({
   createRunner: vi.fn((provider: string) => {
-    if (provider !== 'agy') throw new Error(`Unsupported managed provider '${provider}'. Only 'agy' is supported.`);
+    if (provider !== 'agy')
+      throw new Error(`Unsupported managed provider '${provider}'. Only 'agy' is supported.`);
     return { name: 'agy', preflight: async () => {} };
   }),
   launchStartupSupervisor: vi.fn(),
@@ -82,10 +79,9 @@ it('requires a valid explicit type before reading GitHub or launching a Run', as
     const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
     registerWorkflowCommands(program, { human: () => false });
     await expect(
-      program.parseAsync(
-        ['workflow', 'orchestrator', 'start', '7', '--provider', 'agy', ...args],
-        { from: 'user' },
-      ),
+      program.parseAsync(['workflow', 'orchestrator', 'start', '7', '--provider', 'agy', ...args], {
+        from: 'user',
+      }),
     ).rejects.toThrow();
     expect(readIssue).not.toHaveBeenCalled();
     expect(startRun).not.toHaveBeenCalled();

@@ -134,7 +134,7 @@ describe('portable workflow file contract', () => {
       [
         'workflow',
         'orchestrator',
-        'finalize-epic',
+        'close-epic',
         '7',
         '--repository',
         'owner/repo',
@@ -356,16 +356,20 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
     updateRunRegistry(config, (reg) => {
       reg.runs.push({
         id: runId,
-        subject: { repository: 'test/repo', number: 10, kind: 'issue', title: 'dynamic', body: 'work' },
+        subject: {
+          repository: 'test/repo',
+          number: 10,
+          kind: 'issue',
+          title: 'dynamic',
+          body: 'work',
+        },
         provider: 'agy',
         policy: { name: 'default', revision: 1 },
         lifecycle: 'running',
         orchestratorId: 'orch-10',
         brief: { path: '', hash: '' },
       });
-      reg.resources = [
-        { path: dynamicSlot, runId, registry: join(home(config), 'registry.json') },
-      ];
+      reg.resources = [{ path: dynamicSlot, runId, registry: join(home(config), 'registry.json') }];
     });
     writeFileSync(
       join(dynamicSlot, '.pc-execution-owner'),
@@ -387,16 +391,20 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
     updateRunRegistry(config, (reg) => {
       reg.runs.push({
         id: runId,
-        subject: { repository: 'test/repo', number: 11, kind: 'issue', title: 'missing', body: 'work' },
+        subject: {
+          repository: 'test/repo',
+          number: 11,
+          kind: 'issue',
+          title: 'missing',
+          body: 'work',
+        },
         provider: 'agy',
         policy: { name: 'default', revision: 1 },
         lifecycle: 'completed',
         orchestratorId: 'orch-11',
         brief: { path: '', hash: '' },
       });
-      reg.resources = [
-        { path: missingSlot, runId, registry: join(home(config), 'registry.json') },
-      ];
+      reg.resources = [{ path: missingSlot, runId, registry: join(home(config), 'registry.json') }];
     });
 
     const result = checkFleet(config, 'currency');
@@ -460,7 +468,9 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
 
     const result = checkFleet(config, 'currency');
     expect(result.status).toBe('unknown');
-    expect(result.unknown.some((u) => u.slot === 'pine' && u.detail.includes('Multiple runs'))).toBe(true);
+    expect(
+      result.unknown.some((u) => u.slot === 'pine' && u.detail.includes('Multiple runs')),
+    ).toBe(true);
     expect(result.slots.map((s) => s.name)).not.toContain('pine');
   });
 

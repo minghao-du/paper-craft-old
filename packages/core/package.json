@@ -117,11 +117,6 @@
       "types": "./dist/workflow/runtime/agy-runner.d.ts",
       "default": "./dist/workflow/runtime/agy-runner.js"
     },
-    "./workflow/issue-driver": {
-      "paper-craft-source": "./src/workflow/delivery/issue-driver.ts",
-      "types": "./dist/workflow/delivery/issue-driver.d.ts",
-      "default": "./dist/workflow/delivery/issue-driver.js"
-    },
     "./workflow/subagents": {
       "paper-craft-source": "./src/workflow/runtime/subagents.ts",
       "types": "./dist/workflow/runtime/subagents.d.ts",
@@ -131,21 +126,6 @@
       "paper-craft-source": "./src/workflow/delivery/pr-driver.ts",
       "types": "./dist/workflow/delivery/pr-driver.d.ts",
       "default": "./dist/workflow/delivery/pr-driver.js"
-    },
-    "./workflow/epic-driver": {
-      "paper-craft-source": "./src/workflow/delivery/epic-driver.ts",
-      "types": "./dist/workflow/delivery/epic-driver.d.ts",
-      "default": "./dist/workflow/delivery/epic-driver.js"
-    },
-    "./workflow/postmerge": {
-      "paper-craft-source": "./src/workflow/delivery/postmerge.ts",
-      "types": "./dist/workflow/delivery/postmerge.d.ts",
-      "default": "./dist/workflow/delivery/postmerge.js"
-    },
-    "./workflow/epic-completion": {
-      "paper-craft-source": "./src/workflow/delivery/epic-completion.ts",
-      "types": "./dist/workflow/delivery/epic-completion.d.ts",
-      "default": "./dist/workflow/delivery/epic-completion.js"
     },
     "./workflow/recovery": {
       "paper-craft-source": "./src/workflow/run/recovery.ts",

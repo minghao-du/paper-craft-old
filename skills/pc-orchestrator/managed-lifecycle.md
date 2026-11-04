@@ -36,7 +36,7 @@ Interactive `collectBusinessTurn` reads the adapter's durable result correlated 
 
 ## Child-only intake and overlapping Runs
 
-A child request authorizes only that Issue. Read native open dependencies and retain parent context; unresolved metadata or open blockers stops dispatch, without starting siblings or closing the parent. The internal `driveEpicIssue` uses this scoped delivery path; the CLI `pc workflow orchestrator issue` is deprecated and does not dispatch.
+A child request authorizes only that Issue. Read native open dependencies and retain parent context; unresolved metadata or open blockers stops dispatch, without starting siblings or closing the parent. The managed child stage dispatch uses this scoped delivery path; the CLI `pc workflow orchestrator issue` is retired and does not dispatch.
 
 Before allocating each EPIC child, reference its repository/Issue subject in the Fleet registry. Existing ownership wins in either intake order. A child request against EPIC-owned work reconnects to that owner; resume the owning Run rather than dispatching another child driver. Provider conflict blocks reconnect and never switches the active provider. An EPIC consuming standalone delivery must obtain its own explicit professional acceptance against its objective and scoped brief before counting that result. Pending or rejected referenced delivery blocks that dependency, without inheriting parent-finalization authorization.
 
@@ -44,7 +44,7 @@ Before allocating each EPIC child, reference its repository/Issue subject in the
 
 Use the existing PR driver for automatic landing. It binds the quality result and EPIC professional confirmation to the live head, checks required GitHub results again, and uses expected-head compare-and-merge. Managed Runs reserve the checkout and record quality Dispatch/Attempt/Receipt acceptance before the driver requests merge. A moved head or failed gate requires current evidence rather than inheriting approval. Repository and closing-Issue attribution must match the delivery.
 
-Inspect `pullRequests` alongside dispatches in the read-only registry projection. A lost merge response is reconciled against GitHub before another request; preserve the actual merge commit and evaluated head. `merged` is pending delivery: Worker final records, preservation and cleanup still follow through the existing completion driver. An unknown merge result or missing version is uncertainty to preserve, never evidence that cleanup is safe.
+Inspect `pullRequests` alongside dispatches in the read-only registry projection. A lost merge response is reconciled against GitHub before another request; preserve the actual merge commit and evaluated head. `merged` is pending delivery: Worker final records, preservation and cleanup still follow through the managed delivery stages. An unknown merge result or missing version is uncertainty to preserve, never evidence that cleanup is safe.
 
 ## Post-merge delivery
 

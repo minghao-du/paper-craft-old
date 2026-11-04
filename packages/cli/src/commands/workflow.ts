@@ -499,8 +499,13 @@ export function registerWorkflowCommands(
   configured(
     orchestrator
       .command('stop <run>')
-      .description('Revoke scheduling and terminate owned executions; retain completed business evidence')
-      .option('--detailed', 'Return the complete current structured result; logs remain referenced'),
+      .description(
+        'Revoke scheduling and terminate owned executions; retain completed business evidence',
+      )
+      .option(
+        '--detailed',
+        'Return the complete current structured result; logs remain referenced',
+      ),
   ).action(async (id: string, options: Options) => {
     let config: FleetConfig | undefined;
     let current: WorkflowRun | undefined;
@@ -516,11 +521,7 @@ export function registerWorkflowCommands(
           ...result,
           blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
           inspection: await inspection(current, config, !!options.detailed, undefined, getRunner),
-          outcome: result.released
-            ? 'succeeded'
-            : result.terminated
-              ? 'succeeded'
-              : 'blocked',
+          outcome: result.released ? 'succeeded' : result.terminated ? 'succeeded' : 'blocked',
         },
         opts.human(),
       );
@@ -540,7 +541,13 @@ export function registerWorkflowCommands(
           status: 'unknown',
           ...(current && config
             ? {
-                inspection: await inspection(current, config, !!options.detailed, undefined, getRunner),
+                inspection: await inspection(
+                  current,
+                  config,
+                  !!options.detailed,
+                  undefined,
+                  getRunner,
+                ),
                 observation: current.orchestrator?.observation,
                 evidence: current.orchestrator?.evidence,
               }
@@ -561,7 +568,10 @@ export function registerWorkflowCommands(
     orchestrator
       .command('release <run>')
       .description('Terminate remaining executions and release resources for a completed Run')
-      .option('--detailed', 'Return the complete current structured result; logs remain referenced'),
+      .option(
+        '--detailed',
+        'Return the complete current structured result; logs remain referenced',
+      ),
   ).action(async (id: string, options: Options) => {
     let config: FleetConfig | undefined;
     let current: WorkflowRun | undefined;
@@ -577,11 +587,7 @@ export function registerWorkflowCommands(
           ...result,
           blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
           inspection: await inspection(current, config, !!options.detailed, undefined, getRunner),
-          outcome: result.released
-            ? 'succeeded'
-            : result.terminated
-              ? 'succeeded'
-              : 'blocked',
+          outcome: result.released ? 'succeeded' : result.terminated ? 'succeeded' : 'blocked',
         },
         opts.human(),
       );
@@ -620,40 +626,6 @@ export function registerWorkflowCommands(
   });
   configured(
     orchestrator
-      .command('finalize-epic <number>')
-      .description('Assess EPIC delivery; finalize specialists only after confirmed closure')
-      .requiredOption('--repository <owner/name>', 'Target repository')
-      .option(
-        '--retry',
-        'Start a fresh finalization round only after verified specialist termination',
-      ),
-  ).action(async (number: string, options: Options & { repository: string; retry?: boolean }) => {
-    try {
-      const config = loadFleetConfig(options.config);
-      const num = Number(number);
-      const registry = inspectRuns(config);
-      const run = registry.runs.find(
-        (r) =>
-          r.subject.number === num &&
-          r.subject.repository === options.repository &&
-          r.lifecycle !== 'completed',
-      );
-      if (!run) {
-        throw new Error(
-          `No active Run found for ${options.repository}#${num}. Start a Managed Run with: pc workflow orchestrator start ${num} --type epic --repository ${options.repository}`,
-        );
-      }
-      throw new Error(
-        `EPIC finalization is managed through stage workflow. Use: pc workflow stage dispatch --run ${run.id} --role pipeline-audit --stage pipeline-audit (or pipeline-refactor), then pc workflow stage pipeline and pc workflow stage publish`,
-      );
-    } catch (error) {
-      run(() => {
-        throw error;
-      });
-    }
-  });
-  configured(
-    orchestrator
       .command('close-epic <number>')
       .description('Record explicit human confirmation, close and archive an accepted EPIC')
       .option('--repository <owner/name>', 'Target repository')
@@ -680,7 +652,7 @@ export function registerWorkflowCommands(
         const registry = inspectRuns(config);
         const run = options.run
           ? registry.runs.find((r) => r.id === options.run)
-          : registry.runs.find(
+          : (registry.runs.find(
               (r) =>
                 r.subject.number === num &&
                 (!options.repository || r.subject.repository === options.repository) &&
@@ -690,7 +662,7 @@ export function registerWorkflowCommands(
               (r) =>
                 r.subject.number === num &&
                 (!options.repository || r.subject.repository === options.repository),
-            );
+            ));
 
         if (!run) {
           throw new Error(
@@ -698,7 +670,8 @@ export function registerWorkflowCommands(
           );
         }
 
-        let confirmation: { deliveryVersion: string; source: 'human'; evidence: string } | undefined;
+        let confirmation:
+          { deliveryVersion: string; source: 'human'; evidence: string } | undefined;
         if (options.confirmationFile && existsSync(options.confirmationFile)) {
           confirmation = JSON.parse(readFileSync(options.confirmationFile, 'utf8'));
         } else if (options.humanConfirmation) {
@@ -831,11 +804,12 @@ export function registerWorkflowCommands(
           const runner = getRunner(run.provider);
           const subjectKey = `${issue.repository}#${issue.number}`;
           const dispatches =
-            registry.dispatches?.filter(
-              (d) => d.runId === run.id && d.subject === subjectKey,
-            ) ?? [];
+            registry.dispatches?.filter((d) => d.runId === run.id && d.subject === subjectKey) ??
+            [];
 
-          const cleanupDispatch = dispatches.filter((d) => d.stage === 'preservation-cleanup').at(-1);
+          const cleanupDispatch = dispatches
+            .filter((d) => d.stage === 'preservation-cleanup')
+            .at(-1);
           const finalRecordsAccepted = dispatches.some(
             (d) => d.stage === 'final-records' && d.lifecycle === 'accepted',
           );
