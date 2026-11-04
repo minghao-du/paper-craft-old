@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { writeFileSync, readFileSync, appendFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createRunner } from '../../packages/cli/src/workflow/composition.js';
-import { inspectRuns } from '../../packages/core/src/workflow/run/run-driver.js';
+import { inspectRuns } from '../../packages/core/src/workflow/run/run-registry.js';
 import { reconcileStartup } from '../../packages/core/src/workflow/run/startup.js';
 import {
   prepareScriptedEpic,

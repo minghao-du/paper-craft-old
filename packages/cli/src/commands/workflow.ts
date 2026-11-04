@@ -1,20 +1,20 @@
 import { execFileSync } from 'node:child_process';
-import { startupRecoveryStatus } from '@paper-craft/core/workflow/startup';
+import { startRun, startupRecoveryStatus } from '@paper-craft/core/workflow/startup';
 import {
-  startRun,
   inspectRuns,
-  recoverRun,
-  closeStageEpic,
-  type EpicClosureActions,
   type WorkflowRun,
   type RunRegistry,
-} from '@paper-craft/core/workflow/run-driver';
+} from '@paper-craft/core/workflow/run-registry';
+import {
+  closeStageEpic,
+  type EpicClosureActions,
+} from '@paper-craft/core/workflow/epic-completion';
 import {
   collectBusinessTurn,
   type StageDispatch,
 } from '@paper-craft/core/workflow/stage-execution';
 import { stopRun, releaseRun } from '@paper-craft/core/workflow/run-control';
-import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
+import { recoverRun, recoverAllRuns } from '@paper-craft/core/workflow/recovery';
 import {
   executeDeliveryStage,
   stagePullRequests,

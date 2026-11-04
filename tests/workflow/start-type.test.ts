@@ -4,11 +4,11 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { afterEach, expect, it, vi } from 'vitest';
 import { registerWorkflowCommands } from '../../packages/cli/src/commands/workflow.js';
-import { startRun } from '@paper-craft/core/workflow/run-driver';
+import { startRun } from '@paper-craft/core/workflow/startup';
 import { readIssue } from '@paper-craft/core/workflow/run-subject';
 
-vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
-  ...(await original<typeof import('@paper-craft/core/workflow/run-driver')>()),
+vi.mock('@paper-craft/core/workflow/startup', async (original) => ({
+  ...(await original<typeof import('@paper-craft/core/workflow/startup')>()),
   startRun: vi.fn(async () => ({
     id: 'run-id',
     lifecycle: 'running',

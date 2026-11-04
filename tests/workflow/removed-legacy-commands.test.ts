@@ -45,6 +45,5 @@ it('confirms retired driver modules are absent from package exports', () => {
   const exportKeys = Object.keys(pkg.exports ?? {});
   expect(exportKeys).not.toContain('./workflow/issue-driver');
   expect(exportKeys).not.toContain('./workflow/epic-driver');
-  expect(exportKeys).not.toContain('./workflow/epic-completion');
   expect(exportKeys).not.toContain('./workflow/postmerge');
 });
