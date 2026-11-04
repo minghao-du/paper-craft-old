@@ -236,17 +236,5 @@ export function updateRunRegistry<T>(config: FleetConfig, change: (registry: Run
   }
 }
 
-/** Reference an existing subject execution; never manufacture a second owner. */
-export function reserveSubject(registry: RunRegistry, runId: string, subject: string): string {
-  registry.subjects ??= [];
-  const existing = registry.subjects.find((s) => s.subject === subject);
-  if (existing) {
-    if (existing.ownerRunId !== runId && !existing.consumingRunIds.includes(runId))
-      existing.consumingRunIds.push(runId);
-    if (existing.ownerRunId !== runId)
-      throw new Error(`Subject owned by Run ${existing.ownerRunId}`);
-    return existing.ownerRunId;
-  }
-  registry.subjects.push({ subject, ownerRunId: runId, consumingRunIds: [] });
-  return runId;
-}
+export { reserveSubject } from './run-ownership.js';
+

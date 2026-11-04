@@ -536,3 +536,51 @@ test('CLI stop and release commands execute verified control operations and reje
   }
 }, 25000);
 
+test('run-control functions stopRun and releaseRun can be imported directly from run-control module', async () => {
+  const { project, config } = createFixture();
+  const { stopRun: directStopRun, releaseRun: directReleaseRun } = await import(
+    '../../packages/core/src/workflow/run/run-control.js'
+  );
+
+  const runner = {
+    interactive: true,
+    name: 'codex',
+    cancellation: true,
+    async cancel() {
+      return { evidence: 'cancel-ack' };
+    },
+    async stopped() {
+      return true;
+    },
+    async preflight() {},
+    async start() {
+      return { conversation: 'sess-direct-ctrl', address: 'tmux:test', evidence: 'start-ack' };
+    },
+  };
+
+  try {
+    const run = await startRun(
+      config,
+      runner,
+      { repository: 'owner/repo', number: 88, kind: 'issue', title: 'test direct', body: 'body' },
+      'codex',
+    );
+
+    const stopResult = await directStopRun(config, runner, run.id);
+    expect(stopResult.lifecycle).toBe('blocked');
+    expect(stopResult.terminated).toBe(true);
+
+    // Mark completed to test direct releaseRun
+    updateRunRegistry(config, (reg) => {
+      reg.runs.find((r) => r.id === run.id)!.lifecycle = 'completed';
+    });
+
+    const releaseResult = await directReleaseRun(config, runner, run.id);
+    expect(releaseResult.lifecycle).toBe('completed');
+    expect(releaseResult.terminated).toBe(true);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+

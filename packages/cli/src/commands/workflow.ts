@@ -4,8 +4,6 @@ import {
   startRun,
   inspectRuns,
   recoverRun,
-  stopRun,
-  releaseRun,
   closeStageEpic,
   collectBusinessTurn,
   type EpicClosureActions,
@@ -13,6 +11,7 @@ import {
   type RunRegistry,
   type StageDispatch,
 } from '@paper-craft/core/workflow/run-driver';
+import { stopRun, releaseRun } from '@paper-craft/core/workflow/run-control';
 import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
 import {
   executeDeliveryStage,

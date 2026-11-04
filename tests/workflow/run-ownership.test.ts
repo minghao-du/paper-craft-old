@@ -55,3 +55,103 @@ process.stdout.write('owned');
     rmSync(root, { recursive: true, force: true });
   }
 }, 15000);
+
+test('run-ownership functions directly manage subject and checkout reservations within and outside transactions', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-ownership-direct-')));
+  const pool = join(root, 'pool');
+  mkdirSync(pool);
+  const checkout1 = join(pool, 'checkout-1');
+  mkdirSync(checkout1);
+  const project = join(root, 'project');
+  mkdirSync(project);
+  const config = {
+    file: join(project, '.epic-config.json'),
+    project,
+    root: pool,
+    slots: ['checkout-1', 'checkout-2'],
+    worktrees: false,
+    base: 'main',
+  };
+  writeFileSync(config.file, JSON.stringify({ clone_root: 'pool' }));
+
+  const runner = {
+    interactive: true,
+    name: 'codex',
+    async preflight() {},
+    async start() {
+      return { conversation: 'sess-direct', address: 'tmux:test', evidence: 'ack' };
+    },
+    async stopped() {
+      return true;
+    },
+  };
+
+  try {
+    const {
+      reserveSubject,
+      referenceRunSubject,
+      reserveRunCheckout,
+      orchestratorForSubject,
+      releaseRunCheckout,
+    } = await import('../../packages/core/src/workflow/run/run-ownership.js');
+    const { startRun, dispatchStage, updateRunRegistry, inspectRuns } = await import(
+      '../../packages/core/src/workflow/run/run-driver.js'
+    );
+
+    const run = await startRun(
+      config,
+      runner,
+      { repository: 'owner/repo', number: 100, kind: 'issue', title: 'issue-100', body: 'body' },
+      'codex',
+    );
+
+    // 1. orchestratorForSubject returns active orchestrator attempt
+    const orch = orchestratorForSubject(config, 'owner/repo', 100);
+    expect(orch.id).toBe(run.orchestratorId);
+
+    // 2. referenceRunSubject consumes existing or reserves
+    const refOwner = referenceRunSubject(config, run.id, 'owner/repo#100');
+    expect(refOwner).toBe(run.id);
+
+    // 3. reserveRunCheckout within an existing updateRunRegistry transaction
+    const checkout2 = join(pool, 'checkout-2');
+    mkdirSync(checkout2);
+    updateRunRegistry(config, (reg) => {
+      reserveRunCheckout(config, run.id, run.orchestratorId, checkout2, reg);
+    });
+
+    const regAfter = inspectRuns(config);
+    expect(regAfter.resources?.some((r) => r.path === checkout2)).toBe(true);
+
+    // 4. dispatch stage to checkout1, then releaseRunCheckout
+    await dispatchStage(config, runner, {
+      runId: run.id,
+      authority: run.orchestratorId,
+      subject: 'owner/repo#100',
+      role: 'worker',
+      stage: 'implementation',
+      inputRevision: 'rev-1',
+      brief: 'do work',
+      prerequisites: [],
+      checkout: checkout1,
+    });
+
+    let cleanedUp = false;
+    await releaseRunCheckout(
+      config,
+      run.id,
+      checkout1,
+      async () => true,
+      () => {
+        cleanedUp = true;
+      },
+    );
+    expect(cleanedUp).toBe(true);
+
+    const regFinal = inspectRuns(config);
+    expect(regFinal.resources?.some((r) => r.path === checkout1)).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
