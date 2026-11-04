@@ -53,14 +53,11 @@ exports[`publishes orchestrator land help 1`] = `
 Merge, record, preserve and clean delivered PR stages automatically
 
 Options:
-  --config <file>             Authoritative Fleet configuration (default:
-                              ".epic-config.json")
-  --confirmation-file <file>  EPIC professional confirmation JSON: epic, head,
-                              evidence
-  --pr <number>               PR whose current external facts must match the
-                              assignment
-  --dispatch <id>             Specific landing dispatch to execute
-  -h, --help                  display help for command
+  --config <file>  Authoritative Fleet configuration (default:
+                   ".epic-config.json")
+  --pr <number>    PR whose current external facts must match the assignment
+  --dispatch <id>  Specific landing dispatch to execute
+  -h, --help       display help for command
 "
 `;
 

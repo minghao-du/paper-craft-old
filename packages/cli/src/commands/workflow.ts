@@ -774,16 +774,12 @@ export function registerWorkflowCommands(
       .command('land <issue>')
       .description('Merge, record, preserve and clean delivered PR stages automatically'),
   )
-    .option(
-      '--confirmation-file <file>',
-      'EPIC professional confirmation JSON: epic, head, evidence',
-    )
     .option('--pr <number>', 'PR whose current external facts must match the assignment')
     .option('--dispatch <id>', 'Specific landing dispatch to execute')
     .action(
       async (
         number: string,
-        options: Options & { confirmationFile?: string; pr?: string; dispatch?: string },
+        options: Options & { pr?: string; dispatch?: string },
       ) => {
         try {
           const config = loadFleetConfig(options.config);
@@ -828,11 +824,10 @@ export function registerWorkflowCommands(
             targetDispatch = cleanupDispatch;
           } else if (mergeDispatch && prQualityAccepted) {
             targetDispatch = mergeDispatch;
-          } else if (cleanupDispatch) {
-            targetDispatch = cleanupDispatch;
-          } else if (mergeDispatch) {
-            targetDispatch = mergeDispatch;
           } else {
+            targetDispatch = mergeDispatch ?? cleanupDispatch;
+          }
+          if (!targetDispatch) {
             throw new Error('Expected delivered Issue stages before landing');
           }
 

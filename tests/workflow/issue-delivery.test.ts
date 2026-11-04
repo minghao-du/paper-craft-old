@@ -13,6 +13,7 @@ import {
   retryStage,
   inspectRuns,
   reserveRunCheckout,
+  releaseRun,
   type StageFacts,
 } from '../../packages/core/src/workflow/run/run-driver.js';
 
@@ -520,6 +521,14 @@ test('Interrupted merge recovery does not repeat merge, and cleanup transitions 
     expect(delivery?.recorded).toBe(true);
     expect(existsSync(join(delivery!.archive!, 'repository.bundle'))).toBe(true);
     expect(inspectRuns(config).resources?.some((r) => r.path === worktreePath)).toBe(false);
+
+    const updatedRun = inspectRuns(config).runs.find((r) => r.id === run.id);
+    expect(updatedRun?.phase).toBe('completed');
+    expect(updatedRun?.lifecycle).toBe('completed');
+
+    const releaseResult = await releaseRun(config, runner, run.id);
+    expect(releaseResult.released).toBe(true);
+    expect(releaseResult.lifecycle).toBe('completed');
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

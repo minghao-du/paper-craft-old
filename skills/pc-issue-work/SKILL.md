@@ -84,7 +84,7 @@ The branch and worktree are provisioned, owned, and tracked by the Managed Run:
 
 #### Adaptive checks for long tasks
 
-Apply this protocol to local and remote computation, training, experiments and long tests:
+Apply the shared protocol in [Adaptive checks for long tasks](../lib/adaptive-checks.md) to local and remote computation, training, experiments and long tests:
 1. Launch through the configured platform/runtime and retain the exact job ID or PID, execution environment, logs and completion probe. Verify the probe returns nonzero while unfinished and zero only on verified success.
 2. Estimate completion from comparable runs, input size or measured progress. Record the estimate, its basis and the next check time before waiting.
 3. For SLURM, track submission, queue wait and actual execution separately.

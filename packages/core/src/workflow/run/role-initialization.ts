@@ -28,7 +28,9 @@ export function initializationInstructions(
   expected: RoleInitialization,
   directory: string,
 ): string {
-  return `\nRole initialization gate: read the immutable context at ${expected.context.path}. Initialize your assigned role before proceeding. Write ${join(directory, 'initialization.json')} atomically with these exact assignment fields: ${JSON.stringify(expected)}. These fields acknowledge role/scope and the exact context you initialized; they are not a task completion receipt. ${roleArtifactInstructions(expected)} Never claim ready without these files.\n`;
+  const extra = roleArtifactInstructions(expected);
+  const extraText = extra ? ` ${extra}` : '';
+  return `\nRole initialization gate: read the immutable context at ${expected.context.path}. Initialize your assigned role before proceeding. Write ${join(directory, 'initialization.json')} atomically with these exact assignment fields: ${JSON.stringify(expected)}. These fields acknowledge role/scope and the exact context you initialized; they are not a task completion receipt.${extraText} Never claim ready without this initialization evidence.\n`;
 }
 
 /** Verify the assignment-bound evidence and existing role artifacts; missing facts stay pending. */
