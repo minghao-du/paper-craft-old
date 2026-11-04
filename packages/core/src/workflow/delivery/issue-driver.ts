@@ -171,7 +171,7 @@ export async function driveIssue(
         throw new Error('Checkout already exists; occupancy must be verified before reuse');
       execFileSync(
         'git',
-        ['worktree', 'add', '-b', `codex/task-${key.slice(0, 16)}`, checkout, config.base],
+        ['worktree', 'add', '-b', `task-${key.slice(0, 16)}`, checkout, config.base],
         { cwd: config.project },
       );
       workflowSource(config, checkout);

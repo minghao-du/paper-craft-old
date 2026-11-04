@@ -230,7 +230,7 @@ export function registerWorkflowCommands(
         'Create or reconnect a Run; automatically reconcile pending startup in the background',
       )
       .option('--detailed', 'Return the complete current structured result; logs remain referenced')
-      .requiredOption('--provider <provider>', 'Managed provider: codex, agy, or claude')
+      .requiredOption('--provider <provider>', 'Managed provider: agy')
       .option(
         '--dangerously-skip-permissions',
         'Auto-approve agy tool permissions for this Run (agy only)',

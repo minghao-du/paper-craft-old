@@ -336,7 +336,7 @@ export async function driveEpic(
           .digest('hex');
         execFileSync(
           'git',
-          ['worktree', 'add', '-b', `codex/task-${key.slice(0, 16)}`, checkout, config.base],
+          ['worktree', 'add', '-b', `task-${key.slice(0, 16)}`, checkout, config.base],
           { cwd: config.project },
         );
         workflowSource(config, checkout);
