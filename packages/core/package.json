@@ -112,6 +112,11 @@
       "types": "./dist/workflow/runtime/runtime.d.ts",
       "default": "./dist/workflow/runtime/runtime.js"
     },
+    "./workflow/runtime/agy": {
+      "paper-craft-source": "./src/workflow/runtime/agy-runner.ts",
+      "types": "./dist/workflow/runtime/agy-runner.d.ts",
+      "default": "./dist/workflow/runtime/agy-runner.js"
+    },
     "./workflow/issue-driver": {
       "paper-craft-source": "./src/workflow/delivery/issue-driver.ts",
       "types": "./dist/workflow/delivery/issue-driver.d.ts",

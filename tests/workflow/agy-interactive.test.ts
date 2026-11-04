@@ -1,10 +1,10 @@
 import { vi, test, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgyInteractive } from '../../packages/core/src/workflow/runtime/agy-interactive.js';
-import { AgyRunner } from '../../packages/core/src/workflow/runtime/runtime.js';
+import { AgyRunner } from '../../packages/core/src/workflow/runtime/agy-runner.js';
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
@@ -427,10 +427,7 @@ test('AgyRunner.collect polls result until completed or process stopped', async 
   try {
     // If stopped before result, throws
     vi.spyOn(runner, 'stopped').mockResolvedValue(true);
-    vi.spyOn(
-      (runner as unknown as { tui: { result: () => Promise<string | undefined> } }).tui,
-      'result',
-    ).mockResolvedValue(undefined);
+    vi.spyOn(runner, 'result').mockResolvedValue(undefined);
     await expect(runner.collect(attempt)).rejects.toThrow(
       /agy exited without a correlated task result/,
     );
@@ -438,14 +435,159 @@ test('AgyRunner.collect polls result until completed or process stopped', async 
     // If result becomes available after a delay, resolves
     let calls = 0;
     vi.spyOn(runner, 'stopped').mockResolvedValue(false);
-    vi.spyOn(
-      (runner as unknown as { tui: { result: () => Promise<string | undefined> } }).tui,
-      'result',
-    ).mockImplementation(async () => {
+    vi.spyOn(runner, 'result').mockImplementation(async () => {
       calls++;
       return calls >= 3 ? 'completed output' : undefined;
     });
     expect(await runner.collect(attempt)).toBe('completed output');
+
+    // If deadline is exceeded, throws timeout error
+    vi.spyOn(runner, 'stopped').mockResolvedValue(false);
+    vi.spyOn(runner, 'result').mockResolvedValue(undefined);
+    await expect(runner.collect(attempt, { timeoutMs: 50 })).rejects.toThrow(
+      /Timed out waiting for correlated task result/,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('messageReceipt verifies exact delivery and writes message definition', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-receipt-'));
+  const transcriptPath = join(directory, 'transcript.jsonl');
+  const attempt = {
+    id: 'att-msg',
+    directory,
+    address: 'tmux:%777',
+    fleet: 'fleet-1',
+    role: 'worker' as const,
+    runner: 'agy',
+    brief: 'Work brief',
+    status: 'running' as const,
+    created: new Date().toISOString(),
+    checkout: directory,
+  };
+
+  writeFileSync(
+    join(directory, 'agy-native.json'),
+    JSON.stringify({
+      conversation_id: 'conv-msg-1',
+      transcript_path: transcriptPath,
+      agent_state: 'idle',
+    }),
+  );
+
+  const tui = new AgyInteractive();
+  try {
+    writeFileSync(
+      transcriptPath,
+      JSON.stringify({
+        step_index: 0,
+        type: 'USER_INPUT',
+        source: 'USER_EXPLICIT',
+        status: 'DONE',
+        content: '<USER_REQUEST>\nConfirmed brief\n</USER_REQUEST>',
+      }) + '\n',
+    );
+
+    // Matching message returns receipt and creates message file
+    const receipt = await tui.messageReceipt(attempt, { id: 'msg-rec-1', brief: 'Confirmed brief' });
+    expect(receipt).toBe('Native exact agy message input');
+    expect(existsSync(join(directory, 'message-msg-rec-1.json'))).toBe(true);
+
+    // Unmatched message returns undefined
+    const missing = await tui.messageReceipt(attempt, { id: 'msg-rec-2', brief: 'Unmatched brief' });
+    expect(missing).toBeUndefined();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('result refuses mismatched Run terminal or unactivated gated worker', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-attrib-'));
+  const transcriptPath = join(directory, 'transcript.jsonl');
+  const attempt: ManagedAttempt = {
+    id: 'att-attr',
+    run: 'run-1',
+    dispatchId: 'disp-attr',
+    directory,
+    address: 'tmux:%555',
+    fleet: 'fleet-1',
+    role: 'worker' as const,
+    runner: 'agy',
+    brief: 'Task input',
+    status: 'running' as const,
+    created: new Date().toISOString(),
+    checkout: directory,
+    startupGate: true,
+  };
+
+  writeFileSync(
+    join(directory, 'agy-native.json'),
+    JSON.stringify({
+      conversation_id: 'conv-attr',
+      transcript_path: transcriptPath,
+      agent_state: 'idle',
+    }),
+  );
+  writeFileSync(
+    join(directory, 'terminal.json'),
+    JSON.stringify({
+      run: 'run-different',
+      session: 'pc-run-run-different',
+      address: 'tmux:%555',
+    }),
+  );
+  writeFileSync(
+    transcriptPath,
+    [
+      JSON.stringify({
+        step_index: 0,
+        type: 'USER_INPUT',
+        source: 'USER_EXPLICIT',
+        status: 'DONE',
+        content: '<USER_REQUEST>\nTask input\n</USER_REQUEST>',
+      }),
+      JSON.stringify({
+        step_index: 1,
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        content: '[pc ready role=worker attempt=att-attr]\nOutput',
+      }),
+    ].join('\n'),
+  );
+
+  const tui = new AgyInteractive();
+  try {
+    // Run mismatch in terminal.json returns undefined
+    expect(await tui.result(attempt, 'disp-attr')).toBeUndefined();
+
+    // Fix terminal to match run-1
+    writeFileSync(
+      join(directory, 'terminal.json'),
+      JSON.stringify({
+        run: 'run-1',
+        session: 'pc-run-run-1',
+        address: 'tmux:%555',
+      }),
+    );
+
+    // Still undefined because startupGate is true and activation is missing or uncertain
+    expect(await tui.result(attempt, 'disp-attr')).toBeUndefined();
+
+    // Activation uncertain also returns undefined
+    attempt.activation = {
+      id: 'act-1',
+      brief: 'Task input',
+      status: 'uncertain',
+      evidence: 'lost connection',
+    };
+    expect(await tui.result(attempt, 'disp-attr')).toBeUndefined();
+
+    // Activation delivered correlates successfully
+    attempt.activation.status = 'delivered';
+    expect(await tui.result(attempt, 'disp-attr')).toBe('Output');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -679,15 +821,19 @@ test.each([false, true])(
       expect(managed).toMatchObject({
         address: 'tmux:%401',
         terminalSession: 'pc-run-run-independent',
-        paneId: '%401',
-        windowId: '@91',
+        providerState: {
+          paneId: '%401',
+          windowId: '@91',
+        },
       });
       await expect(new AgyInteractive().recoverReceipt(persisted)).resolves.toBeUndefined();
       expect(persisted).toMatchObject({
         address: 'tmux:%401',
         terminalSession: 'pc-run-run-independent',
-        paneId: '%401',
-        windowId: '@91',
+        providerState: {
+          paneId: '%401',
+          windowId: '@91',
+        },
       });
       live = true;
       const transcript = join(directory, 'native.jsonl');
@@ -795,3 +941,117 @@ test.each(['missing', 'unreadable', 'mismatched'])(
     }
   },
 );
+
+test('recoverReceipt validates and updates encapsulated providerState and refuses corrupt evidence', async () => {
+  const child = await import('node:child_process');
+  const directory = mkdtempSync(join(tmpdir(), 'pc-agy-rec-'));
+  const transcriptPath = join(directory, 'transcript.jsonl');
+  const tui = new AgyInteractive();
+
+  const attempt: import('../../packages/core/src/workflow/runtime/runtime.js').ManagedAttempt = {
+    id: 'att-1',
+    run: 'r1',
+    directory,
+    checkout: directory,
+    fleet: 'f',
+    role: 'orchestrator',
+    runner: 'agy',
+    brief: 'brief text',
+    status: 'running',
+    created: '',
+    address: 'tmux:%5',
+    providerState: {
+      session: 'pc-run-r1',
+      paneId: '%5',
+      windowId: '@1',
+      address: 'tmux:%5',
+      run: 'r1',
+    },
+  };
+
+  vi.mocked(child.execFileSync).mockImplementation((_cmd, args) => {
+    const a = args as string[];
+    if (a[0] === 'list-panes') return '%5 0\n';
+    if (a[0] === 'display-message') return 'pc-run-r1 r1 %5';
+    return '';
+  });
+
+  try {
+    // 1. Mismatched Run ownership in providerState
+    await expect(
+      tui.recoverReceipt({
+        ...attempt,
+        providerState: { ...attempt.providerState, run: 'r-foreign' },
+      }),
+    ).rejects.toThrow(/Durable terminal Run ownership mismatch/);
+
+    // 2. Mismatched session in providerState
+    await expect(
+      tui.recoverReceipt({
+        ...attempt,
+        providerState: { ...attempt.providerState, session: 'pc-run-other' },
+      }),
+    ).rejects.toThrow(/Durable terminal Run ownership mismatch/);
+
+    // 3. Mismatched address in providerState
+    await expect(
+      tui.recoverReceipt({
+        ...attempt,
+        address: 'tmux:%5',
+        providerState: { ...attempt.providerState, address: 'tmux:%99' },
+      }),
+    ).rejects.toThrow(/Durable terminal address mismatch/);
+
+    // 4. Corrupt terminal.json throws explicit error
+    writeFileSync(join(directory, 'terminal.json'), '{ broken json');
+    await expect(tui.recoverReceipt(attempt)).rejects.toThrow(
+      /Corrupt terminal recovery evidence/,
+    );
+    rmSync(join(directory, 'terminal.json'));
+
+    // 5. Corrupt agy-native.json throws explicit error
+    writeFileSync(join(directory, 'agy-native.json'), '{ broken json');
+    await expect(tui.recoverReceipt(attempt)).rejects.toThrow(
+      /Corrupt native recovery evidence/,
+    );
+
+    // 6. Valid native output and transcript recovery updates providerState
+    writeFileSync(
+      join(directory, 'agy-native.json'),
+      JSON.stringify({ conversation_id: 'conv-rec', transcript_path: transcriptPath }),
+    );
+    writeFileSync(join(directory, 'agy-input.txt'), 'brief text');
+    writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          step_index: 0,
+          type: 'USER_INPUT',
+          source: 'USER_EXPLICIT',
+          status: 'DONE',
+          content: '<USER_REQUEST>\nbrief text\n</USER_REQUEST>',
+        }),
+        JSON.stringify({
+          step_index: 1,
+          type: 'PLANNER_RESPONSE',
+          source: 'MODEL',
+          status: 'DONE',
+          content: '[pc ready role=orchestrator attempt=att-1]\nready output',
+        }),
+      ].join('\n'),
+    );
+
+    const testAttempt = { ...attempt, conversation: undefined };
+    const receipt = await tui.recoverReceipt(testAttempt);
+    expect(receipt).toEqual({
+      conversation: 'conv-rec',
+      address: 'tmux:%5',
+      evidence: 'Native agy exact conversation and complete submitted brief',
+    });
+    expect(testAttempt.providerState?.conversation).toBe('conv-rec');
+    expect(testAttempt.providerState?.session).toBe('pc-run-r1');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+

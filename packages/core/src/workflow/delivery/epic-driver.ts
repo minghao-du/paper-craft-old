@@ -278,6 +278,7 @@ export async function driveEpic(
           config,
           run.turns,
           'Validated EPIC readiness and all scoped child results against original objective',
+          runner,
         );
         run.status = 'delivered';
         delete run.error;
@@ -335,7 +336,7 @@ export async function driveEpic(
           .digest('hex');
         execFileSync(
           'git',
-          ['worktree', 'add', '-b', `codex/task-${key.slice(0, 16)}`, checkout, config.base],
+          ['worktree', 'add', '-b', `task-${key.slice(0, 16)}`, checkout, config.base],
           { cwd: config.project },
         );
         workflowSource(config, checkout);

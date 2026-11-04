@@ -25,9 +25,7 @@ export interface IssueInput {
   blockedBy?: number[];
 }
 /** Runner completion is distinct from startup receipt. */
-export interface RoundRunner extends RunnerAdapter {
-  collect(attempt: ManagedAttempt): Promise<string>;
-}
+export type RoundRunner = RunnerAdapter;
 /** A result belongs to its persisted turn and execution attempt. */
 export interface IssueTurn extends ManagedAttempt {
   /** Explicit replacement after verified termination preserves the old attempt without recollecting it. */
@@ -173,7 +171,7 @@ export async function driveIssue(
         throw new Error('Checkout already exists; occupancy must be verified before reuse');
       execFileSync(
         'git',
-        ['worktree', 'add', '-b', `codex/task-${key.slice(0, 16)}`, checkout, config.base],
+        ['worktree', 'add', '-b', `task-${key.slice(0, 16)}`, checkout, config.base],
         { cwd: config.project },
       );
       workflowSource(config, checkout);
@@ -214,6 +212,7 @@ export async function driveIssue(
               config,
               task.turns,
               'Validated scoped Worker completion and Orchestrator done decision',
+              runner,
             );
             task.status = 'done';
             delete task.error;

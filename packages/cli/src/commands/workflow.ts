@@ -22,7 +22,8 @@ import { Command, Option } from 'commander';
 import { loadFleetConfig, type FleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import { preserveState } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
-import { managedRunner, quote } from '@paper-craft/core/workflow/runtime';
+import { quote } from '@paper-craft/core/workflow/runtime';
+import { createRunner } from '../workflow/composition.js';
 import { inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
@@ -37,6 +38,11 @@ interface Options {
   dir?: string;
   reason?: string;
   detailed?: boolean;
+}
+
+/** Controlled runners can be supplied by isolated CLI scenarios. */
+export interface WorkflowBoundary {
+  runner?: (provider: string) => ReturnType<typeof createRunner>;
 }
 
 function configured(command: Command): Command {
@@ -64,12 +70,13 @@ async function inspection(
   config: FleetConfig,
   detailed = true,
   registry?: RunRegistry,
+  getRunner: (provider: string) => ReturnType<typeof createRunner> = createRunner,
 ) {
   const attempt = run.orchestrator;
   let usable = false;
   if (attempt?.address && attempt.terminalSession) {
     try {
-      const observation = await managedRunner(run.provider).observe?.(attempt);
+      const observation = await getRunner(run.provider).observe?.(attempt);
       usable = !!observation && ['running', 'idle', 'waiting'].includes(observation.status);
     } catch {
       /* Unverified terminals remain inspectable through evidence only. */
@@ -150,7 +157,12 @@ function statusSummary(registry: RunRegistry) {
 }
 
 /** Register workflow file operations and read-only fleet checks, with JSON output by default. */
-export function registerWorkflowCommands(program: Command, opts: { human: () => boolean }): void {
+export function registerWorkflowCommands(
+  program: Command,
+  opts: { human: () => boolean },
+  boundary: WorkflowBoundary = {},
+): void {
+  const getRunner = boundary.runner ?? createRunner;
   const workflow = program
     .command('workflow')
     .description('Portable file-based task handoff and preservation');
@@ -164,7 +176,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       }),
     );
   registerSubagentCommands(workflow, opts);
-  registerStageCommands(workflow, opts);
+  registerStageCommands(workflow, opts, boundary);
   const orchestrator = workflow
     .command('orchestrator')
     .description('Create or inspect a subject-scoped managed Run');
@@ -185,7 +197,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           ...(options.detailed ? registry : statusSummary(registry)),
           inspection: await Promise.all(
             registry.runs.map(async (entry) => ({
-              ...(await inspection(entry, config, !!options.detailed, registry)),
+              ...(await inspection(entry, config, !!options.detailed, registry, getRunner)),
               ...(!options.detailed
                 ? diagnosticError(
                     config,
@@ -218,7 +230,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         'Create or reconnect a Run; automatically reconcile pending startup in the background',
       )
       .option('--detailed', 'Return the complete current structured result; logs remain referenced')
-      .requiredOption('--provider <provider>', 'Managed provider: codex, agy, or claude')
+      .requiredOption('--provider <provider>', 'Managed provider: agy')
       .option(
         '--dangerously-skip-permissions',
         'Auto-approve agy tool permissions for this Run (agy only)',
@@ -283,7 +295,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         const result = await (constraints !== undefined
           ? startRun(
               config,
-              managedRunner(options.provider),
+              getRunner(options.provider),
               { ...subject, kind },
               options.provider,
               requirements,
@@ -292,7 +304,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
             )
           : startRun(
               config,
-              managedRunner(options.provider),
+              getRunner(options.provider),
               { ...subject, kind },
               options.provider,
               requirements,
@@ -382,7 +394,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       config = loadFleetConfig(options.config);
       current = inspectRuns(config).runs.find((run) => run.id === id);
       if (!current) throw new Error(`Unknown Run: expected existing run with id ${id}`);
-      const runner = managedRunner(current.provider);
+      const runner = getRunner(current.provider);
       const result = await recoverRun(config, runner, id, {
         replaceOrchestrator: options.replace,
         stopped: (attempt) => runner.stopped(attempt),
@@ -401,7 +413,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         {
           ...result,
           blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
-          inspection: await inspection(current, config, !!options.detailed),
+          inspection: await inspection(current, config, !!options.detailed, undefined, getRunner),
           ...(diagnostics.length
             ? {
                 diagnostics: diagnostics.some((entry) => entry.diagnostics?.length)
@@ -473,7 +485,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       .description('Reconcile each incomplete Run; report unowned work as blocked'),
   ).action(async (options: Options) => {
     try {
-      const result = await recoverAllRuns(loadFleetConfig(options.config), managedRunner);
+      const result = await recoverAllRuns(loadFleetConfig(options.config), getRunner);
       output(result, opts.human());
       if (result.status === 'unknown') process.exitCode = 2;
     } catch (error) {
@@ -494,16 +506,14 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       config = loadFleetConfig(options.config);
       current = inspectRuns(config).runs.find((run) => run.id === id);
       if (!current) throw new Error(`Unknown Run: expected existing run with id ${id}`);
-      const runner = managedRunner(current.provider);
-      const result = await stopRun(config, runner, id, {
-        stopped: (attempt) => runner.stopped(attempt),
-      });
+      const runner = getRunner(current.provider);
+      const result = await stopRun(config, runner, id);
       current = inspectRuns(config).runs.find((entry) => entry.id === id)!;
       output(
         {
           ...result,
           blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
-          inspection: await inspection(current, config, !!options.detailed),
+          inspection: await inspection(current, config, !!options.detailed, undefined, getRunner),
           outcome: result.released
             ? 'succeeded'
             : result.terminated
@@ -528,7 +538,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           status: 'unknown',
           ...(current && config
             ? {
-                inspection: await inspection(current, config, !!options.detailed),
+                inspection: await inspection(current, config, !!options.detailed, undefined, getRunner),
                 observation: current.orchestrator?.observation,
                 evidence: current.orchestrator?.evidence,
               }
@@ -557,16 +567,14 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       config = loadFleetConfig(options.config);
       current = inspectRuns(config).runs.find((run) => run.id === id);
       if (!current) throw new Error(`Unknown Run: expected existing run with id ${id}`);
-      const runner = managedRunner(current.provider);
-      const result = await releaseRun(config, runner, id, {
-        stopped: (attempt) => runner.stopped(attempt),
-      });
+      const runner = getRunner(current.provider);
+      const result = await releaseRun(config, runner, id);
       current = inspectRuns(config).runs.find((entry) => entry.id === id)!;
       output(
         {
           ...result,
           blockers: options.detailed ? result.blockers : result.blockers.map(conciseError),
-          inspection: await inspection(current, config, !!options.detailed),
+          inspection: await inspection(current, config, !!options.detailed, undefined, getRunner),
           outcome: result.released
             ? 'succeeded'
             : result.terminated
@@ -620,7 +628,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   ).action(async (number: string, options: Options & { repository: string; retry?: boolean }) => {
     try {
       const config = loadFleetConfig(options.config);
-      const runner = managedRunner(
+      const runner = getRunner(
         orchestratorForSubject(config, options.repository, Number(number)).runner,
       );
       const epic = inspectEpicRun(config, options.repository, Number(number));
@@ -765,7 +773,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         }
 
         if (!options.repository) throw new Error('Target repository required');
-        const runner = managedRunner(
+        const runner = getRunner(
           orchestratorForSubject(config, options.repository, num).runner,
         );
         const epic = inspectEpicRun(config, options.repository, num);
@@ -800,7 +808,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       try {
         const config = loadFleetConfig(options.config);
         const issue = readIssue(config.project, Number(number));
-        const runner = managedRunner(
+        const runner = getRunner(
           orchestratorForSubject(config, issue.repository, issue.number).runner,
         );
         const task = inspectIssueRun(config, issue.repository, issue.number);

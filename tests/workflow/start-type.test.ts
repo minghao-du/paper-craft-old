@@ -22,9 +22,12 @@ vi.mock('@paper-craft/core/workflow/issue-driver', async (original) => ({
 vi.mock('@paper-craft/core/workflow/fleet-config', () => ({
   loadFleetConfig: () => ({ project: '/project', file: '/project/.epic-config.json' }),
 }));
-vi.mock('@paper-craft/core/workflow/runtime', async (original) => ({
-  ...(await original<typeof import('@paper-craft/core/workflow/runtime')>()),
-  managedRunner: vi.fn(() => ({ name: 'codex' })),
+vi.mock('../../packages/cli/src/workflow/composition.js', () => ({
+  createRunner: vi.fn((provider: string) => {
+    if (provider !== 'agy') throw new Error(`Unsupported managed provider '${provider}'. Only 'agy' is supported.`);
+    return { name: 'agy', preflight: async () => {} };
+  }),
+  launchStartupSupervisor: vi.fn(),
 }));
 
 afterEach(() => {
@@ -48,7 +51,7 @@ it('starts empty EPICs by title and rejects conflicting explicit types before la
       const program = new Command();
       registerWorkflowCommands(program, { human: () => false });
       await program.parseAsync(
-        ['workflow', 'orchestrator', 'start', '7', '--provider', 'codex', '--type', type],
+        ['workflow', 'orchestrator', 'start', '7', '--provider', 'agy', '--type', type],
         { from: 'user' },
       );
       if (type === kind) {
@@ -56,7 +59,7 @@ it('starts empty EPICs by title and rejects conflicting explicit types before la
           expect.anything(),
           expect.anything(),
           { repository: 'org/repo', number: 7, title, body: '', kind },
-          'codex',
+          'agy',
           undefined,
           undefined,
         );
@@ -76,7 +79,7 @@ it('requires a valid explicit type before reading GitHub or launching a Run', as
     registerWorkflowCommands(program, { human: () => false });
     await expect(
       program.parseAsync(
-        ['workflow', 'orchestrator', 'start', '7', '--provider', 'codex', ...args],
+        ['workflow', 'orchestrator', 'start', '7', '--provider', 'agy', ...args],
         { from: 'user' },
       ),
     ).rejects.toThrow();
@@ -101,7 +104,7 @@ it('captures multiline Requirements and rejects invalid input before tracker or 
     const program = new Command();
     registerWorkflowCommands(program, { human: () => false });
     await program.parseAsync(
-      ['workflow', 'orchestrator', 'start', '7', '--provider', 'codex', '--type', 'issue', ...args],
+      ['workflow', 'orchestrator', 'start', '7', '--provider', 'agy', '--type', 'issue', ...args],
       { from: 'user' },
     );
   };

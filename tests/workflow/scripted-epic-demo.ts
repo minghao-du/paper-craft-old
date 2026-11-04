@@ -131,9 +131,6 @@ export async function prepareScriptedEpic(native?: RunnerAdapter, brief?: string
     async collect(a: ManagedAttempt) {
       return (await this.result(a))!;
     },
-    collectable() {
-      return true;
-    },
   };
   const run = await startRun(
     config,

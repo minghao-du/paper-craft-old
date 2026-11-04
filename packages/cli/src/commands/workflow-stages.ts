@@ -5,7 +5,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadFleetConfig, type FleetConfig } from '@paper-craft/core/workflow/fleet-config';
-import { managedRunner } from '@paper-craft/core/workflow/runtime';
+import { createRunner } from '../workflow/composition.js';
 import {
   inspectRuns,
   closeStageEpic,
@@ -30,7 +30,7 @@ import { output } from '../utils/output.js';
 
 /** Controlled runners and external facts can be supplied by isolated CLI scenarios only. */
 export interface StageBoundary {
-  runner?: (provider: string) => ReturnType<typeof managedRunner>;
+  runner?: (provider: string) => ReturnType<typeof createRunner>;
   pullRequests?: StagePullRequests;
   closure?: (
     config: FleetConfig,
@@ -128,7 +128,7 @@ export function registerStageCommands(
             run.orchestrator?.status !== 'running'
           )
             throw new Error('Inactive or wrong Orchestrator authority');
-          const runner = (boundary.runner ?? managedRunner)(run.provider);
+          const runner = (boundary.runner ?? createRunner)(run.provider);
           let result: unknown;
           if (operation === 'dispatch') {
             if (!o.input) throw new Error('Expected --input assignment JSON');

@@ -34,11 +34,13 @@ Skills 以 TypeScript 模块编写——可测试、可调试且类型安全。s
 
 Run 的活跃托管 Orchestrator attempt 决定调度、验收和返工。
 Fleet 是运行时资源边界，不是调度代理。Managed Workflow
-跨各 provider 协同 run、dispatch、receipt 与 stage execution。
+跨各阶段协同 run、dispatch、receipt 与 stage execution。Agy 是受支持的
+托管 provider。
 
 Managed Worker 接收不可变的任务说明文件，并发布持久化 receipt。
 Stage execution 与 receipt 通过权威 Run Registry 进行验收。
-Runner 命令与适配器独立于平台。Claude Code 不是必需的。
+Runner 命令与适配器独立于平台。原有的 Claude 与 Codex 运行时实现已移除；
+不提供旧版兼容层或投机性的多 provider 抽象。
 
 Checkout 与目录锁隔离并发 worker。未知占用状态绝不意味着空闲。
 落地时验证已测试的 PR HEAD 和检查结果，保全证据，
@@ -46,4 +48,4 @@ Checkout 与目录锁隔离并发 worker。未知占用状态绝不意味着空�
 
 ## VIII. 宿主适配器依赖 Core
 
-pnpm 工作区分离 `packages/core`、`packages/cli` 和 `packages/mcp`。Core 暴露领域数据与服务，不包含 Commander、MCP 或模型宿主上下文。CLI 和 MCP 依赖 Core 的公共包导出；Core 绝不导入适配器。宿主专用的注册、响应格式和进程生命周期属于适配器。未来的原生 DeepSeek 插件也遵循同一依赖方向。共享 skills 仍位于仓库根目录。CLI 命令、配置路径和 JSONL 格式是明确的公共契约。
+pnpm 工作区分离 `packages/core`、`packages/cli` 和 `packages/mcp`。Core 暴露领域数据与服务，不包含 Commander、MCP 或模型宿主上下文。CLI 和 MCP 依赖 Core 的公共包导出；Core 绝不导入适配器。宿主专用的注册、响应格式和进程生命周期属于适配器。前台与后台入口点显式组合执行依赖；Core 监督算法通过宿主启动接缝接收依赖，而无需导入具体提供者。通用 Shell 引号转义辅助函数保留在 Core 中以服务不同宿主的调用方，而非专属于特定提供者。Core 持久化不透明的提供者恢复状态，而不解析提供者专用的内部字段；提供者选择属于宿主组合层，Core 仅负责提供者身份一致性校验。提供者适配器自行验证其会话、窗格、权限与执行位置证据，而 Dashboard 观测严格保持只读且无执行依赖。未来的原生 DeepSeek 插件也遵循同一依赖方向。共享 skills 仍位于仓库根目录。CLI 命令、配置路径和 JSONL 格式是明确的公共契约。

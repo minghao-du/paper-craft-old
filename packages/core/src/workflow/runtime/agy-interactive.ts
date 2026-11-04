@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, linkSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { quote, type ManagedAttempt, type ExecutionObservation } from './runtime.js';
+import { quote, type ManagedAttempt, type ExecutionObservation, type ExecutionTermination } from './runtime.js';
 
 const delay = () => new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -22,11 +22,12 @@ type NativeStep = {
 export class AgyInteractive {
   /** Rebuild only a missing owned Run terminal after all historical executions exited. */
   async prepareReplacement(prior: ManagedAttempt, attempts: ManagedAttempt[]): Promise<void> {
-    if (!prior.run || prior.terminalSession !== `pc-run-${prior.run}`)
+    const session =
+      (prior.providerState?.session as string | undefined) ?? prior.terminalSession;
+    if (!prior.run || session !== `pc-run-${prior.run}`)
       throw new Error(
         'Unsupported legacy agy layout; end old executions before starting a new Run',
       );
-    const session = prior.terminalSession;
     let sessions: string[];
     try {
       sessions = execFileSync('tmux', ['list-sessions', '-F', '#{session_name} #{@pc_run_id}'], {
@@ -54,24 +55,30 @@ export class AgyInteractive {
 
   private verifyTerminal(a: ManagedAttempt): void {
     if (!a.run) return;
-    if (a.terminalSession !== `pc-run-${a.run}`)
+    const session = (a.providerState?.session as string | undefined) ?? a.terminalSession;
+    if (session !== `pc-run-${a.run}`)
       throw new Error('Unsupported legacy agy layout; historical execution will not restart');
     const identity = execFileSync(
       'tmux',
       ['display-message', '-p', '-t', this.address(a), '#{session_name} #{@pc_run_id} #{pane_id}'],
       { encoding: 'utf8' },
     ).trim();
-    if (identity !== `${a.terminalSession} ${a.run} ${this.address(a)}`)
+    if (identity !== `${session} ${a.run} ${this.address(a)}`)
       throw new Error('Run session or exact pane ownership unverified');
   }
 
   private native(a: ManagedAttempt): Record<string, string> | undefined {
+    const file = join(a.directory, 'agy-native.json');
+    if (!existsSync(file)) return undefined;
+    let n: Record<string, string>;
     try {
-      const n = JSON.parse(readFileSync(join(a.directory, 'agy-native.json'), 'utf8'));
-      return !a.conversation || n.conversation_id === a.conversation ? n : undefined;
-    } catch {
-      return undefined;
+      n = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (error) {
+      throw new Error(`Corrupt native recovery evidence in ${file}: ${String(error)}`, {
+        cause: error,
+      });
     }
+    return !a.conversation || n.conversation_id === a.conversation ? n : undefined;
   }
 
   private steps(a: ManagedAttempt): NativeStep[] {
@@ -123,6 +130,9 @@ export class AgyInteractive {
   }
 
   private address(a: ManagedAttempt): string {
+    if (!a.address && a.providerState?.address && typeof a.providerState.address === 'string') {
+      a.address = a.providerState.address;
+    }
     if (!a.address && existsSync(join(a.directory, 'terminal.json'))) {
       try {
         a.address = (
@@ -190,6 +200,33 @@ export class AgyInteractive {
     if (this.panes().has(addr)) throw new Error('Agy pane termination unverified');
     writeFileSync(join(a.directory, 'agy-terminated'), addr);
     return { evidence: 'Owned Agy pane terminated and absence verified' };
+  }
+
+  async terminate(a: ManagedAttempt): Promise<ExecutionTermination> {
+    try {
+      if (await this.stopped(a)) {
+        return {
+          status: 'terminated',
+          evidence: 'Owned Agy process already exited or terminated',
+        };
+      }
+      const receipt = await this.cancel(a);
+      if (!(await this.stopped(a))) {
+        return {
+          status: 'unconfirmed',
+          error: 'Agy pane termination unverified after cancellation',
+        };
+      }
+      return {
+        status: 'terminated',
+        evidence: receipt.evidence,
+      };
+    } catch (error) {
+      return {
+        status: 'unconfirmed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   async terminated(a: ManagedAttempt): Promise<boolean> {
@@ -358,10 +395,22 @@ export class AgyInteractive {
           { encoding: 'utf8' },
         ).trim();
     }
-    a.paneId = this.address(a);
-    a.windowId = execFileSync('tmux', ['display-message', '-p', '-t', a.paneId, '#{window_id}'], {
+    const paneId = this.address(a);
+    const windowId = execFileSync('tmux', ['display-message', '-p', '-t', paneId, '#{window_id}'], {
       encoding: 'utf8',
     }).trim();
+    a.providerState = {
+      ...(a.providerState ?? {}),
+      session,
+      paneId,
+      windowId,
+      address: a.address,
+      conversation: a.conversation,
+      run: a.run,
+      ...(a.dangerouslySkipPermissions !== undefined
+        ? { dangerouslySkipPermissions: a.dangerouslySkipPermissions }
+        : {}),
+    };
     writeFileSync(
       join(a.directory, 'terminal.json'),
       JSON.stringify({
@@ -369,8 +418,8 @@ export class AgyInteractive {
         conversation: a.conversation,
         session,
         run: a.run,
-        paneId: a.paneId,
-        windowId: a.windowId,
+        paneId,
+        windowId,
       }),
     );
     execFileSync('tmux', ['set-option', '-p', '-t', this.address(a), 'remain-on-exit', 'on']);
@@ -399,30 +448,71 @@ export class AgyInteractive {
   }
 
   async recoverReceipt(a: ManagedAttempt) {
+    const state = (a.providerState as Record<string, unknown> | undefined) ?? {};
+    if (a.run && state.run && state.run !== a.run) {
+      throw new Error('Durable terminal Run ownership mismatch');
+    }
+    const stateSession = state.session as string | undefined;
+    if (a.run && stateSession && stateSession !== `pc-run-${a.run}`) {
+      throw new Error('Durable terminal Run ownership mismatch');
+    }
+    if (a.address && state.address && state.address !== a.address) {
+      throw new Error('Durable terminal address mismatch');
+    }
+    if (state.paneId && this.panes().has(this.address(a)) && this.address(a) !== state.paneId) {
+      throw new Error('Durable terminal pane ownership mismatch');
+    }
+
     if (existsSync(join(a.directory, 'terminal.json'))) {
-      const terminal = JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
+      let terminal: {
         address?: string;
         session?: string;
         run?: string;
         paneId?: string;
         windowId?: string;
+        conversation?: string;
       };
+      try {
+        terminal = JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8'));
+      } catch (error) {
+        throw new Error(`Corrupt terminal recovery evidence in ${a.directory}: ${String(error)}`, {
+          cause: error,
+        });
+      }
+      if (typeof terminal !== 'object' || terminal === null) {
+        throw new Error(`Corrupt terminal recovery evidence in ${a.directory}: expected object`);
+      }
       if (a.run && (terminal.run !== a.run || terminal.session !== `pc-run-${a.run}`))
         throw new Error('Durable terminal Run ownership mismatch');
       if (a.address && terminal.address !== a.address)
         throw new Error('Durable terminal address mismatch');
       a.address ??= terminal.address;
       a.terminalSession ??= terminal.session;
-      a.paneId ??= terminal.paneId;
-      a.windowId ??= terminal.windowId;
+      a.providerState = {
+        ...state,
+        session: terminal.session ?? state.session,
+        paneId: terminal.paneId ?? state.paneId,
+        windowId: terminal.windowId ?? state.windowId,
+        address: terminal.address ?? state.address,
+        conversation: terminal.conversation ?? state.conversation,
+        run: terminal.run ?? state.run,
+      };
+    } else if (a.providerState) {
+      a.address ??= state.address as string | undefined;
+      a.terminalSession ??= stateSession;
+      a.conversation ??= state.conversation as string | undefined;
     }
-    if (a.run && a.terminalSession !== `pc-run-${a.run}`)
+    const session = (a.providerState?.session as string | undefined) ?? a.terminalSession;
+    if (a.run && session !== `pc-run-${a.run}`)
       throw new Error('Unsupported legacy agy layout; historical execution will not restart');
     if (a.address && this.panes().get(this.address(a)) === '0') this.verifyTerminal(a);
     const n = this.native(a);
     if (!n?.conversation_id || !a.address || this.panes().get(this.address(a)) !== '0')
       return undefined;
     a.conversation ??= n.conversation_id;
+    if (a.providerState) {
+      a.providerState.conversation = a.conversation;
+    }
     if (existsSync(join(a.directory, 'terminal.json'))) {
       try {
         const terminal = JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
@@ -466,8 +556,23 @@ export class AgyInteractive {
 
   async result(a: ManagedAttempt, id: string): Promise<string | undefined> {
     refreshStartupAttempt(a);
-    if (this.native(a)?.agent_state !== 'idle' || (a.startupGate && !a.activation))
+    if (
+      this.native(a)?.agent_state !== 'idle' ||
+      (a.startupGate && (!a.activation || a.activation.status !== 'delivered'))
+    )
       return undefined;
+    if (existsSync(join(a.directory, 'terminal.json'))) {
+      try {
+        const terminal = JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
+          run?: string;
+          session?: string;
+        };
+        if (a.run && terminal.run && terminal.run !== a.run) return undefined;
+        if (a.run && terminal.session && terminal.session !== `pc-run-${a.run}`) return undefined;
+      } catch {
+        /* ignore */
+      }
+    }
     const isDispatch = id === (a.dispatchId ?? a.id);
     const messageFile = join(a.directory, `message-${id}.json`);
     let targetBrief: string;
@@ -509,9 +614,17 @@ export class AgyInteractive {
 
   async messageReceipt(a: ManagedAttempt, message: { id: string; brief: string }) {
     this.verifyTerminal(a);
-    return this.steps(a).some((s) => this.input(s, message.brief))
-      ? 'Native exact agy activation input'
-      : undefined;
+    const delivered = this.steps(a).some((s) => this.input(s, message.brief));
+    if (!delivered) return undefined;
+    const messageFile = join(a.directory, `message-${message.id}.json`);
+    if (!existsSync(messageFile)) {
+      try {
+        writeFileSync(messageFile, JSON.stringify(message));
+      } catch {
+        /* ignore */
+      }
+    }
+    return 'Native exact agy message input';
   }
   async send(a: ManagedAttempt, message: { id: string; brief: string }) {
     this.verifyTerminal(a);
@@ -561,3 +674,6 @@ export class AgyInteractive {
     };
   }
 }
+
+export { AgyRunner } from './agy-runner.js';
+

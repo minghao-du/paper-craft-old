@@ -25,6 +25,7 @@ test('managed role startup requires actual role evidence and recovery never rela
   };
   let initialized = false,
     launches = 0;
+  let run: any;
   const runner = {
     name: 'agy',
     interactive: true,
@@ -32,7 +33,8 @@ test('managed role startup requires actual role evidence and recovery never rela
     async result() {
       return undefined;
     },
-    async stopped() {
+    async stopped(a?: ManagedAttempt) {
+      if (a && a.role === 'orchestrator' && a.id !== run?.orchestratorId) return false;
       return true;
     },
     async start(a: ManagedAttempt) {
@@ -59,7 +61,7 @@ test('managed role startup requires actual role evidence and recovery never rela
   };
   try {
     writeFileSync(config.file, JSON.stringify({ clone_root: 'pool', local_worktrees: true }));
-    const run = await startRun(
+    run = await startRun(
       config,
       runner,
       { repository: 'o/r', number: 7, kind: 'epic', title: 'bounded scope', body: 'scope' },

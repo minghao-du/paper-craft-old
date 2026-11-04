@@ -19,6 +19,11 @@ export {
   startupRecoveryStatus,
   ensureStartupRecovery,
   stopStartupRecovery,
+  superviseStartup,
+  setStartupSupervisorLauncher,
+  getStartupSupervisorLauncher,
+  type StartupSupervisorLauncher,
+  type SuperviseStartupOptions,
 } from '../runtime/startup-supervisor.js';
 
 function attempts(registry: RunRegistry, runId: string): ManagedAttempt[] {
@@ -40,6 +45,91 @@ function attempts(registry: RunRegistry, runId: string): ManagedAttempt[] {
 const pending = (a: ManagedAttempt) =>
   !a.startupStopped &&
   (a.status !== 'running' || (a.startupGate && a.activation?.status !== 'delivered'));
+
+/** Reconciliation outcome of an Attempt's startup phase. */
+export type StartupOutcome = 'ready' | 'pending' | 'failed';
+
+/** Inspect the durable startup outcome for an attempt. */
+export function startupOutcome(attempt: ManagedAttempt): StartupOutcome {
+  if (attempt.startupStopped) return 'failed';
+  if (!attempt.startupGate || (attempt.status === 'running' && attempt.activation?.status === 'delivered'))
+    return 'ready';
+  return 'pending';
+}
+
+/** Options for requesting managed startup. */
+export interface RequestManagedStartupOptions {
+  /** Waiting deadline in milliseconds. If specified > 0, waits/polls until ready/failed or deadline expires. */
+  timeoutMs?: number;
+  /** Polling interval when waiting against a deadline. Defaults to 50ms. */
+  intervalMs?: number;
+  /** Explicit attempt identifier to target. */
+  attemptId?: string;
+  /** Target worker dispatch identifier. */
+  dispatchId?: string;
+  /** Target workflow role. */
+  role?: string;
+}
+
+/** Result returned when requesting managed startup reconciliation. */
+export interface ManagedStartupResult {
+  outcome: StartupOutcome;
+  attempt?: ManagedAttempt;
+  error?: string;
+}
+
+/**
+ * Request managed startup for an Orchestrator or Worker.
+ * Returns ready, pending, or failed outcome without caller coordinating internal provider steps.
+ */
+export async function requestManagedStartup(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  runId: string,
+  options?: RequestManagedStartupOptions,
+): Promise<ManagedStartupResult> {
+  const timeoutMs = options?.timeoutMs ?? 0;
+  const intervalMs = options?.intervalMs ?? 50;
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    await reconcileStartup(config, runner, runId);
+
+    const snapshot = inspectRuns(config);
+    const run = snapshot.runs.find((r) => r.id === runId);
+    if (!run) {
+      return { outcome: 'failed', error: `Unknown Run: ${runId}` };
+    }
+
+    let targetAttempt: ManagedAttempt | undefined;
+    if (options?.attemptId) {
+      targetAttempt = attempts(snapshot, runId).find((a) => a.id === options.attemptId);
+    } else if (options?.dispatchId) {
+      targetAttempt = snapshot.dispatches?.find((d) => d.id === options.dispatchId)?.attempts.at(-1);
+    } else {
+      targetAttempt = run.orchestrator ?? inspectOrchestrator(config, runId);
+    }
+
+    if (!targetAttempt) {
+      if (run.launchStarted && Date.now() < deadline) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(intervalMs, Math.max(0, deadline - Date.now()))),
+        );
+        continue;
+      }
+      return { outcome: 'pending', error: 'Target attempt not established' };
+    }
+
+    const outcome = startupOutcome(targetAttempt);
+    if (outcome !== 'pending' || Date.now() >= deadline) {
+      return { outcome, attempt: targetAttempt, error: targetAttempt.error };
+    }
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(intervalMs, Math.max(0, deadline - Date.now()))),
+    );
+  }
+}
 
 /** Inspect whether this Run still owns unfinished startup work. */
 export function startupPending(
@@ -92,7 +182,12 @@ export async function reconcileStartup(
     }
   }
   if (owner.launchStarted === true && !owner.orchestrator) {
-    const durable = inspectOrchestrator(config, runId);
+    let durable;
+    try {
+      durable = inspectOrchestrator(config, runId);
+    } catch {
+      return false;
+    }
     if (!durable || durable.run !== runId || durable.id !== owner.orchestratorId) return true;
     updateRunRegistry(config, (registry) => {
       const run = registry.runs.find((r) => r.id === runId);
@@ -108,7 +203,7 @@ export async function reconcileStartup(
     });
   }
   for (const observed of attempts(inspectRuns(config), runId).filter(
-    (a) => pending(a) && (a.startupGate || runner.automaticStartup),
+    (a) => pending(a) && a.startupGate,
   )) {
     try {
       if (await runner.stopped?.(observed)) {
@@ -131,7 +226,8 @@ export async function reconcileStartup(
           waiting = true;
           continue;
         }
-        verifyRoleInitialization(observed);
+        if (observed.initialization) verifyRoleInitialization(observed);
+        else if (observed.persistent) throw new Error('Missing initialization context');
         updateRunRegistry(config, (registry) => {
           const current = attempts(registry, runId).find((a) => a.id === observed.id);
           if (!current) return;
@@ -140,14 +236,7 @@ export async function reconcileStartup(
               error: current.error,
               resolvedAt: new Date().toISOString(),
             });
-          Object.assign(current, receipt, { status: 'running', error: undefined });
-          if (
-            runner.automaticStartup &&
-            current.role === 'orchestrator' &&
-            !current.dispatchId &&
-            runner.name === 'agy'
-          )
-            current.startupGate = true;
+          Object.assign(current, receipt, { status: 'running', error: undefined, startupGate: true });
           const run = registry.runs.find((r) => r.id === runId)!;
           if (current.id === run.orchestratorId) run.lifecycle = 'running';
           else {
@@ -157,13 +246,14 @@ export async function reconcileStartup(
         });
       }
       const current = attempts(inspectRuns(config), runId).find((a) => a.id === observed.id);
-      if (!current?.startupGate || current.activation?.status === 'delivered') continue;
+      if (!current || current.activation?.status === 'delivered') continue;
       // The completed ready turn must be independently visible before sending another input.
-      if (!(await runner.recoverReceipt?.(current))) {
+      if (runner.recoverReceipt && !(await runner.recoverReceipt(current))) {
         waiting = true;
         continue;
       }
-      verifyRoleInitialization(current);
+      if (current.initialization) verifyRoleInitialization(current);
+      else if (current.persistent) throw new Error('Missing initialization context');
       const run = inspectRuns(config).runs.find((r) => r.id === runId)!;
       if (run.lifecycle !== 'running') {
         waiting = true;

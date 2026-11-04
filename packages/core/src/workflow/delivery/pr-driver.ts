@@ -162,11 +162,17 @@ export async function drivePullRequest(
               evidence: [{ path, hash: createHash('sha256').update(body).digest('hex') }],
             });
           }
-          await acceptStageReceipt(config, pending.authority, receipt.id, async () => ({
-            currentRevision: live.head,
-            ownership: true,
-            evidence: 'Reconciled actual GitHub merge at reserved head and merge commit',
-          }));
+          await acceptStageReceipt(
+            config,
+            pending.authority,
+            receipt.id,
+            async () => ({
+              currentRevision: live.head,
+              ownership: true,
+              evidence: 'Reconciled actual GitHub merge at reserved head and merge commit',
+            }),
+            runner,
+          );
         }
         state.mergeCommit = live.mergeCommit;
         state.status = 'merged';
@@ -319,16 +325,22 @@ export async function drivePullRequest(
             { path: evidencePath, hash: createHash('sha256').update(turn.result).digest('hex') },
           ],
         });
-        await acceptStageReceipt(config, dispatch.authority, claim.id, async () => ({
-          currentRevision: (await github.read(state.pr)).head,
-          ownership:
-            inspectRuns(config).resources?.some(
-              (resource) =>
-                resource.runId === dispatch!.runId &&
-                resource.path === dispatch!.attempts[0].checkout,
-            ) === true,
-          evidence: 'Live PR head and exclusive reserved checkout',
-        }));
+        await acceptStageReceipt(
+          config,
+          dispatch.authority,
+          claim.id,
+          async () => ({
+            currentRevision: (await github.read(state.pr)).head,
+            ownership:
+              inspectRuns(config).resources?.some(
+                (resource) =>
+                  resource.runId === dispatch!.runId &&
+                  resource.path === dispatch!.attempts[0].checkout,
+              ) === true,
+            evidence: 'Live PR head and exclusive reserved checkout',
+          }),
+          runner,
+        );
       }
       const mergeDispatch = dispatch
         ? await dispatchStage(config, runner, {
@@ -379,11 +391,17 @@ export async function drivePullRequest(
           outcome: 'completed',
           evidence: [{ path, hash: createHash('sha256').update(body).digest('hex') }],
         });
-        await acceptStageReceipt(config, mergeDispatch.authority, claim.id, async () => ({
-          currentRevision: live.head,
-          ownership: true,
-          evidence: 'Verified actual GitHub merge',
-        }));
+        await acceptStageReceipt(
+          config,
+          mergeDispatch.authority,
+          claim.id,
+          async () => ({
+            currentRevision: live.head,
+            ownership: true,
+            evidence: 'Verified actual GitHub merge',
+          }),
+          runner,
+        );
       }
       state.status = 'merged';
       state.mergeCommit = merged.mergeCommit;

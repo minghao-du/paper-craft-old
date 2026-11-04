@@ -18,12 +18,12 @@ import {
   updateRunRegistry,
 } from '../../packages/core/src/workflow/run/run-driver.js';
 import {
-  managedRunner,
   type ManagedAttempt,
 } from '../../packages/core/src/workflow/runtime/runtime.js';
+import { createRunner } from '../../packages/cli/src/workflow/composition.js';
 import { initializeRole } from './initialize-role.js';
 
-test.each(['agy', 'codex', 'claude'])(
+test.each(['agy'])(
   'late %s readiness activates the original attempt and continues it once',
   async (name) => {
     const f = await fixture(name);
@@ -47,6 +47,10 @@ test.each(['agy', 'codex', 'claude'])(
       expect((await startRun(f.config, f.runner, f.run.subject, name)).orchestratorId).toBe(
         f.run.orchestratorId,
       );
+    } catch (err) {
+      const logFile = join(directory, 'startup.log');
+      if (existsSync(logFile)) console.error('STARTUP LOG:\n' + readFileSync(logFile, 'utf8'));
+      throw err;
     } finally {
       f.close();
     }
@@ -159,7 +163,7 @@ test('replacement revokes the predecessor and never inherits its delivered activ
   }
 });
 
-async function fixture(name = 'codex') {
+async function fixture(name = 'agy') {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-startup-fixture-')));
   mkdirSync(join(project, 'pool'));
   const config = {
@@ -226,52 +230,97 @@ test.each(['src', 'dist'])(
     const bin = join(f.project, 'bin');
     mkdirSync(bin);
     const submitted = join(f.project, 'submitted.json');
-    writeFileSync(join(bin, 'tmux'), '#!/usr/bin/env node\nprocess.stdout.write("%1 0\\n");\n');
+    updateRunRegistry(f.config, (registry) => {
+      const o = registry.runs[0].orchestrator!;
+      o.terminalSession = `pc-run-${f.run.id}`;
+      o.address = 'tmux:%1';
+      o.providerState = {
+        session: `pc-run-${f.run.id}`,
+        address: 'tmux:%1',
+        run: f.run.id,
+      };
+    });
+    const attempt = inspectRuns(f.config).runs[0].orchestrator!;
     writeFileSync(
-      join(bin, 'codex'),
-      `#!/usr/bin/env node\nimport fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(submitted)}, JSON.stringify(process.argv.slice(2)));process.stdout.write('queued');\n`,
+      join(attempt.directory, 'terminal.json'),
+      JSON.stringify({
+        address: 'tmux:%1',
+        session: `pc-run-${f.run.id}`,
+        run: f.run.id,
+      }),
     );
-    chmodSync(join(bin, 'tmux'), 0o700);
-    chmodSync(join(bin, 'codex'), 0o700);
-    const attempt = f.run.orchestrator!;
-    writeFileSync(join(attempt.directory, 'terminal.json'), JSON.stringify({ address: 'tmux:%1' }));
     const native = join(f.project, 'native.jsonl');
-    writeFileSync(join(attempt.directory, 'codex-native.json'), JSON.stringify({ path: native }));
-    const events = [
-      { type: 'session_meta', payload: { id: 'original' } },
+    writeFileSync(
+      join(attempt.directory, 'agy-native.json'),
+      JSON.stringify({ conversation_id: 'original', transcript_path: native, agent_state: 'idle' }),
+    );
+    const events: Array<{
+      step_index: number;
+      type: string;
+      source: string;
+      status: string;
+      content?: string;
+    }> = [
       {
-        type: 'event_msg',
-        payload: {
-          thread_id: 'original',
-          turn_id: 'init',
-          item: {
-            type: 'UserMessage',
-            content: [
-              {
-                text: `[pc attempt=${attempt.id} dispatch=${attempt.id} message=initial]\n${attempt.brief}`,
-              },
-            ],
-          },
-        },
+        step_index: 0,
+        type: 'USER_INPUT',
+        source: 'USER_EXPLICIT',
+        status: 'DONE',
+        content: attempt.brief,
       },
     ];
-    const save = () => writeFileSync(native, events.map((e) => JSON.stringify(e)).join('\n'));
+    const save = () => writeFileSync(native, events.map((e) => JSON.stringify(e)).join('\n') + '\n');
     save();
+
+    writeFileSync(
+      join(bin, 'tmux'),
+      `#!/usr/bin/env node
+import fs from 'node:fs';
+const args = process.argv.slice(2);
+if (args[0] === 'list-panes') {
+  process.stdout.write('%1 0\\n');
+} else if (args[0] === 'display-message') {
+  process.stdout.write(${JSON.stringify(`pc-run-${f.run.id} ${f.run.id} %1\n`)});
+} else if (args[0] === 'list-sessions') {
+  process.stdout.write(${JSON.stringify(`pc-run-${f.run.id} ${f.run.id}\n`)});
+} else if (args[0] === 'load-buffer') {
+  const filePath = args.at(-1);
+  if (filePath && fs.existsSync(filePath)) {
+    const text = fs.readFileSync(filePath, 'utf8');
+    fs.writeFileSync(${JSON.stringify(submitted)}, JSON.stringify(['queue']));
+    try {
+      const raw = fs.readFileSync(${JSON.stringify(native)}, 'utf8');
+      const lines = raw.trim() ? raw.trim().split('\\n').map(l => JSON.parse(l)) : [];
+      lines.push({
+        step_index: lines.length,
+        type: 'USER_INPUT',
+        source: 'USER_EXPLICIT',
+        status: 'DONE',
+        content: '<USER_REQUEST>\\n' + text + '\\n</USER_REQUEST>',
+      });
+      fs.writeFileSync(${JSON.stringify(native)}, lines.map(l => JSON.stringify(l)).join('\\n') + '\\n');
+    } catch {}
+  }
+}
+`,
+    );
+    chmodSync(join(bin, 'tmux'), 0o700);
     const harness = join(f.project, 'caller.ts');
     const source = join(process.cwd(), 'packages/core', variant, 'workflow');
+    const cliSource = join(process.cwd(), 'packages/cli', variant, 'workflow');
     const extension = variant === 'src' ? '.ts' : '.js';
     writeFileSync(
       harness,
       `
     import { loadFleetConfig } from ${JSON.stringify(source + '/fleet/fleet-config' + extension)};
     import { startRun, inspectRuns } from ${JSON.stringify(source + '/run/run-driver' + extension)};
-    import { managedRunner } from ${JSON.stringify(source + '/runtime/runtime' + extension)};
+    import { createRunner } from ${JSON.stringify(cliSource + '/composition' + extension)};
     const config = loadFleetConfig(process.argv[2]);
     const run = inspectRuns(config).runs[0];
-    const runner = managedRunner('codex');
+    const runner = createRunner('agy');
     runner.preflight = async () => {};
     runner.start = async () => { throw new Error('Repeated start must never launch another provider'); };
-    await startRun(config, runner, run.subject, 'codex');
+    await startRun(config, runner, run.subject, 'agy');
   `,
     );
     writeFileSync(join(f.project, 'package.json'), JSON.stringify({ type: 'module' }));
@@ -282,7 +331,7 @@ test.each(['src', 'dist'])(
         [
           '--import',
           join(process.cwd(), 'node_modules/tsx/dist/loader.mjs'),
-          '--conditions=paper-craft-source',
+          ...(variant === 'src' ? ['--conditions=paper-craft-source'] : []),
           harness,
           f.config.file,
         ],
@@ -305,24 +354,17 @@ test.each(['src', 'dist'])(
       invoke();
       await wait(() => startupRecoveryStatus(f.config, f.run.id).active);
       events.push({
-        type: 'event_msg',
-        payload: {
-          thread_id: 'original',
-          turn_id: 'init',
-          item: {
-            type: 'AgentMessage',
-            content: [{ text: `[pc ready role=orchestrator attempt=${attempt.id}]` }],
-          },
-        },
+        step_index: 1,
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'RUNNING',
+        content: `[pc ready role=orchestrator attempt=${attempt.id}]`,
       });
       // A ready line in an unfinished response must not activate the Run.
       save();
       await new Promise((r) => setTimeout(r, 2200));
       expect(existsSync(submitted)).toBe(false);
-      events.push({
-        type: 'event_msg',
-        payload: { type: 'task_complete', turn_id: 'init' },
-      } as (typeof events)[number]);
+      events[1].status = 'DONE';
       save();
       await wait(() => existsSync(submitted));
       await wait(() => !startupRecoveryStatus(f.config, f.run.id).active);
@@ -332,6 +374,10 @@ test.each(['src', 'dist'])(
       expect(current.orchestrator?.activation?.status).toBe('delivered');
       expect(current.lifecycle).toBe('running');
       expect(JSON.parse(readFileSync(submitted, 'utf8'))).toContain('queue');
+    } catch (err) {
+      const logFile = join(directory, 'startup.log');
+      if (existsSync(logFile)) console.error('STARTUP LOG:\n' + readFileSync(logFile, 'utf8'));
+      throw err;
     } finally {
       if (startupRecoveryStatus(f.config, f.run.id).active) process.kill(lockPid(), 'SIGTERM');
       await wait(() => !startupRecoveryStatus(f.config, f.run.id).active);
@@ -341,7 +387,7 @@ test.each(['src', 'dist'])(
   30000,
 );
 
-test.each(['codex', 'agy', 'claude'])(
+test.each(['agy'])(
   '%s result collection refreshes a stale attempt and ignores the completed ready turn',
   async (name) => {
     const f = await fixture(name);
@@ -351,136 +397,57 @@ test.each(['codex', 'agy', 'claude'])(
     const events: object[] = [];
     const save = () => writeFileSync(path, events.map((e) => JSON.stringify(e)).join('\n'));
     const ready = `[pc ready role=orchestrator attempt=${stale.id}]`;
-    const hooks = join(directory, 'claude-hooks');
-    const hook = (file: string, event: object) =>
-      writeFileSync(
-        join(hooks, file + '.json'),
-        JSON.stringify({ session_id: 'original', ...event }),
-      );
-    if (name === 'codex') {
-      writeFileSync(join(directory, 'codex-native.json'), JSON.stringify({ path }));
-      events.push(
-        { type: 'session_meta', payload: { id: 'original' } },
-        {
-          type: 'event_msg',
-          payload: {
-            thread_id: 'original',
-            turn_id: 'init',
-            item: {
-              type: 'UserMessage',
-              content: [
-                {
-                  text: `[pc attempt=${stale.id} dispatch=${stale.id} message=initial]\n${stale.brief}`,
-                },
-              ],
-            },
-          },
-        },
-        {
-          type: 'event_msg',
-          payload: {
-            type: 'task_complete',
-            turn_id: 'init',
-            last_agent_message: ready + ' ready only',
-          },
-        },
-      );
-    } else if (name === 'agy') {
-      writeFileSync(
-        join(directory, 'agy-native.json'),
-        JSON.stringify({ conversation_id: 'original', transcript_path: path, agent_state: 'idle' }),
-      );
-      events.push(
-        {
-          step_index: 0,
-          type: 'USER_INPUT',
-          source: 'USER_EXPLICIT',
-          status: 'DONE',
-          content: stale.brief,
-        },
-        {
-          step_index: 1,
-          type: 'PLANNER_RESPONSE',
-          source: 'MODEL',
-          status: 'DONE',
-          content: ready + ' ready only',
-        },
-      );
-    } else {
-      mkdirSync(hooks);
-      hook('1', { hook_event_name: 'UserPromptSubmit', prompt: stale.brief, prompt_id: 'init' });
-      hook('2', {
-        hook_event_name: 'Stop',
-        prompt_id: 'init',
-        last_assistant_message: ready + ' ready only',
-      });
-    }
+    writeFileSync(
+      join(directory, 'agy-native.json'),
+      JSON.stringify({ conversation_id: 'original', transcript_path: path, agent_state: 'idle' }),
+    );
+    events.push(
+      {
+        step_index: 0,
+        type: 'USER_INPUT',
+        source: 'USER_EXPLICIT',
+        status: 'DONE',
+        content: stale.brief,
+      },
+      {
+        step_index: 1,
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        content: ready + ' ready only',
+      },
+    );
     save();
-    const provider = managedRunner(name);
+    const provider = createRunner(name);
     try {
       expect(await provider.result!(stale, stale.id)).toBeUndefined();
       f.ready = true;
       await reconcileStartup(f.config, f.runner, f.run.id);
       expect(await provider.result!(stale, stale.id)).toBeUndefined();
       const activation = inspectRuns(f.config).runs[0].orchestrator!.activation!;
-      if (name === 'codex') {
-        events.push(
-          {
-            type: 'event_msg',
-            payload: {
-              thread_id: 'original',
-              turn_id: 'work',
-              item: {
-                type: 'UserMessage',
-                content: [
-                  {
-                    text: `[pc attempt=${stale.id} dispatch=${stale.id} message=${activation.id}]\n${activation.brief}`,
-                  },
-                ],
-              },
-            },
-          },
-          {
-            type: 'event_msg',
-            payload: {
-              type: 'task_complete',
-              turn_id: 'work',
-              last_agent_message: 'fixture business output',
-            },
-          },
-        );
-      } else if (name === 'agy') {
-        events.push(
-          {
-            step_index: 2,
-            type: 'USER_INPUT',
-            source: 'USER_EXPLICIT',
-            status: 'DONE',
-            content: activation.brief,
-          },
-          {
-            step_index: 3,
-            type: 'PLANNER_RESPONSE',
-            source: 'MODEL',
-            status: 'DONE',
-            content: 'fixture business output',
-          },
-        );
-      } else {
-        hook('3', {
-          hook_event_name: 'UserPromptSubmit',
-          prompt: activation.brief,
-          prompt_id: 'work',
-        });
-        hook('4', {
-          hook_event_name: 'Stop',
-          prompt_id: 'work',
-          last_assistant_message: 'fixture business output',
-        });
-      }
+      events.push(
+        {
+          step_index: 2,
+          type: 'USER_INPUT',
+          source: 'USER_EXPLICIT',
+          status: 'DONE',
+          content: activation.brief,
+        },
+        {
+          step_index: 3,
+          type: 'PLANNER_RESPONSE',
+          source: 'MODEL',
+          status: 'DONE',
+          content: 'fixture business output',
+        },
+      );
       save();
       expect(await provider.result!(stale, stale.id)).toBe('fixture business output');
       expect(stale.conversation).toBe('original');
+    } catch (err) {
+      const logFile = join(directory, 'startup.log');
+      if (existsSync(logFile)) console.error('STARTUP LOG:\n' + readFileSync(logFile, 'utf8'));
+      throw err;
     } finally {
       f.close();
     }

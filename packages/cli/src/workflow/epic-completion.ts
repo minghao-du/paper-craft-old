@@ -231,6 +231,7 @@ export async function finishEpic(
             config,
             [turn],
             `Validated professional approval for ${epic.repository}#${task.number} head ${head}: ${approval.evidence}`,
+            runner,
           );
           return { epic: epic.epic, head, evidence: approval.evidence };
         };

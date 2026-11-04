@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import type { DemoRound } from './round.js';
 import { inspectRunViews, type WorkflowRunView } from '../run/run-driver.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
-import { type ManagedAttempt, AgyRunner, inspectAttemptControl } from '../runtime/runtime.js';
+import { type ManagedAttempt, inspectAttemptControl } from '../runtime/runtime.js';
 import { DemoFinalization, nativeDemoFinalization, type DemoFinalizationView } from './finalization.js';
 import type { GateAuthorization } from './delivery.js';
 
@@ -559,12 +559,11 @@ export function nativeDemoEvidence(readers: DemoBoundaryReaders = {}): DemoEvide
 
       const attempts = run?.attempts ?? [];
       let released = attempts.length > 0;
-      const runner = new AgyRunner();
       for (const attempt of attempts) {
         const control = inspectAttemptControl(attempt);
-        const stopped = await (readers.termination
-          ? readers.termination(attempt)
-          : runner.termination(attempt));
+        const stopped = readers.termination
+          ? await readers.termination(attempt)
+          : control.execution?.status === 'terminated';
         if (!stopped || control.execution?.status !== 'terminated') released = false;
       }
       if ((run?.resources ?? []).length > 0) released = false;

@@ -1,16 +1,11 @@
 import { assertWorkflowRole, type WorkflowRole } from './workflow-role.js';
-import { ClaudeInteractive } from './claude-interactive.js';
-import { AgyInteractive } from './agy-interactive.js';
 /** Managed role startup and durable runner evidence, independent of the model host. */
-import { InteractiveCodexRunner } from './codex-interactive.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { stateDirectory } from '../handoff.js';
 import {
   verifyRoleInitialization,
-  initializationInstructions,
   type RoleInitialization,
 } from '../run/role-initialization.js';
 import type { FleetConfig } from '../fleet/fleet-config.js';
@@ -43,8 +38,8 @@ export interface ManagedAttempt {
   dangerouslySkipPermissions?: boolean;
   conversation?: string;
   address?: string;
-  windowId?: string;
-  paneId?: string;
+  /** Opaque provider-specific recovery information; Core persists this without reading or relying on internal fields. */
+  providerState?: Record<string, unknown>;
   evidence?: string;
   error?: string;
   /** End initialization before explicit activation input; persisted across caller exit. */
@@ -82,9 +77,16 @@ export interface RunnerAdapter {
   }>;
   /** Durable task output; implementations must not wait for process exit. */
   result?(attempt: ManagedAttempt, dispatchId: string): Promise<string | undefined>;
+  /** Collect task execution result; handles polling, timeout, and stopped execution. */
+  collect(
+    attempt: ManagedAttempt,
+    options?: { timeoutMs?: number; dispatchId?: string },
+  ): Promise<string>;
   /** Observe execution independently of receipt acceptance. */
   observe?(attempt: ManagedAttempt): Promise<ExecutionObservation>;
   stopped?(attempt: ManagedAttempt): Promise<boolean>;
+  /** Terminate execution and verify absence; callers do not manually compose cancel and stopped steps. */
+  terminate?(attempt: ManagedAttempt): Promise<ExecutionTermination>;
   /** Recover normalized startup evidence from this Runner only. */
   recoverReceipt?(
     attempt: ManagedAttempt,
@@ -110,9 +112,18 @@ export function inspectOrchestrator(config: FleetConfig, run: string): ManagedAt
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   const path = join(home(config), `orchestrator-${run}.json`);
   if (!existsSync(path)) return undefined;
-  const attempt = JSON.parse(readFileSync(path, 'utf8')) as ManagedAttempt;
+  let attempt: ManagedAttempt;
+  try {
+    attempt = JSON.parse(readFileSync(path, 'utf8')) as ManagedAttempt;
+  } catch (error) {
+    throw new Error(`Corrupt orchestrator recovery evidence at ${path}: ${String(error)}`, {
+      cause: error,
+    });
+  }
   assertWorkflowRole(attempt.role, path);
   if (attempt.role !== 'orchestrator') throw new Error(`${path}: expected orchestrator role`);
+  if (attempt.run && attempt.run !== run)
+    throw new Error(`${path}: expected run ${run}; received ${attempt.run}`);
   return attempt;
 }
 /** Exclusively claim the Run orchestrator, preserving failed/unknown launches for recovery. */
@@ -148,13 +159,15 @@ export async function startOrchestrator(
     role: 'orchestrator',
     runner: runner.name,
     persistent: !!runner.result,
-    ...(runner.automaticStartup || runner.separateActivation ? { startupGate: true } : {}),
+    ...(runner.automaticStartup || runner.separateActivation || runner.result ? { startupGate: true } : {}),
     brief,
     status: 'starting',
     created: new Date().toISOString(),
     directory,
     checkout: config.project,
-    ...(dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
+    ...(dangerouslySkipPermissions
+      ? { dangerouslySkipPermissions: true, providerState: { dangerouslySkipPermissions: true } }
+      : {}),
   };
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   const path = join(home(config), `orchestrator-${run}.json`);
@@ -167,8 +180,6 @@ export async function startOrchestrator(
       attempt: attempt.id,
       briefHash: createHash('sha256').update(brief).digest('hex'),
     };
-    if (runner.name !== 'agy')
-      attempt.brief += initializationInstructions(attempt.initialization, directory);
   }
   save(path, attempt);
   writeFileSync(join(directory, 'brief.md'), attempt.brief, { mode: 0o600 });
@@ -187,377 +198,12 @@ export async function startOrchestrator(
   save(join(directory, 'attempt.json'), attempt);
   return attempt;
 }
-/** Escape a shell argument by wrapping it in single quotes. */
+/**
+ * Escape a shell argument by wrapping it in single quotes.
+ * General shell quoting helper used across hosts, providers, and CLI utilities.
+ */
 export function quote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
-}
-const shell = quote;
-/** Codex JSONL is the receipt/result channel; resume supplies subsequent input.
- * The workflow driver polls the durable log to wake and dispatch the next turn.
- */
-export class CodexRunner implements RunnerAdapter {
-  readonly name: string = 'codex';
-  readonly interactive: boolean = false;
-  protected command(attempt: ManagedAttempt): string {
-    return `codex exec ${[attempt.directory, ...(attempt.writableDirectories ?? [])].map((path) => `--add-dir ${shell(path)}`).join(' ')} ${attempt.conversation ? `resume ${shell(attempt.conversation)} ` : ''} -c sandbox_mode='"workspace-write"' -c approval_policy='"never"' --json --output-last-message ${shell(join(attempt.directory, 'result.md'))} -`;
-  }
-  protected normalize(event: Record<string, unknown>): Record<string, unknown> {
-    return event;
-  }
-  readonly cancellation: boolean = false;
-  /** Verified process exit releases execution capacity, never checkout ownership. */
-  async termination(attempt: ManagedAttempt): Promise<boolean> {
-    const file = join(attempt.directory, 'exit-code');
-    return existsSync(file) && /^-?\d+$/.test(readFileSync(file, 'utf8').trim());
-  }
-  /** Probe installed CLI capabilities instead of inferring support from its name. */
-  async preflight(): Promise<void> {
-    execFileSync('tmux', ['-V'], { timeout: 5000 });
-    const help = execFileSync('codex', ['exec', '--help'], { encoding: 'utf8', timeout: 5000 });
-    const resume = execFileSync('codex', ['exec', 'resume', '--help'], {
-      encoding: 'utf8',
-      timeout: 5000,
-    });
-    if (
-      !help.includes('--add-dir') ||
-      !help.includes('--json') ||
-      !help.includes('--output-last-message') ||
-      !resume.includes('--json')
-    )
-      throw new Error(
-        'Codex must support JSON event/result output and resume input for automatic round trips',
-      );
-  }
-  /** Exit receipt plus absent or dead panes verifies this managed process stopped. */
-  async stopped(attempt: ManagedAttempt): Promise<boolean> {
-    const terminal = join(attempt.directory, 'terminal.json');
-    const address: string | undefined =
-      attempt.address ??
-      (existsSync(terminal) ? JSON.parse(readFileSync(terminal, 'utf8')).address : undefined);
-    if (!existsSync(join(attempt.directory, 'exit-code')) || !address?.startsWith('tmux:'))
-      return false;
-    try {
-      const panes = execFileSync(
-        'tmux',
-        ['list-panes', '-t', address.slice(5), '-F', '#{pane_dead}'],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
-      ).trim();
-      return !!panes && panes.split('\n').every((value) => value === '1');
-    } catch {
-      return true;
-    }
-  }
-  /** Collect a completed turn from durable Runner output, never from pane disappearance. */
-  /** Recovery never blocks on an execution whose exit is not yet observed. */
-  /** Read this adapter's durable startup protocol after a lost notification. */
-  async recoverReceipt(attempt: ManagedAttempt) {
-    const events = join(attempt.directory, 'events.jsonl');
-    if (!existsSync(events)) return undefined;
-    const lines = readFileSync(events, 'utf8')
-      .split('\n')
-      .flatMap((line) => {
-        try {
-          return [this.normalize(JSON.parse(line))];
-        } catch {
-          return [];
-        }
-      });
-    const thread = lines.find((e) => e.type === 'thread.started' && e.thread_id);
-    if (!thread || !lines.some((e) => e.type === 'turn.started')) return undefined;
-    const terminal = join(attempt.directory, 'terminal.json');
-    return {
-      conversation: thread.thread_id as string,
-      address:
-        attempt.address ??
-        (existsSync(terminal)
-          ? JSON.parse(readFileSync(terminal, 'utf8')).address
-          : `tmux:pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`),
-      evidence: 'Recovered thread.started and turn.started from durable Runner events',
-    };
-  }
-  collectable(attempt: ManagedAttempt): boolean {
-    return existsSync(join(attempt.directory, 'exit-code'));
-  }
-  async collect(attempt: ManagedAttempt): Promise<string> {
-    const exit = join(attempt.directory, 'exit-code');
-    while (!existsSync(exit)) await new Promise((resolve) => setTimeout(resolve, 100));
-    if (readFileSync(exit, 'utf8').trim() !== '0')
-      throw new Error(`Runner failed; inspect ${attempt.directory}`);
-    const events = readFileSync(join(attempt.directory, 'events.jsonl'), 'utf8');
-    if (
-      !events.split('\n').some((line) => {
-        try {
-          return this.normalize(JSON.parse(line)).type === 'turn.completed';
-        } catch {
-          return false;
-        }
-      })
-    )
-      throw new Error('Expected completed turn evidence');
-    return readFileSync(join(attempt.directory, 'result.md'), 'utf8');
-  }
-  /** Start in tmux and wait for the Runner-generated conversation acknowledgement. */
-  async start(
-    attempt: ManagedAttempt,
-  ): Promise<{ conversation: string; address: string; evidence: string }> {
-    const specialist = ['pipeline-audit', 'pipeline-refactor', 'research-state'].includes(
-      attempt.role,
-    );
-    if (specialist && !attempt.terminalSession)
-      throw new Error('Specialist requires a verified existing tmux session');
-    const session = `pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`;
-    let address = specialist ? `${attempt.terminalSession}:${session}` : session;
-    attempt.address = `tmux:${address}`;
-    writeFileSync(
-      join(attempt.directory, 'terminal.json'),
-      JSON.stringify({ address: attempt.address }),
-    );
-    const events = join(attempt.directory, 'events.jsonl');
-    const script = join(attempt.directory, 'launch.sh');
-    writeFileSync(
-      script,
-      `#!/bin/sh\n${attempt.role === 'orchestrator' ? `tmux set-option -w -t ${shell(session + ':0')} remain-on-exit on\n` : ''}${this.command(attempt)} < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
-      { mode: 0o700 },
-    );
-    if (specialist) execFileSync('tmux', ['has-session', '-t', attempt.terminalSession!]);
-    const terminal = execFileSync(
-      'tmux',
-      specialist
-        ? [
-            'new-window',
-            '-P',
-            '-F',
-            '#{window_id} #{pane_id}',
-            '-d',
-            '-t',
-            attempt.terminalSession + ':',
-            '-n',
-            session,
-            '-c',
-            attempt.checkout,
-            'sh',
-            script,
-          ]
-        : [
-            'new-session',
-            '-P',
-            '-F',
-            '#{window_id} #{pane_id}',
-            '-d',
-            '-s',
-            session,
-            '-c',
-            attempt.checkout,
-            'sh',
-            script,
-          ],
-      { timeout: 5000, encoding: 'utf8' },
-    );
-    {
-      const [windowId, paneId] = terminal.trim().split(/\s+/);
-      if (!/^@\d+$/.test(windowId ?? '') || !/^%\d+$/.test(paneId ?? ''))
-        throw new Error('Expected actual tmux window and pane identities');
-      address = `${specialist ? attempt.terminalSession : session}:${windowId}`;
-      Object.assign(attempt, { windowId, paneId, address: `tmux:${address}` });
-      writeFileSync(
-        join(attempt.directory, 'terminal.json'),
-        JSON.stringify({ address: attempt.address, windowId, paneId }),
-      );
-    }
-    const deadline = Date.now() + 15000;
-    let conversation: string | undefined;
-    let receipt: string | undefined;
-    while (Date.now() < deadline) {
-      if (existsSync(events)) {
-        for (const line of readFileSync(events, 'utf8').split('\n')) {
-          try {
-            const event = this.normalize(JSON.parse(line)) as { type: string; thread_id?: string };
-            if (event.type === 'thread.started' && event.thread_id) {
-              conversation = event.thread_id;
-              receipt = line;
-            }
-            if (event.type === 'turn.started' && conversation && receipt)
-              return { conversation, address: `tmux:${address}`, evidence: receipt + '\n' + line };
-          } catch {
-            /* Incomplete final JSONL line is retried. */
-          }
-        }
-      }
-      if (existsSync(join(attempt.directory, 'exit-code')))
-        throw new Error(`Runner exited without acknowledgement; inspect ${attempt.directory}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error(
-      `No Runner acknowledgement within 15s; preserve occupancy and inspect ${attempt.directory}`,
-    );
-  }
-}
-
-/** Stream-JSON providers share terminal identity/exit verification with Codex. */
-abstract class StreamRunner extends CodexRunner {
-  protected abstract resumeFlag: string;
-  async preflight(): Promise<void> {
-    execFileSync('tmux', ['-V'], { timeout: 5000 });
-    const help = execFileSync(this.name, ['--help'], { encoding: 'utf8', timeout: 5000 });
-    for (const flag of ['--print', '--output-format', '--add-dir', this.resumeFlag]) {
-      if (!help.includes(flag)) throw new Error(`${this.name} lacks managed capability ${flag}`);
-    }
-  }
-  protected command(attempt: ManagedAttempt): string {
-    return `${this.name} --print --output-format stream-json ${this.name === 'claude' ? '--verbose' : ''} ${[attempt.directory, ...(attempt.writableDirectories ?? [])].map((path) => `--add-dir ${shell(path)}`).join(' ')} ${attempt.conversation ? `${this.resumeFlag} ${shell(attempt.conversation)}` : ''}`;
-  }
-  protected normalize(event: Record<string, unknown>): Record<string, unknown> {
-    if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string')
-      return { type: 'thread.started', thread_id: event.session_id };
-    if (event.type === 'assistant') return { type: 'turn.started' };
-    if (
-      event.type === 'result' &&
-      !event.is_error &&
-      (event.subtype === 'success' || event.subtype === undefined)
-    )
-      return { type: 'turn.completed' };
-    return event;
-  }
-  async collect(attempt: ManagedAttempt): Promise<string> {
-    const exit = join(attempt.directory, 'exit-code');
-    while (!existsSync(exit)) await new Promise((resolve) => setTimeout(resolve, 100));
-    if (readFileSync(exit, 'utf8').trim() !== '0')
-      throw new Error(`${this.name} failed; inspect ${attempt.directory}`);
-    const results = readFileSync(join(attempt.directory, 'events.jsonl'), 'utf8')
-      .split('\n')
-      .flatMap((line) => {
-        try {
-          return [JSON.parse(line)];
-        } catch {
-          return [];
-        }
-      });
-    const result = results.findLast((event) => this.normalize(event).type === 'turn.completed');
-    if (!result || typeof result.result !== 'string')
-      throw new Error(`${this.name} lacks completed result evidence`);
-    return result.result;
-  }
-}
-/** Explicit Claude Code stream protocol adapter. */
-export class ClaudeRunner extends StreamRunner {
-  readonly name = 'claude';
-  readonly automaticStartup = true;
-  readonly cancellation = true;
-  readonly interactive: boolean = true;
-  protected resumeFlag = '--resume';
-  private readonly tui = new ClaudeInteractive();
-  preflight() {
-    return this.tui.preflight();
-  }
-  start(a: ManagedAttempt) {
-    return this.tui.start(a);
-  }
-  recoverReceipt(a: ManagedAttempt) {
-    return this.tui.recoverReceipt(a);
-  }
-  messageReceipt(a: ManagedAttempt, m: { id: string; brief: string }) {
-    return this.tui.messageReceipt(a, m);
-  }
-  stopped(a: ManagedAttempt) {
-    return this.tui.terminated(a);
-  }
-  termination(a: ManagedAttempt) {
-    return this.tui.terminated(a);
-  }
-  cancel(a: ManagedAttempt) {
-    return this.tui.cancel(a);
-  }
-  send(a: ManagedAttempt, m: { id: string; brief: string }) {
-    return this.tui.send(a, m);
-  }
-  result(a: ManagedAttempt, id: string) {
-    return this.tui.result(a, id);
-  }
-  observe(a: ManagedAttempt) {
-    return this.tui.observe(a);
-  }
-  /** Persistent completion uses correlated native turn output, never process exit. */
-  async collect(a: ManagedAttempt): Promise<string> {
-    for (;;) {
-      const output = await this.tui.result(a, a.dispatchId ?? a.id);
-      if (output !== undefined) return output;
-      if (await this.stopped(a)) throw new Error('Claude exited without a correlated task result');
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-  collectable(a: ManagedAttempt): boolean {
-    return existsSync(join(a.directory, 'claude-hooks'));
-  }
-}
-/** Managed agy persistent TUI adapter backed by native hook transcripts. */
-export class AgyRunner implements RunnerAdapter {
-  readonly name = 'agy';
-  readonly automaticStartup = true;
-  readonly cancellation = true;
-  readonly interactive = true;
-  private readonly tui = new AgyInteractive();
-  prepareReplacement(prior: ManagedAttempt, attempts: ManagedAttempt[]) {
-    return this.tui.prepareReplacement(prior, attempts);
-  }
-  preflight() {
-    return this.tui.preflight();
-  }
-  start(a: ManagedAttempt) {
-    return this.tui.start(a);
-  }
-  recoverReceipt(a: ManagedAttempt) {
-    return this.tui.recoverReceipt(a);
-  }
-  messageReceipt(a: ManagedAttempt, m: { id: string; brief: string }) {
-    return this.tui.messageReceipt(a, m);
-  }
-  stopped(a: ManagedAttempt) {
-    return this.tui.stopped(a);
-  }
-  termination(a: ManagedAttempt) {
-    return this.tui.terminated(a);
-  }
-  cancel(a: ManagedAttempt) {
-    return this.tui.cancel(a);
-  }
-  send(a: ManagedAttempt, m: { id: string; brief: string }) {
-    return this.tui.send(a, m);
-  }
-  result(a: ManagedAttempt, id: string) {
-    return this.tui.result(a, id);
-  }
-  observe(a: ManagedAttempt) {
-    return this.tui.observe(a);
-  }
-  /** Persistent completion uses correlated native turn output, never process exit. */
-  async collect(a: ManagedAttempt): Promise<string> {
-    for (;;) {
-      const output = await this.tui.result(a, a.dispatchId ?? a.id);
-      if (output !== undefined) return output;
-      if (await this.stopped(a)) throw new Error('agy exited without a correlated task result');
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-  collectable(a: ManagedAttempt): boolean {
-    return existsSync(join(a.directory, 'agy-native.json'));
-  }
-}
-/** Resolve a supported provider without fallback. */
-export function managedRunner(provider: string): RunnerAdapter & {
-  stopped(attempt: ManagedAttempt): Promise<boolean>;
-  collect(attempt: ManagedAttempt): Promise<string>;
-  collectable(attempt: ManagedAttempt): boolean;
-} {
-  switch (provider) {
-    case 'codex':
-      return new InteractiveCodexRunner();
-    case 'agy':
-      return new AgyRunner();
-    case 'claude':
-      return new ClaudeRunner();
-    default:
-      throw new Error(`Unsupported managed provider ${provider}`);
-  }
 }
 
 /** Control observations do not overwrite the persisted execution identity or ownership. */
@@ -571,6 +217,77 @@ export interface AttemptControl {
     error?: string;
   };
 }
+
+/**
+ * Execution termination outcome: verified process termination or explicit unconfirmed outcome.
+ * Callers do not need to manually compose provider-specific cancel and stopped steps.
+ */
+export interface ExecutionTermination {
+  status: 'terminated' | 'unconfirmed';
+  evidence?: string;
+  error?: string;
+}
+
+/**
+ * Execute verified termination through the runner contract or return an explicit unconfirmed outcome.
+ * Callers do not need to compose provider-specific cancel and stopped steps.
+ */
+export async function terminateAttempt(
+  attempt: ManagedAttempt,
+  runner: {
+    terminate?(attempt: ManagedAttempt): Promise<ExecutionTermination>;
+    stopped?(attempt: ManagedAttempt): Promise<boolean>;
+    cancellation?: boolean;
+    cancel?(attempt: ManagedAttempt): Promise<{ evidence: string }>;
+  },
+): Promise<ExecutionTermination> {
+  const control = inspectAttemptControl(attempt);
+  let outcome: ExecutionTermination;
+  try {
+    if (runner.terminate) {
+      outcome = await runner.terminate(attempt);
+    } else {
+      const alreadyStopped = runner.stopped ? await runner.stopped(attempt) : false;
+      if (alreadyStopped) {
+        outcome = { status: 'terminated', evidence: 'Process already stopped' };
+      } else if (runner.cancellation && runner.cancel) {
+        const receipt = await runner.cancel(attempt);
+        const confirmed = runner.stopped ? await runner.stopped(attempt) : true;
+        if (confirmed) {
+          outcome = { status: 'terminated', evidence: receipt.evidence ?? 'Cancellation confirmed' };
+        } else {
+          outcome = { status: 'unconfirmed', error: 'Process still running after cancellation' };
+        }
+      } else {
+        outcome = { status: 'unconfirmed', error: 'Runner does not support cancellation or termination' };
+      }
+    }
+  } catch (error) {
+    outcome = {
+      status: 'unconfirmed',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const file = join(attempt.directory, 'control.json');
+  if (outcome.status === 'terminated') {
+    control.execution = { status: 'terminated', evidence: outcome.evidence };
+    control.cancellation = {
+      requested: new Date().toISOString(),
+      outcome: 'confirmed',
+      evidence: outcome.evidence,
+    };
+  } else {
+    control.execution = { status: 'unknown' };
+    control.cancellation = {
+      requested: new Date().toISOString(),
+      outcome: 'failed',
+      error: outcome.error,
+    };
+  }
+  writeFileSync(file, JSON.stringify(control));
+  return outcome;
+}
 /** Read durable wait/cancellation observations, independently of execution status. */
 export function inspectAttemptControl(attempt: ManagedAttempt): AttemptControl {
   const file = join(attempt.directory, 'control.json');
@@ -579,7 +296,7 @@ export function inspectAttemptControl(attempt: ManagedAttempt): AttemptControl {
 /** A bounded wait leaves the original collection running and permits later collection. */
 export async function waitAttempt(
   attempt: ManagedAttempt,
-  runner: { collect(attempt: ManagedAttempt): Promise<string> },
+  runner: Pick<RunnerAdapter, 'collect'>,
   timeoutMs: number,
 ): Promise<{ timedOut: boolean; result?: string }> {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('Expected nonnegative timeout');
@@ -629,11 +346,15 @@ export async function cancelAttempt(
 /** Reconcile execution without changing logical role or checkout ownership. */
 export async function reconcileAttempt(
   attempt: ManagedAttempt,
-  runner: { termination?(attempt: ManagedAttempt): Promise<boolean> },
+  runner: { termination?(attempt: ManagedAttempt): Promise<boolean>; stopped?(attempt: ManagedAttempt): Promise<boolean> },
 ): Promise<AttemptControl> {
   const control = inspectAttemptControl(attempt);
   if (control.execution?.status === 'terminated') return control;
-  const terminated = runner.termination ? await runner.termination(attempt) : false;
+  const terminated = runner.termination
+    ? await runner.termination(attempt)
+    : runner.stopped
+      ? await runner.stopped(attempt)
+      : false;
   control.execution = terminated
     ? { status: 'terminated', evidence: 'Adapter verified execution exit' }
     : { status: 'unknown' };
@@ -653,4 +374,3 @@ export function requireInteractive(runner: RunnerAdapter): void {
     throw new Error(`${runner.name} lacks verified persistent interactive lifecycle support`);
 }
 
-export { AgyInteractive } from './agy-interactive.js';
