@@ -9,7 +9,6 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
-  rmSync,
   writeFileSync,
   realpathSync,
 } from 'node:fs';
@@ -18,19 +17,15 @@ import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
 import {
   requireInteractive,
   terminateAttempt,
-  reconcileAttempt,
   inspectAttemptControl,
   type ManagedAttempt,
   type RunnerAdapter,
-  type AttemptControl,
-  type ExecutionTermination,
 } from '../runtime/runtime.js';
 import { pipelineAccepted, type PipelineDisposition } from '../delivery/epic-finalization.js';
 import {
   home,
   inspectRuns,
   updateRunRegistry,
-  reserveSubject,
   type RunSubject,
   type RunConstraints,
   type WorkflowRun,
@@ -43,16 +38,20 @@ import {
 import {
   assignmentWithRequirements,
   ensureStartupRecovery,
-  stopStartupRecovery,
   startupRecoveryStatus,
 } from './startup.js';
+import {
+  reserveSubject,
+  releaseRunCheckout,
+  orchestratorForSubject,
+  reserveRunCheckout,
+} from './run-ownership.js';
 
 export {
   home,
   inspectRuns,
   updateRunRegistry,
   save,
-  reserveSubject,
   claimDriver,
   validateRegistryRoles,
   type RunSubject,
@@ -64,6 +63,20 @@ export {
   type StageReceipt,
   type StageFacts,
 } from './run-registry.js';
+export {
+  reserveSubject,
+  releaseRunCheckout,
+  orchestratorForSubject,
+  referenceRunSubject,
+  reserveRunCheckout,
+} from './run-ownership.js';
+export {
+  stopRun,
+  releaseRun,
+  type StopRunResult,
+  type ReleaseRunResult,
+  type RunControlOptions,
+} from './run-control.js';
 export {
   startRun,
   verifyRunRequirements,
@@ -407,7 +420,7 @@ export async function dispatchStage(
     }
     reserveSubject(registry, run.id, request.subject);
     const checkout = workflowSource(config, request.checkout ?? config.project);
-    reserveCheckout(config, registry, run.id, checkout);
+    reserveRunCheckout(config, run.id, request.authority, checkout, registry);
     const id = randomUUID();
     const directory = join(home(config), 'dispatches', id);
     mkdirSync(directory, { recursive: true });
@@ -820,133 +833,6 @@ export function setRemediationLimit(
       exhausted: consecutive >= limit,
       feedback: dispatch.remediation?.feedback ?? '',
     };
-  });
-}
-
-
-function reserveCheckout(
-  config: FleetConfig,
-  registry: RunRegistry,
-  runId: string,
-  checkout: string,
-): void {
-  const path = join(realpathSync(checkout), '.pc-execution-owner');
-  const owner = { path: checkout, runId, registry: join(home(config), 'registry.json') };
-  try {
-    writeFileSync(path, JSON.stringify(owner), { flag: 'wx', mode: 0o600 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    let prior;
-    try {
-      prior = JSON.parse(readFileSync(path, 'utf8'));
-    } catch (error) {
-      throw new Error('Unknown checkout occupancy', { cause: error });
-    }
-    if (prior.runId !== runId || prior.registry !== owner.registry)
-      throw new Error(`Checkout occupied: ${checkout}`, { cause: error });
-  }
-  registry.resources ??= [];
-  if (!registry.resources.some((r) => r.path === checkout)) registry.resources.push(owner);
-}
-/** Release requires independent termination evidence for every execution using the checkout. */
-export async function releaseRunCheckout(
-  config: FleetConfig,
-  runId: string,
-  checkout: string,
-  stopped: (attempt: ManagedAttempt) => Promise<boolean>,
-  cleanup?: () => void,
-): Promise<void> {
-  const physical = workflowSource(config, checkout);
-  const snapshot = inspectRuns(config);
-  const run = snapshot.runs.find((r) => r.id === runId);
-  const attempts = [
-    ...(snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
-    ...[run?.orchestrator, ...(run?.priorOrchestrators ?? [])].filter(
-      (a): a is ManagedAttempt => !!a,
-    ),
-  ].filter((a) => a.checkout === physical);
-  if (!attempts.length || !(await Promise.all(attempts.map(stopped))).every(Boolean))
-    throw new Error('Unknown checkout occupancy; termination evidence required');
-  updateRunRegistry(config, (registry) => {
-    if (registry.revision !== snapshot.revision) throw new Error('Ownership changed; retry');
-    const path = join(physical, '.pc-execution-owner');
-    const owner = JSON.parse(readFileSync(path, 'utf8'));
-    if (owner.runId !== runId || owner.registry !== join(home(config), 'registry.json'))
-      throw new Error('Checkout owner conflict');
-    cleanup?.();
-    rmSync(path, { force: true });
-    registry.resources = registry.resources?.filter((r) => r.path !== physical);
-  });
-}
-
-/** Find subject ownership for existing internal workflow projections. */
-function findSubjectOrchestrator(
-  config: FleetConfig,
-  repository: string,
-  number: number,
-): ManagedAttempt | undefined {
-  const registry = inspectRuns(config);
-  const owner = registry.subjects?.find((s) => s.subject === `${repository}#${number}`)?.ownerRunId;
-  const run = registry.runs.find(
-    (r) =>
-      r.id === owner ||
-      (!owner &&
-        r.subject.repository === repository &&
-        r.subject.number === number &&
-        r.lifecycle !== 'completed'),
-  );
-  return run?.orchestrator;
-}
-
-/** Require an active subject Run and its recorded provider before command dispatch. */
-export function orchestratorForSubject(
-  config: FleetConfig,
-  repository: string,
-  number: number,
-): ManagedAttempt {
-  const attempt = findSubjectOrchestrator(config, repository, number);
-  const run = inspectRuns(config).runs.find((r) => r.id === attempt?.run);
-  const next = `pc workflow orchestrator start ${number} --type <issue|epic> --provider <provider> --config ${config.file}`;
-  if (!run) throw new Error(`No Run owns ${repository}#${number}; run ${next}`);
-  if (!run.provider)
-    throw new Error('Missing Run provider');
-  if (run.lifecycle === 'completed')
-    throw new Error(`Completed Run ${run.id} authority has ended; start later work with ${next}`);
-  if (run.lifecycle !== 'running' || !run.orchestrator || run.orchestrator.status !== 'running')
-    throw new Error(
-      `No active Orchestrator for Run ${run.id}; run pc workflow orchestrator recover ${run.id} --config ${config.file}`,
-    );
-  if (run.orchestrator.runner !== run.provider)
-    throw new Error(
-      `Run provider mismatch: expected provider ${run.provider}, but received ${run.orchestrator.runner}`,
-    );
-  return run.orchestrator;
-}
-/** Record a consuming Run reference without granting another execution owner. */
-export function referenceRunSubject(config: FleetConfig, runId: string, subject: string): string {
-  return updateRunRegistry(config, (registry) => {
-    if (!registry.runs.some((r) => r.id === runId))
-      throw new Error(`Unknown Run: expected existing run with id ${runId}`);
-    registry.subjects ??= [];
-    const owner = registry.subjects.find((s) => s.subject === subject);
-    if (!owner) return reserveSubject(registry, runId, subject);
-    if (owner.ownerRunId !== runId && !owner.consumingRunIds.includes(runId))
-      owner.consumingRunIds.push(runId);
-    return owner.ownerRunId;
-  });
-}
-
-/** Apply the same reservation guard to existing Issue/EPIC worker-driver launches. */
-export function reserveRunCheckout(
-  config: FleetConfig,
-  runId: string,
-  authority: string,
-  checkout: string,
-): void {
-  const physical = workflowSource(config, checkout);
-  updateRunRegistry(config, (registry) => {
-    authorize(registry, runId, authority);
-    reserveCheckout(config, registry, runId, physical);
   });
 }
 
@@ -1790,52 +1676,6 @@ export interface WorkflowRunView {
   report?: import('../delivery/research-report.js').ResearchReport;
 }
 
-/** Result of a verified stopRun operation. */
-export interface StopRunResult {
-  runId: string;
-  lifecycle: WorkflowRun['lifecycle'];
-  terminated: boolean;
-  released: boolean;
-  attempts: {
-    id: string;
-    role: ManagedAttempt['role'];
-    status: ManagedAttempt['status'];
-    terminated: boolean;
-    cancellation?: AttemptControl['cancellation'];
-    error?: string;
-  }[];
-  helper: {
-    active: boolean;
-    pending?: boolean;
-    stopped: boolean;
-  };
-  resources: { path: string; runId: string }[];
-  blockers: string[];
-}
-
-/** Result of a completed releaseRun operation. */
-export interface ReleaseRunResult {
-  runId: string;
-  lifecycle: WorkflowRun['lifecycle'];
-  terminated: boolean;
-  released: boolean;
-  attempts: {
-    id: string;
-    role: ManagedAttempt['role'];
-    status: ManagedAttempt['status'];
-    terminated: boolean;
-    cancellation?: AttemptControl['cancellation'];
-    error?: string;
-  }[];
-  helper: {
-    active: boolean;
-    pending?: boolean;
-    stopped: boolean;
-  };
-  resources: { path: string; runId: string }[];
-  blockers: string[];
-}
-
 /** Read a stable, narrow public view of a single Run and its owned resources without exposing registry serialization. */
 export function inspectRun(config: FleetConfig, runId: string): WorkflowRunView {
   if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
@@ -1923,322 +1763,4 @@ export function inspectRunViews(config: FleetConfig): WorkflowRunView[] {
   return registry.runs.map((r) => inspectRun(config, r.id));
 }
 
-async function terminateAndVerifyAttempt(
-  config: FleetConfig,
-  adapter: RunnerAdapter,
-  runId: string,
-  attempt: ManagedAttempt,
-  options?: { stopped?: (attempt: ManagedAttempt) => Promise<boolean> },
-): Promise<{
-  result: StopRunResult['attempts'][number];
-  blocker?: string;
-}> {
-  let term: ExecutionTermination;
-  if (options?.stopped) {
-    const alreadyStopped = await options.stopped(attempt);
-    if (alreadyStopped) {
-      term = { status: 'terminated', evidence: 'Verified stopped by predicate' };
-    } else {
-      term = await terminateAttempt(attempt, adapter);
-      if (term.status === 'terminated' && !(await options.stopped(attempt))) {
-        term = { status: 'unconfirmed', error: 'Termination unverified by stopped predicate' };
-      }
-    }
-  } else {
-    term = await terminateAttempt(attempt, adapter);
-  }
-
-  const stopped = term.status === 'terminated';
-  const cancellationControl = inspectAttemptControl(attempt).cancellation;
-  const error = term.error;
-  let blocker: string | undefined;
-
-  if (stopped) {
-    await reconcileAttempt(attempt, { termination: async () => true, stopped: async () => true });
-    updateRunRegistry(config, (registry) => {
-      const r = registry.runs.find((entry) => entry.id === runId);
-      if (!r) return;
-      const all = [
-        ...(r.priorOrchestrators ?? []),
-        ...(r.orchestrator ? [r.orchestrator] : []),
-        ...(registry.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
-      ];
-      const match = all.find((a) => a.id === attempt.id);
-      if (match) {
-        match.status = 'unknown';
-        match.startupStopped = true;
-      }
-    });
-  } else {
-    const ctrl = inspectAttemptControl(attempt);
-    ctrl.execution = { status: 'unknown' };
-    writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(ctrl));
-    blocker = `Attempt ${attempt.id} (${attempt.role}) termination unverified; occupancy remains reserved`;
-  }
-
-  return {
-    result: {
-      id: attempt.id,
-      role: attempt.role,
-      status: stopped ? 'unknown' : attempt.status,
-      terminated: stopped,
-      cancellation: cancellationControl,
-      error,
-    },
-    blocker,
-  };
-}
-
-/** Revoke scheduling and activation before terminating owned executions and helpers, preserving business records. */
-export async function stopRun(
-  config: FleetConfig,
-  runner: RunnerAdapter,
-  runId: string,
-  options?: {
-    stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
-    cleanup?: () => void;
-  },
-): Promise<StopRunResult> {
-  const opts = options ?? {};
-
-  if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
-
-  const snapshot = inspectRuns(config);
-  const targetRun = snapshot.runs.find((r) => r.id === runId);
-  if (!targetRun) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
-
-  if (runner.name !== targetRun.provider)
-    throw new Error(
-      `Run provider mismatch: expected provider ${targetRun.provider}, but received ${runner.name}`,
-    );
-
-  const adapter = runner;
-
-  // Revoke further scheduling and activation before requesting cancellation
-  updateRunRegistry(config, (registry) => {
-    const current = registry.runs.find((r) => r.id === runId);
-    if (!current) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
-    if (current.lifecycle !== 'completed') {
-      current.lifecycle = 'blocked';
-    }
-    if (current.orchestrator && current.orchestrator.status !== 'running') {
-      current.orchestrator.startupStopped = true;
-    }
-    for (const dispatch of registry.dispatches?.filter((d) => d.runId === runId) ?? []) {
-      for (const attempt of dispatch.attempts) {
-        if (attempt.status !== 'running') {
-          attempt.startupStopped = true;
-        }
-      }
-    }
-  });
-
-  // Stop startup helper
-  const helperStopped = await stopStartupRecovery(config, runId);
-  const helperStatus = startupRecoveryStatus(config, runId);
-  const blockers: string[] = [];
-  if (helperStatus.active) {
-    blockers.push('Startup helper termination unverified; helper remains active');
-  }
-
-  const isStopped =
-    opts.stopped ??
-    (adapter.stopped
-      ? (a: ManagedAttempt) => adapter.stopped!(a)
-      : async (a: ManagedAttempt) => (await terminateAttempt(a, adapter)).status === 'terminated');
-
-  const currentSnapshot = inspectRuns(config);
-  const currentRun = currentSnapshot.runs.find((r) => r.id === runId)!;
-  const attempts = [
-    ...(currentRun.priorOrchestrators ?? []),
-    ...(currentRun.orchestrator ? [currentRun.orchestrator] : []),
-    ...(currentSnapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
-  ];
-
-  const attemptResults: StopRunResult['attempts'] = [];
-
-  for (const attempt of attempts) {
-    const { result, blocker } = await terminateAndVerifyAttempt(
-      config,
-      adapter,
-      runId,
-      attempt,
-      opts,
-    );
-    if (blocker) {
-      blockers.push(blocker);
-    }
-    attemptResults.push(result);
-  }
-
-  // Release checkouts only if explicit cleanup callback is provided
-  if (opts.cleanup) {
-    const reg = inspectRuns(config);
-    const owned = (reg.resources ?? []).filter((r) => r.runId === runId);
-    for (const res of owned) {
-      try {
-        await releaseRunCheckout(config, runId, res.path, isStopped, opts.cleanup);
-      } catch (err) {
-        blockers.push(`Resource ${res.path} release failed: ${String(err)}`);
-      }
-    }
-  }
-
-  const finalReg = inspectRuns(config);
-  const finalRun = finalReg.runs.find((r) => r.id === runId)!;
-  const finalResources = (finalReg.resources ?? []).filter((r) => r.runId === runId);
-  const finalHelper = startupRecoveryStatus(config, runId);
-
-  const allTerminated =
-    attemptResults.length === 0 || attemptResults.every((a) => a.terminated);
-  const released =
-    allTerminated && !finalHelper.active && finalResources.length === 0;
-
-  updateRunRegistry(config, (registry) => {
-    const r = registry.runs.find((entry) => entry.id === runId);
-    if (r) {
-      r.reconciliation = {
-        at: new Date().toISOString(),
-        blockers,
-        pendingDispatches: r.reconciliation?.pendingDispatches ?? [],
-      };
-    }
-  });
-
-  return {
-    runId,
-    lifecycle: finalRun.lifecycle,
-    terminated: allTerminated,
-    released,
-    attempts: attemptResults,
-    helper: {
-      active: finalHelper.active,
-      pending: finalHelper.pending,
-      stopped: helperStopped,
-    },
-    resources: finalResources,
-    blockers,
-  };
-}
-
-/** Terminate remaining executions and helpers for a completed Run without changing business success into failure. */
-export async function releaseRun(
-  config: FleetConfig,
-  runner: RunnerAdapter,
-  runId: string,
-  options?: {
-    stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
-    cleanup?: () => void;
-  },
-): Promise<ReleaseRunResult> {
-  const opts = options ?? {};
-
-  if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
-
-  const snapshot = inspectRuns(config);
-  const targetRun = snapshot.runs.find((r) => r.id === runId);
-  if (!targetRun) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
-
-  if (targetRun.lifecycle !== 'completed') {
-    throw new Error(
-      `Run ${runId} is not completed (lifecycle: ${targetRun.lifecycle}); only completed Runs can be released with releaseRun`,
-    );
-  }
-
-  if (runner.name !== targetRun.provider)
-    throw new Error(
-      `Run provider mismatch: expected provider ${targetRun.provider}, but received ${runner.name}`,
-    );
-
-  const adapter = runner;
-
-  // Stop startup helper
-  const helperStopped = await stopStartupRecovery(config, runId);
-  const helperStatus = startupRecoveryStatus(config, runId);
-  const blockers: string[] = [];
-  if (helperStatus.active) {
-    blockers.push('Startup helper termination unverified; helper remains active');
-  }
-
-  const isStopped =
-    opts.stopped ??
-    (adapter.stopped
-      ? (a: ManagedAttempt) => adapter.stopped!(a)
-      : async (a: ManagedAttempt) => (await terminateAttempt(a, adapter)).status === 'terminated');
-
-  const attempts = [
-    ...(targetRun.priorOrchestrators ?? []),
-    ...(targetRun.orchestrator ? [targetRun.orchestrator] : []),
-    ...(snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts) ?? []),
-  ];
-
-  const attemptResults: ReleaseRunResult['attempts'] = [];
-
-  for (const attempt of attempts) {
-    const { result, blocker } = await terminateAndVerifyAttempt(
-      config,
-      adapter,
-      runId,
-      attempt,
-      opts,
-    );
-    if (blocker) {
-      blockers.push(blocker);
-    }
-    attemptResults.push(result);
-  }
-
-  // Release checkouts only if explicit cleanup callback is provided
-  const regBeforeCleanup = inspectRuns(config);
-  const ownedResources = (regBeforeCleanup.resources ?? []).filter((r) => r.runId === runId);
-  if (ownedResources.length > 0) {
-    if (opts.cleanup) {
-      for (const res of ownedResources) {
-        try {
-          await releaseRunCheckout(config, runId, res.path, isStopped, opts.cleanup);
-        } catch (err) {
-          blockers.push(`Resource ${res.path} release failed: ${String(err)}`);
-        }
-      }
-    } else {
-      blockers.push('Checkout release requires the workflow preservation and cleanup gate');
-    }
-  }
-
-  const finalReg = inspectRuns(config);
-  const finalRun = finalReg.runs.find((r) => r.id === runId)!;
-  const finalResources = (finalReg.resources ?? []).filter((r) => r.runId === runId);
-  const finalHelper = startupRecoveryStatus(config, runId);
-
-  const allTerminated =
-    attemptResults.length === 0 || attemptResults.every((a) => a.terminated);
-  const released =
-    allTerminated && !finalHelper.active && finalResources.length === 0;
-
-  updateRunRegistry(config, (registry) => {
-    const r = registry.runs.find((entry) => entry.id === runId);
-    if (r) {
-      r.reconciliation = {
-        at: new Date().toISOString(),
-        blockers,
-        pendingDispatches: r.reconciliation?.pendingDispatches ?? [],
-      };
-    }
-  });
-
-  return {
-    runId,
-    lifecycle: finalRun.lifecycle,
-    terminated: allTerminated,
-    released,
-    attempts: attemptResults,
-    helper: {
-      active: finalHelper.active,
-      pending: finalHelper.pending,
-      stopped: helperStopped,
-    },
-    resources: finalResources,
-    blockers,
-  };
-}
 

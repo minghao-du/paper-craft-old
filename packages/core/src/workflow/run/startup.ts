@@ -14,7 +14,6 @@ import {
   claimDriver,
   home,
   inspectRuns,
-  reserveSubject,
   save,
   updateRunRegistry,
   type RunConstraints,
@@ -22,6 +21,7 @@ import {
   type RunSubject,
   type WorkflowRun,
 } from './run-registry.js';
+import { reserveSubject } from './run-ownership.js';
 import { verifyRoleInitialization } from './role-initialization.js';
 import {
   ensureStartupRecovery,

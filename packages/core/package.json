@@ -137,6 +137,16 @@
       "types": "./dist/workflow/run/run-driver.d.ts",
       "default": "./dist/workflow/run/run-driver.js"
     },
+    "./workflow/run-ownership": {
+      "paper-craft-source": "./src/workflow/run/run-ownership.ts",
+      "types": "./dist/workflow/run/run-ownership.d.ts",
+      "default": "./dist/workflow/run/run-ownership.js"
+    },
+    "./workflow/run-control": {
+      "paper-craft-source": "./src/workflow/run/run-control.ts",
+      "types": "./dist/workflow/run/run-control.d.ts",
+      "default": "./dist/workflow/run/run-control.js"
+    },
     "./workflow/run-registry": {
       "paper-craft-source": "./src/workflow/run/run-registry.ts",
       "types": "./dist/workflow/run/run-registry.d.ts",
