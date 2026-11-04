@@ -12,39 +12,17 @@ import { writeResearchReport, type ResearchReport } from '../delivery/research-r
 import { pipelineAccepted, type PipelineDisposition } from '../delivery/epic-finalization.js';
 import type { FleetConfig } from '../fleet/fleet-config.js';
 import {
+  authorize,
+  findDispatch,
   inspectRuns,
   updateRunRegistry,
-  type WorkflowRun,
   type RunRegistry,
   type StageReceipt,
-  type StageDispatch,
 } from './run-registry.js';
 import {
   epicChildSubjects,
   verifyEpicDeliveries,
 } from './stage-execution.js';
-
-function findDispatch(registry: RunRegistry, id: string): StageDispatch {
-  const dispatch = registry.dispatches?.find((d) => d.id === id);
-  if (!dispatch) throw new Error('Unknown Dispatch');
-  return dispatch;
-}
-
-function authorize(
-  registry: RunRegistry,
-  runId: string,
-  authority: string,
-  allowCompleted = false,
-): WorkflowRun {
-  const run = registry.runs.find((r) => r.id === runId);
-  if (
-    !run ||
-    run.orchestratorId !== authority ||
-    (run.lifecycle !== 'running' && (!allowCompleted || run.lifecycle !== 'completed'))
-  )
-    throw new Error('Inactive or wrong Orchestrator authority');
-  return run;
-}
 
 /** Actions seam for actual native EPIC closure, verification and head resolution. */
 export interface EpicClosureActions {

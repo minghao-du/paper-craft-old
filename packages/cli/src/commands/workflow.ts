@@ -4,11 +4,11 @@ import {
   inspectRuns,
   type WorkflowRun,
   type RunRegistry,
-} from '@paper-craft/core/workflow/run-registry';
+} from '@paper-craft/core/workflow/run-observation';
 import {
   closeStageEpic,
   type EpicClosureActions,
-} from '@paper-craft/core/workflow/epic-completion';
+} from '@paper-craft/core/workflow/run-driver';
 import {
   collectBusinessTurn,
   type StageDispatch,

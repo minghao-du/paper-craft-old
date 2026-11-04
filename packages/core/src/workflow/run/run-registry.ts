@@ -236,5 +236,32 @@ export function updateRunRegistry<T>(config: FleetConfig, change: (registry: Run
   }
 }
 
-export { reserveSubject } from './run-ownership.js';
+/**
+ * Locate a StageDispatch by ID within the registry, throwing if absent.
+ */
+export function findDispatch(registry: RunRegistry, id: string): StageDispatch {
+  const dispatch = registry.dispatches?.find((d) => d.id === id);
+  if (!dispatch) throw new Error('Unknown Dispatch');
+  return dispatch;
+}
+
+/**
+ * Validate that the specified authority currently controls the run.
+ */
+export function authorize(
+  registry: RunRegistry,
+  runId: string,
+  authority: string,
+  allowCompleted = false,
+): WorkflowRun {
+  const run = registry.runs.find((r) => r.id === runId);
+  if (
+    !run ||
+    run.orchestratorId !== authority ||
+    (run.lifecycle !== 'running' && (!allowCompleted || run.lifecycle !== 'completed'))
+  )
+    throw new Error('Inactive or wrong Orchestrator authority');
+  return run;
+}
+
 

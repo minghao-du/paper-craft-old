@@ -132,11 +132,6 @@
       "types": "./dist/workflow/run/recovery.d.ts",
       "default": "./dist/workflow/run/recovery.js"
     },
-    "./workflow/epic-completion": {
-      "paper-craft-source": "./src/workflow/run/epic-completion.ts",
-      "types": "./dist/workflow/run/epic-completion.d.ts",
-      "default": "./dist/workflow/run/epic-completion.js"
-    },
     "./workflow/run-driver": {
       "paper-craft-source": "./src/workflow/run/run-driver.ts",
       "types": "./dist/workflow/run/run-driver.d.ts",
@@ -156,11 +151,6 @@
       "paper-craft-source": "./src/workflow/run/run-control.ts",
       "types": "./dist/workflow/run/run-control.d.ts",
       "default": "./dist/workflow/run/run-control.js"
-    },
-    "./workflow/run-registry": {
-      "paper-craft-source": "./src/workflow/run/run-registry.ts",
-      "types": "./dist/workflow/run/run-registry.d.ts",
-      "default": "./dist/workflow/run/run-registry.js"
     },
     "./workflow/run-subject": {
       "paper-craft-source": "./src/workflow/run/run-subject.ts",

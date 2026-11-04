@@ -21,10 +21,11 @@ import { ensureStartupRecovery } from '../runtime/startup-supervisor.js';
 import { pipelineAccepted } from '../delivery/epic-finalization.js';
 import { verifyRoleInitialization } from './role-initialization.js';
 import {
+  authorize,
+  findDispatch,
   home,
   inspectRuns,
   updateRunRegistry,
-  type WorkflowRun,
   type RunRegistry,
   type StageRequest,
   type StageDispatch,
@@ -94,27 +95,6 @@ export interface ReconcileStageMessageResult {
   evidence?: string;
 }
 
-function findDispatch(registry: RunRegistry, id: string): StageDispatch {
-  const dispatch = registry.dispatches?.find((d) => d.id === id);
-  if (!dispatch) throw new Error('Unknown Dispatch');
-  return dispatch;
-}
-
-function authorize(
-  registry: RunRegistry,
-  runId: string,
-  authority: string,
-  allowCompleted = false,
-): WorkflowRun {
-  const run = registry.runs.find((r) => r.id === runId);
-  if (
-    !run ||
-    run.orchestratorId !== authority ||
-    (run.lifecycle !== 'running' && (!allowCompleted || run.lifecycle !== 'completed'))
-  )
-    throw new Error('Inactive or wrong Orchestrator authority');
-  return run;
-}
 
 function resolveGateAuthFile(roundRoot: string, subject?: string): string {
   const defaultFile = join(roundRoot, 'gate-authorization.json');
