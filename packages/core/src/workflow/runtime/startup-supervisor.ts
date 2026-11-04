@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { stateDirectory } from '../handoff.js';
 import type { FleetConfig } from '../fleet/fleet-config.js';
 import type { RunnerAdapter } from './runtime.js';
-import type { RunRegistry } from '../run/run-driver.js';
+import type { RunRegistry } from '../run/run-registry.js';
 import { claimDriver } from '../run/driver-lock.js';
 import { reconcileStartup, startupPending } from '../run/startup.js';
 

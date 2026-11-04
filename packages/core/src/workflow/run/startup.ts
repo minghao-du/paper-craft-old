@@ -1,19 +1,40 @@
 /** Durable startup reconciliation; provider executions and business acceptance remain separate. */
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { FleetConfig } from '../fleet/fleet-config.js';
 import {
   inspectOrchestrator,
+  requireInteractive,
+  startOrchestrator,
   type ManagedAttempt,
   type RunnerAdapter,
 } from '../runtime/runtime.js';
 import {
+  claimDriver,
+  home,
   inspectRuns,
+  reserveSubject,
+  save,
   updateRunRegistry,
-  verifyRunRequirements,
+  type RunConstraints,
   type RunRegistry,
-} from './run-driver.js';
+  type RunSubject,
+  type WorkflowRun,
+} from './run-registry.js';
 import { verifyRoleInitialization } from './role-initialization.js';
+import {
+  ensureStartupRecovery,
+  startupDirectory,
+  startupRecoveryStatus,
+  stopStartupRecovery,
+  superviseStartup,
+  setStartupSupervisorLauncher,
+  getStartupSupervisorLauncher,
+  type StartupSupervisorLauncher,
+  type SuperviseStartupOptions,
+} from '../runtime/startup-supervisor.js';
+
 export {
   startupDirectory,
   startupRecoveryStatus,
@@ -24,7 +45,7 @@ export {
   getStartupSupervisorLauncher,
   type StartupSupervisorLauncher,
   type SuperviseStartupOptions,
-} from '../runtime/startup-supervisor.js';
+};
 
 function attempts(registry: RunRegistry, runId: string): ManagedAttempt[] {
   const run = registry.runs.find((r) => r.id === runId);
@@ -144,6 +165,246 @@ export function startupPending(
     run.lifecycle !== 'completed' &&
     ((run.launchStarted === true && !run.orchestrator) || attempts(snapshot, runId).some(pending))
   );
+}
+
+/** Verify immutable Run context and additional requirements before re-entry. */
+export function verifyRunRequirements(run: WorkflowRun, supplied?: string): void {
+  const context = readFileSync(run.brief.path, 'utf8');
+  if (createHash('sha256').update(context).digest('hex') !== run.brief.hash)
+    throw new Error('Immutable Run context hash mismatch; inspect the stored context');
+  if (
+    run.requirements !== undefined &&
+    !context.endsWith(`\n\n## Run Requirements\n\n${run.requirements}`)
+  )
+    throw new Error('Run Requirements do not match immutable context');
+  if (supplied !== undefined && supplied !== run.requirements)
+    throw new Error('Requirements conflict with immutable Run context; reuse stored Requirements');
+}
+
+/** Prepend Run requirements to the brief if present and not already prefixed. */
+export function assignmentWithRequirements(run: WorkflowRun, brief: string): string {
+  verifyRunRequirements(run);
+  if (run.requirements === undefined) return brief;
+  const prefix = `## Run Requirements\n\n${run.requirements}\n\n## Assignment\n\n`;
+  return brief.startsWith(prefix) ? brief : prefix + brief;
+}
+
+/** Reserve before managed launch; initial bounded path preserves Fleet-wide exclusion. */
+export async function startRun(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  subject: RunSubject,
+  provider: string,
+  requirements?: string,
+  dangerouslySkipPermissions?: boolean,
+  constraints?: RunConstraints,
+): Promise<WorkflowRun> {
+  if (
+    !/^[\w.-]+\/[\w.-]+$/.test(subject.repository) ||
+    !Number.isSafeInteger(subject.number) ||
+    subject.number < 1
+  )
+    throw new Error(
+      'Resolve an accessible repository owner/name and positive Issue number before launch',
+    );
+  if (!provider || runner.name !== provider)
+    throw new Error(
+      `Run provider mismatch: expected provider ${provider}, but received ${runner.name}`,
+    );
+  if (dangerouslySkipPermissions && provider !== 'agy')
+    throw new Error('--dangerously-skip-permissions requires --provider agy');
+  if (!constraints && config.demo?.round) {
+    constraints = {
+      kind: 'demo',
+      roundId: config.demo.round,
+      demoConfigPath: config.demo.config,
+    };
+  }
+  const verifyPermissions = (run: WorkflowRun) => {
+    if (dangerouslySkipPermissions && !run.dangerouslySkipPermissions)
+      throw new Error('Permission mode conflicts with the existing Run; reuse its stored mode');
+  };
+  const verifyConstraints = (run: WorkflowRun) => {
+    if (run.constraints && constraints) {
+      if (
+        run.constraints.kind !== constraints.kind ||
+        run.constraints.roundId !== constraints.roundId
+      )
+        throw new Error('Constraints conflict with existing Run; reuse stored constraints');
+    }
+  };
+  requireInteractive(runner);
+  await runner.preflight();
+  const reconnect = inspectRuns(config).runs.find(
+    (r) =>
+      r.subject.repository === subject.repository &&
+      r.subject.number === subject.number &&
+      r.lifecycle !== 'completed',
+  );
+
+  if (reconnect) {
+    verifyPermissions(reconnect);
+    verifyRunRequirements(reconnect, requirements);
+    verifyConstraints(reconnect);
+    if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
+      throw new Error('Existing Run provider or scope conflict');
+    ensureStartupRecovery(config, runner, reconnect.id);
+    return reconnect;
+  }
+  mkdirSync(home(config), { recursive: true });
+  const lock = join(home(config), 'registry.lock');
+  try {
+    claimDriver(lock);
+  } catch {
+    throw new Error('Registry occupied; inspect before retry');
+  }
+  let run: WorkflowRun;
+  try {
+    const registry = inspectRuns(config);
+    const ownership = registry.subjects?.find(
+      (s) => s.subject === `${subject.repository}#${subject.number}`,
+    );
+    const owningRun = registry.runs.find((r) => r.id === ownership?.ownerRunId);
+    if (owningRun && owningRun.subject.number !== subject.number) {
+      verifyPermissions(owningRun);
+      verifyRunRequirements(owningRun, requirements);
+      verifyConstraints(owningRun);
+      if (owningRun.provider !== provider)
+        throw new Error('Existing child execution provider conflict');
+      ensureStartupRecovery(config, runner, owningRun.id);
+      return owningRun;
+    }
+    if (subject.parent && !subject.blockedBy)
+      throw new Error('Child dependencies unresolved; refresh tracker metadata');
+    if (subject.blockedBy?.length)
+      throw new Error(`Unmet dependencies: ${subject.blockedBy.join(', ')}`);
+
+    const existing = registry.runs.find(
+      (r) =>
+        r.subject.repository === subject.repository &&
+        r.subject.number === subject.number &&
+        r.lifecycle !== 'completed',
+    );
+    if (existing) {
+      verifyPermissions(existing);
+      verifyRunRequirements(existing, requirements);
+      verifyConstraints(existing);
+      if (existing.provider !== provider || existing.subject.kind !== subject.kind)
+        throw new Error('Existing Run provider or scope conflict');
+      ensureStartupRecovery(config, runner, existing.id);
+      return existing;
+    }
+
+    if (constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const roundFile = join(roundRoot, 'round.json');
+      if (!existsSync(roundFile)) {
+        throw new Error(`Demo round ${constraints.roundId} manifest not found`);
+      }
+      const round = JSON.parse(readFileSync(roundFile, 'utf8'));
+      if (round.id !== constraints.roundId) {
+        throw new Error(`Demo round ID mismatch: expected ${constraints.roundId}, found ${round.id}`);
+      }
+      const expectedRepo = `${round.repository?.owner}/${round.repository?.name}`;
+      if (subject.repository !== expectedRepo) {
+        throw new Error(
+          `Repository mismatch for demo round: expected ${expectedRepo}, received ${subject.repository}`,
+        );
+      }
+      if (subject.number !== round.parent) {
+        throw new Error(
+          `Parent mismatch for demo round: expected ${round.parent}, received ${subject.number}`,
+        );
+      }
+      if (provider !== 'agy') {
+        throw new Error(`Provider mismatch for demo round: expected agy, received ${provider}`);
+      }
+      if (config.project !== round.checkout || config.root !== round.worktrees) {
+        throw new Error('Configuration path mismatch for demo round');
+      }
+      const controlFile = join(roundRoot, 'control.json');
+      if (!existsSync(controlFile)) {
+        throw new Error(`Demo round ${round.id} is not armed; run pc demo arm first`);
+      }
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      if (!control.armed) {
+        throw new Error(`Demo round ${round.id} is not armed; run pc demo arm first`);
+      }
+      if (control.stopped) {
+        throw new Error(`Demo round ${round.id} is stopped; cannot start Run`);
+      }
+      if (control.activeMs >= control.budgetMs) {
+        throw new Error(`Demo round ${round.id} budget expired; cannot start Run`);
+      }
+      if (control.runId) {
+        throw new Error(`Demo round ${round.id} already bound to Run ${control.runId}`);
+      }
+    }
+
+    const id = randomUUID();
+    const directory = join(home(config), 'runs', id);
+    mkdirSync(directory, { recursive: true });
+    const brief = `Manage only ${subject.kind} ${subject.repository}#${subject.number}. Run ${id}. Provider ${provider}.\n${subject.parent ? `Parent context #${subject.parent}; no sibling or parent closure authorization.\n` : ''}${subject.title}\n${subject.body}${requirements === undefined ? '' : `\n\n## Run Requirements\n\n${requirements}`}`;
+    const path = join(directory, 'brief.md');
+    writeFileSync(path, brief, { mode: 0o400, flag: 'wx' });
+    run = {
+      id,
+      subject,
+      provider,
+      ...(dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
+      policy: { name: 'managed-run', revision: 1 },
+      lifecycle: 'reserved',
+      ...(requirements === undefined ? {} : { requirements }),
+      ...(constraints === undefined
+        ? {}
+        : { constraints: { ...constraints, boundAt: new Date().toISOString() } }),
+      orchestratorId: id,
+      launchStarted: false,
+      brief: { path, hash: createHash('sha256').update(brief).digest('hex') },
+    };
+    registry.runs.push(run);
+    reserveSubject(registry, run.id, `${subject.repository}#${subject.number}`);
+    save(config, registry);
+
+    if (constraints?.kind === 'demo') {
+      const roundRoot = dirname(config.project);
+      const controlFile = join(roundRoot, 'control.json');
+      const control = JSON.parse(readFileSync(controlFile, 'utf8'));
+      control.runId = id;
+      control.execution = 'running';
+      writeFileSync(controlFile, JSON.stringify(control, null, 2));
+    }
+
+    // The durable reservation survives a crash or failed launch and blocks replacement.
+    try {
+      run.launchStarted = true;
+      save(config, registry);
+      run.orchestrator = await startOrchestrator(
+        config,
+        runner,
+        brief,
+        id,
+        {
+          registry: join(home(config), 'registry.json'),
+          authority: id,
+          run: id,
+          subject: `${subject.repository}#${subject.number}`,
+          context: run.brief,
+        },
+        run.dangerouslySkipPermissions,
+      );
+      run.lifecycle = run.orchestrator.status === 'running' ? 'running' : 'blocked';
+    } catch (error) {
+      run.lifecycle = 'blocked';
+      save(config, registry);
+      throw error;
+    }
+    save(config, registry);
+    ensureStartupRecovery(config, runner, run.id);
+    return run;
+  } finally {
+    rmSync(lock, { recursive: true });
+  }
 }
 
 /** One reconciliation pass. Returns true while a live/unknown startup still needs observation. */
