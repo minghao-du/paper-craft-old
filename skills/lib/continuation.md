@@ -10,7 +10,7 @@ with any pending integration handover; keep full scientific analysis in that sta
 ## Role and location
 
 Use the explicitly assigned role: `ms`, `worker`, `epic`, `orchestrator`, `landing` or `generic`.
-Otherwise inspect task markers: `.ms-config.json` identifies a manuscript and `.epic-status.json` identifies a worker.
+Otherwise inspect task markers: `.ms-config.json` identifies a manuscript and `.pc-execution-owner` or managed dispatch identity identifies a worker.
 When roles overlap or several continuation files fit, ask which assignment to resume.
 Native session addresses are optional routing information and cannot establish role or ownership.
 

@@ -447,20 +447,6 @@ test('Interrupted merge recovery does not repeat merge, and cleanup transitions 
         releaseEvidence: 'releasing',
       }),
     );
-    // Write marker files required by deliveryFacts for final-records
-    writeFileSync(
-      join(worktreePath, '.epic-status.json'),
-      JSON.stringify({
-        repository: 'owner/issue-repo',
-        issue: 55,
-        pr: 15,
-        followups: [],
-        releaseEvidence: 'releasing',
-        assessment: 'Pass',
-      }),
-    );
-    writeFileSync(join(worktreePath, '.epic-worklog.md'), 'Done worklog');
-
     const recordsReceipt = publishStageReceipt(config, {
       dispatchId: recordsDispatch.id,
       attemptId: recordsDispatch.attempts[0].id,

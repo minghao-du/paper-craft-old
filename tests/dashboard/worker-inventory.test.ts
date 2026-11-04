@@ -29,25 +29,11 @@ test('Dashboard separates Managed execution records from configured-directory ob
     );
     const fleetConfig = loadFleetConfig(configPath);
 
-    // Write status and worklog in configured slot without managed task
-    writeFileSync(
-      join(root, 'pool', 'idle-slot', '.epic-status.json'),
-      JSON.stringify({
-        phase: 'implementing',
-        summary: 'Configured slot status',
-        issue: 42,
-      }),
-    );
-    writeFileSync(
-      join(root, 'pool', 'idle-slot', '.epic-worklog.md'),
-      'Initial progress\nAuthorization: Bearer secret-token\n',
-    );
-
-    // Write brief and worklog for managed task
+    // Write brief and attempt.log for managed task
     const taskBriefPath = join(root, 'task-brief.md');
     writeFileSync(taskBriefPath, '# Task Brief\n');
     writeFileSync(
-      join(root, 'pool', 'managed-slot', '.epic-worklog.md'),
+      join(root, 'pool', 'managed-slot', 'attempt.log'),
       'Managed worklog entry\nToken: sk-1234567890abcdef\n',
     );
 
@@ -174,19 +160,12 @@ test('Dashboard separates Managed execution records from configured-directory ob
     expect(managedTask!.executionEvidence?.acceptance).toBe('accepted');
     expect(managedTask!.executionEvidence?.receipts[0].accepted).toBe(true);
 
-    // 3. Configured slot without managed task: shows directory observations without execution identity
+    // 3. Configured slot without managed task does NOT create a task (derived strictly from RunRegistry)
     const idleSlotTask = fleet.tasks.find((t) => t.id === 'test:idle-slot');
-    expect(idleSlotTask).toBeDefined();
-    expect(idleSlotTask!.phase).toBe('implementing');
-    expect(idleSlotTask!.summary).toBe('Configured slot status');
-    expect(idleSlotTask!.executionIdentity).toBe('unknown');
-    expect(idleSlotTask!.runtime).toBe('unknown');
-    expect(idleSlotTask!.runId).toBeUndefined();
-    expect(idleSlotTask!.dispatchId).toBeUndefined();
-    expect(idleSlotTask!.executionEvidence).toBeUndefined();
+    expect(idleSlotTask).toBeUndefined();
 
-    // 4. Worklog reading for managed tasks
-    const execute = async (program: string, args: string[]) => {
+    // 4. Log reading for managed tasks
+    const execute = async (program: string, _args: string[]) => {
       if (program === 'tmux') {
         return `%1\t${join(root, 'pool', 'managed-slot')}\t1234\t0\tzsh`;
       }
@@ -201,23 +180,14 @@ test('Dashboard separates Managed execution records from configured-directory ob
     expect(managedLog.text).toContain('Managed worklog entry');
     expect(managedLog.text).toContain('[credential omitted]');
 
-    // 5. Worklog reading for configured slot task
-    const idleLog = await readTaskLog(configPath, idleSlotTask!, 'worklog', 0, execute);
-    expect(idleLog).toMatchObject({
-      state: 'read',
-      kind: 'worklog',
-    });
-    expect(idleLog.text).toContain('Initial progress');
-    expect(idleLog.text).toContain('[sensitive line omitted]');
-
-    // 6. Terminal reading for managed task
+    // 5. Terminal reading for managed task
     const terminalLog = await readTaskLog(configPath, managedTask!, 'terminal', 0, execute);
     expect(terminalLog).toMatchObject({
       kind: 'terminal',
       state: 'read',
     });
 
-    // 7. Out-of-scope paths are explicitly unavailable
+    // 6. Out-of-scope paths are explicitly unavailable
     const outOfScopeTask = {
       ...managedTask!,
       id: 'test:managed:out-of-scope',
@@ -227,16 +197,13 @@ test('Dashboard separates Managed execution records from configured-directory ob
       state: 'error',
     });
 
-    // 8. Escaping symlink worklog is rejected
-    const escapingLog = join(root, 'pool', 'managed-slot', 'symlink-worklog.md');
-    symlinkSync('/etc/passwd', escapingLog);
+    // 7. Escaping symlink log is rejected
     const symlinkTask = {
       ...managedTask!,
       path: join(root, 'pool', 'managed-slot'),
     };
-    // dashboardTaskSource resolves log as .epic-worklog.md
-    rmSync(join(root, 'pool', 'managed-slot', '.epic-worklog.md'));
-    symlinkSync('/etc/passwd', join(root, 'pool', 'managed-slot', '.epic-worklog.md'));
+    rmSync(join(root, 'pool', 'managed-slot', 'attempt.log'));
+    symlinkSync('/etc/passwd', join(root, 'pool', 'managed-slot', 'attempt.log'));
     expect(await readTaskLog(configPath, symlinkTask, 'worklog', 0, execute)).toMatchObject({
       state: 'error',
     });

@@ -2,9 +2,8 @@ import type { WorkflowRole } from '../runtime/workflow-role.js';
 import type { ManagedAttempt } from '../runtime/runtime.js';
 import { inspectRuns, type WorkflowRun, type RunRegistry } from '../run/run-driver.js';
 /** File-backed evidence shared by Dashboard and JSON CLI; never scheduling authority. */
-import { readFile, realpath, stat, readdir } from 'node:fs/promises';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { existsSync } from 'node:fs';
 import { loadFleetConfig, workflowSource, within } from './fleet-config.js';
 
 /** Registered monitoring source; project is an optional research association. */
@@ -134,6 +133,45 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
     fleet.runs = runs;
     fleet.execution = execution;
     for (const run of fleet.runs) {
+      const runData = run as unknown as Record<string, unknown>;
+      const runBlockers = Array.isArray(runData.blockers)
+        ? runData.blockers.filter((b): b is string => typeof b === 'string')
+        : [];
+      const blockers = [
+        ...(run.subject.blockedBy ?? []).map((n) => `Dependency #${n} remains open`),
+        ...runBlockers,
+        ...(run.orchestrator?.error ? [run.orchestrator.error] : []),
+        ...(run.reconciliation?.blockers ?? []),
+        ...(run.pipeline?.blockers ?? []),
+        ...(run.pipeline &&
+        ['changes_needed', 'acceptance_invalidated'].includes(run.pipeline.disposition)
+          ? [`Pipeline ${run.pipeline.disposition}`]
+          : []),
+      ];
+      const interventions = blockers.map((reason) => ({ reason, source: run.brief.path }));
+      if (['needs-human', 'blocked'].includes(run.phase ?? run.lifecycle) && !blockers.length)
+        interventions.push({
+          reason: 'Recorded phase requests human intervention',
+          source: run.brief.path,
+        });
+      const lastAttempt = run.orchestrator ?? run.priorOrchestrators?.at(-1);
+      const modifiedAt = lastAttempt?.observation?.at ?? lastAttempt?.created ?? observedAt;
+      const awaiting = runData.awaiting as { next_check_at?: unknown } | undefined;
+      const appointment =
+        typeof awaiting?.next_check_at === 'string' ? Date.parse(awaiting.next_check_at) : NaN;
+      let waiting: DashboardTask['waiting'] = undefined;
+      if ((run.phase as string) === 'awaiting-results') {
+        waiting = Number.isFinite(appointment)
+          ? appointment > Date.now()
+            ? 'planned'
+            : 'overdue'
+          : 'unknown';
+        if (waiting === 'overdue')
+          interventions.push({
+            reason: 'Saved next check is overdue; investigate',
+            source: run.brief.path,
+          });
+      }
       fleet.tasks.push({
         id: `${registration.id}:run:${run.id}`,
         slot: `run-${run.id}`,
@@ -141,18 +179,16 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         role: 'orchestrator',
         source: run.brief.path,
         phase: run.phase ?? run.lifecycle,
-        summary: `${run.subject.repository}#${run.subject.number} (${run.provider})${run.subject.parent ? `; child of #${run.subject.parent}` : ''}`,
+        summary:
+          (typeof runData.summary === 'string' ? runData.summary : undefined) ??
+          run.subject.title ??
+          `${run.subject.repository}#${run.subject.number} (${run.provider})${run.subject.parent ? `; child of #${run.subject.parent}` : ''}`,
         issue: run.subject.number,
-        blockers: [
-          ...(run.subject.blockedBy ?? []).map((n) => `Dependency #${n} remains open`),
-          ...(run.orchestrator?.error ? [run.orchestrator.error] : []),
-          ...(run.reconciliation?.blockers ?? []),
-          ...(run.pipeline?.blockers ?? []),
-          ...(run.pipeline &&
-          ['changes_needed', 'acceptance_invalidated'].includes(run.pipeline.disposition)
-            ? [`Pipeline ${run.pipeline.disposition}`]
-            : []),
-        ],
+        pr: runData.pr ? String(runData.pr) : undefined,
+        blockers,
+        interventions,
+        waiting,
+        modifiedAt,
         runId: run.id,
         orchestratorId: run.orchestratorId,
         executionEvidence: executionEvidence(
@@ -167,6 +203,17 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
     }
     for (const dispatch of execution.dispatches ?? []) {
       const attempt = dispatch.attempts.at(-1);
+      const issueNum = dispatch.subject ? Number(dispatch.subject.split('#').at(-1)) : undefined;
+      const blockers = [
+        ...(attempt?.error ? [attempt.error] : []),
+        ...(attempt?.observation?.status === 'error' && attempt.observation.evidence
+          ? [attempt.observation.evidence]
+          : []),
+      ];
+      const interventions = blockers.map((reason) => ({
+        reason,
+        source: dispatch.briefReference.path,
+      }));
       fleet.tasks.push({
         id: `${registration.id}:managed:${dispatch.id}`,
         slot: `managed-${dispatch.id}`,
@@ -175,7 +222,10 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         source: dispatch.briefReference.path,
         phase: dispatch.lifecycle,
         summary: dispatch.stage,
-        blockers: [],
+        blockers,
+        interventions,
+        modifiedAt: attempt?.observation?.at ?? attempt?.created,
+        issue: Number.isFinite(issueNum) ? issueNum : undefined,
         runId: dispatch.runId,
         dispatchId: dispatch.id,
         runtime: 'unknown',
@@ -189,90 +239,27 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         ),
       });
     }
-    const names = config.worktrees
-      ? (await readdir(config.root)).filter((n) => /^issue-\d+$/.test(n))
-      : config.slots;
-    const locations = [
-      { slot: 'orchestrator', path: config.project },
-      ...names.map((slot) => ({ slot, path: join(config.root, slot) })),
-    ];
-    for (const location of locations) {
-      const task: DashboardTask = {
-        ...location,
-        id: `${registration.id}:${location.slot}`,
-        role: location.slot === 'orchestrator' ? 'orchestrator' : 'worker',
-        source: join(location.path, '.epic-status.json'),
-        phase: 'unknown',
-        summary: '',
+    for (const delivery of execution.deliveries ?? []) {
+      if (execution.dispatches?.some((d) => delivery.dispatches?.includes(d.id))) {
+        continue;
+      }
+      fleet.tasks.push({
+        id: `${registration.id}:delivery:${delivery.runId}:${delivery.pr ?? delivery.issue ?? 'done'}`,
+        slot: `delivery-${delivery.pr ?? delivery.issue ?? 'done'}`,
+        path: delivery.archive ?? config.project,
+        role: 'landing',
+        source: delivery.archive ?? config.project,
+        phase: delivery.status,
+        summary: `Delivered ${delivery.repository}${delivery.issue ? `#${delivery.issue}` : ''}${delivery.pr ? ` (PR #${delivery.pr})` : ''}`,
+        issue: delivery.issue,
+        pr: delivery.pr ? String(delivery.pr) : undefined,
         blockers: [],
+        runId: delivery.runId,
         runtime: 'unknown',
         executionIdentity: 'unknown',
         observedAt,
         stale: false,
-      };
-      try {
-        workflowSource(config, location.path);
-        const physical = await realpath(task.source);
-        if (!within(location.path, physical))
-          throw new Error('Status source escapes registered directory');
-        if ((await stat(physical)).size > 256 * 1024)
-          throw new Error('Status exceeds 256 KiB limit');
-        const value: unknown = JSON.parse(await readFile(physical, 'utf8'));
-        if (!value || typeof value !== 'object' || Array.isArray(value))
-          throw new Error('Expected status object');
-        const record = value as Record<string, unknown>;
-        task.phase = typeof record.phase === 'string' ? record.phase : 'unknown';
-        task.summary = typeof record.summary === 'string' ? record.summary : '';
-        task.blockers = Array.isArray(record.blockers)
-          ? record.blockers.filter((v): v is string => typeof v === 'string')
-          : [];
-        task.interventions = task.blockers.map((reason) => ({ reason, source: task.source }));
-        if (['needs-human', 'blocked'].includes(task.phase) && !task.blockers.length)
-          task.interventions.push({
-            reason: 'Recorded phase requests human intervention',
-            source: task.source,
-          });
-        for (const field of ['stop_reason', 'lead_guidance']) {
-          if (typeof record[field] === 'string' && record[field])
-            task.interventions.push({ reason: record[field], source: `${task.source}#${field}` });
-        }
-        const awaiting =
-          record.awaiting && typeof record.awaiting === 'object'
-            ? (record.awaiting as Record<string, unknown>)
-            : undefined;
-        const appointment =
-          typeof awaiting?.next_check_at === 'string' ? Date.parse(awaiting.next_check_at) : NaN;
-        const statusTime = (await stat(physical)).mtimeMs;
-        let worklogTime = 0;
-        try {
-          const worklog = await realpath(join(location.path, '.epic-worklog.md'));
-          if (within(location.path, worklog)) worklogTime = (await stat(worklog)).mtimeMs;
-        } catch {
-          /* Missing worklog does not invalidate status evidence. */
-        }
-        task.modifiedAt = new Date(Math.max(statusTime, worklogTime)).toISOString();
-        if (task.phase === 'awaiting-results') {
-          task.waiting = Number.isFinite(appointment)
-            ? appointment > Date.now()
-              ? 'planned'
-              : 'overdue'
-            : 'unknown';
-          if (task.waiting === 'overdue')
-            task.interventions.push({
-              reason: 'Saved next check is overdue; investigate',
-              source: task.source,
-            });
-        }
-        // Without verified terminal evidence, old files alone cannot establish stalled work.
-        if (typeof record.issue === 'number') task.issue = record.issue;
-        if (typeof record.pr === 'string') task.pr = record.pr;
-      } catch (error) {
-        const missing = error instanceof Error && 'code' in error && error.code === 'ENOENT';
-        if (missing && fleet.runs?.length && location.slot === 'orchestrator') continue;
-        if (missing) task.summary = 'No legacy status record';
-        else task.error = error instanceof Error ? error.message : 'Cannot read status';
-      }
-      fleet.tasks.push(task);
+      });
     }
   } catch (error) {
     fleet.error = error instanceof Error ? error.message : 'Cannot load Fleet configuration';
@@ -280,15 +267,58 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
   return fleet;
 }
 
-/** Revalidate a dispatch before reading its checkout or log; never trust a cached path. */
+function resolveAttemptLog(attempt?: ManagedAttempt, fallbackDir?: string): string {
+  const dir =
+    attempt?.directory && existsSync(attempt.directory)
+      ? realpathSync(attempt.directory)
+      : attempt?.directory;
+  if (dir) {
+    const attemptLog = join(dir, 'attempt.log');
+    if (existsSync(attemptLog)) return attemptLog;
+    const transcript = join(dir, 'transcript.jsonl');
+    if (existsSync(transcript)) return transcript;
+    const agyNative = join(dir, 'agy-native.json');
+    if (existsSync(agyNative)) {
+      try {
+        const parsed = JSON.parse(readFileSync(agyNative, 'utf8'));
+        if (typeof parsed.transcript_path === 'string' && existsSync(parsed.transcript_path)) {
+          return realpathSync(parsed.transcript_path);
+        }
+      } catch {
+        /* ignore invalid agy-native.json */
+      }
+    }
+  }
+  const checkoutDir =
+    attempt?.checkout && existsSync(attempt.checkout)
+      ? realpathSync(attempt.checkout)
+      : attempt?.checkout;
+  if (checkoutDir) {
+    const checkoutAttemptLog = join(checkoutDir, 'attempt.log');
+    if (existsSync(checkoutAttemptLog)) return checkoutAttemptLog;
+    const checkoutTranscript = join(checkoutDir, 'transcript.jsonl');
+    if (existsSync(checkoutTranscript)) return checkoutTranscript;
+  }
+  if (dir) {
+    return join(dir, 'attempt.log');
+  }
+  const fallback =
+    fallbackDir && existsSync(fallbackDir) ? realpathSync(fallbackDir) : fallbackDir;
+  return join(fallback ?? '', 'attempt.log');
+}
+
+/** Revalidate a dispatch or run before reading its checkout or log; never trust a cached path. */
 export function dashboardTaskSource(
   configFile: string,
   task: DashboardTask,
 ): { directory: string; log: string } {
   const config = loadFleetConfig(configFile);
   if (!task.dispatchId) {
-    const directory = workflowSource(config, task.path);
-    return { directory, log: join(directory, '.epic-worklog.md') };
+    const { runs } = inspectRuns(config);
+    const run = task.runId ? runs?.find((r) => r.id === task.runId) : undefined;
+    const attempt = run?.orchestrator ?? run?.priorOrchestrators?.at(-1);
+    const directory = workflowSource(config, task.path || config.project);
+    return { directory, log: resolveAttemptLog(attempt, directory) };
   }
   const { dispatches } = inspectRuns(config);
   const dispatch = dispatches?.find(
@@ -303,8 +333,8 @@ export function dashboardTaskSource(
     if (!within(config.project, checkout) && !within(config.root, checkout)) {
       throw new Error(`Dispatch checkout is outside configured project or root: ${checkout}`);
     }
-    return { directory: checkout, log: join(checkout, '.epic-worklog.md') };
+    return { directory: checkout, log: resolveAttemptLog(attempt, checkout) };
   }
   const directory = workflowSource(config, checkout);
-  return { directory, log: join(directory, '.epic-worklog.md') };
+  return { directory, log: resolveAttemptLog(attempt, directory) };
 }

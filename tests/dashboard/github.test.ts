@@ -4,6 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDashboard } from '../../packages/dashboard/src/server.js';
+import { updateRunRegistry } from '@paper-craft/core/workflow/run-driver';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 
 test('delivery reads isolate repositories and retain successful evidence after auth failure', async () => {
   const root = mkdtempSync(join(tmpdir(), 'dashboard-gh-')),
@@ -30,12 +32,23 @@ test('delivery reads isolate repositories and retain successful evidence after a
         'origin',
         `https://github.com/team/${name}.git`,
       ]);
-      writeFileSync(
-        join(dir, '.epic-status.json'),
-        JSON.stringify({ issue: 7, phase: 'implementing' }),
-      );
       const config = join(dir, '.epic-config.json');
       writeFileSync(config, JSON.stringify({ clone_root: 'pool' }));
+      const fleetConfig = loadFleetConfig(config);
+      const briefPath = join(dir, 'brief.md');
+      writeFileSync(briefPath, '# Brief');
+      updateRunRegistry(fleetConfig, (registry) => {
+        registry.runs.push({
+          id: 'run-' + name,
+          subject: { repository: 'team/' + name, number: 7 },
+          provider: 'codex',
+          policy: { name: 'default', revision: 1 },
+          lifecycle: 'running',
+          phase: 'implementing',
+          orchestratorId: 'orch-1',
+          brief: { path: briefPath, hash: 'h' },
+        });
+      });
       return config;
     });
     dashboard = await createDashboard({

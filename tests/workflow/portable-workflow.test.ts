@@ -96,6 +96,22 @@ describe('portable workflow file contract', () => {
     expect(readFileSync(join(second.path, '.epic-worklog.md'), 'utf8')).toBe('Measured result\n');
   });
 
+  it('preserves checkout files without requiring .epic-status.json or .epic-worklog.md', () => {
+    const config = loadFleetConfig(configFile);
+    const slot = join(pool, 'cedar');
+    rmSync(join(slot, '.epic-status.json'), { force: true });
+    rmSync(join(slot, '.epic-worklog.md'), { force: true });
+    writeFileSync(join(slot, 'notes.txt'), 'test notes\n');
+    writeFileSync(join(slot, '.pc-execution-owner'), JSON.stringify({ runId: 'run-1' }));
+    const result = preserveState(config, slot, 'clean handoff');
+    expect(result.status).toBe('preserved');
+    expect(result.worklogMissing).toBe(true);
+    expect(result.files['notes.txt']).toBeDefined();
+    expect(result.files['.pc-execution-owner']).toBeDefined();
+    expect(readFileSync(join(result.path, 'notes.txt'), 'utf8')).toBe('test notes\n');
+    expect(readFileSync(join(slot, 'notes.txt'), 'utf8')).toBe('test notes\n');
+  });
+
   it('fails preservation on malformed status or linked worklogs, retaining originals and removing partial archives', () => {
     const config = loadFleetConfig(configFile);
     const slot = join(pool, 'cedar');
@@ -239,6 +255,23 @@ describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
     expect(git(slot, 'rev-parse', 'HEAD')).toBe(head);
     expect(git(slot, 'status', '--porcelain')).toBe('');
     expect(checkFleet(config, 'collisions').status).toBe('clear');
+  });
+
+  it('checkReclaim checks registry resources and .pc-execution-owner without inspecting .epic-status.json', () => {
+    const config = loadFleetConfig(configFile);
+    const slot = join(pool, 'cedar');
+    writeFileSync(join(slot, '.pc-execution-owner'), JSON.stringify({ runId: 'run-99' }));
+    updateRunRegistry(config, (reg) => {
+      reg.resources = [{ path: realpathSync(slot), runId: 'run-99', registry: config.file }];
+    });
+    // Write historical .epic-status.json to verify it is NOT adopted or inspected in checks
+    writeFileSync(join(slot, '.epic-status.json'), JSON.stringify({ phase: 'coding', issue: 123 }));
+    const reclaim = checkReclaim(config, slot);
+    expect(reclaim.eligible).toBe(false);
+    expect(reclaim.status).toBe('blocked');
+    expect(reclaim.checks.executionOwner).toEqual({ runId: 'run-99' });
+    expect(reclaim.checks.resource).toMatchObject({ runId: 'run-99' });
+    expect((reclaim.checks as any).workerState).toBeUndefined();
   });
 
   it('detects committed, staged, unstaged and untracked overlap including whitespace in names', () => {

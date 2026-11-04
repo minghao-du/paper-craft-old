@@ -9,6 +9,10 @@ import {
   inspectRuns,
   updateRunRegistry,
 } from '../../packages/core/src/workflow/run/run-driver.js';
+import {
+  verifyRoleInitialization,
+  roleArtifactInstructions,
+} from '../../packages/core/src/workflow/run/role-initialization.js';
 import type { ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
 import { initializeRole } from './initialize-role.js';
 
@@ -125,5 +129,69 @@ test('managed role startup requires actual role evidence and recovery never rela
     expect(inspectRuns(config).runs[0].orchestrator?.status).toBe('running');
   } finally {
     rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('worker role initialization is verified solely via initialization.json without requiring .epic-status.json or .epic-worklog.md', () => {
+  const temp = realpathSync(mkdtempSync(join(tmpdir(), 'pc-worker-init-')));
+  try {
+    const attemptDir = join(temp, 'attempt');
+    const checkoutDir = join(temp, 'checkout');
+    const contextDir = join(temp, 'context');
+    mkdirSync(attemptDir, { recursive: true });
+    mkdirSync(checkoutDir, { recursive: true });
+    mkdirSync(contextDir, { recursive: true });
+
+    const contextPath = join(contextDir, 'brief.md');
+    writeFileSync(contextPath, '# Context');
+    const crypto = require('node:crypto');
+    const contextHash = crypto.createHash('sha256').update('# Context').digest('hex');
+
+    const registryPath = join(temp, 'registry.json');
+    const registry = {
+      runs: [
+        {
+          id: 'run-test',
+          orchestratorId: 'orch-test',
+          subject: { repository: 'o/r', number: 42 },
+          lifecycle: 'running',
+        },
+      ],
+    };
+    writeFileSync(registryPath, JSON.stringify(registry));
+
+    const expected = {
+      run: 'run-test',
+      registry: registryPath,
+      authority: 'orch-test',
+      subject: 'o/r#42',
+      role: 'worker' as const,
+      attempt: 'attempt-worker-1',
+      briefHash: 'brief-hash',
+      context: { path: contextPath, hash: contextHash },
+    };
+
+    expect(roleArtifactInstructions(expected)).toBe('');
+
+    const attempt: ManagedAttempt = {
+      id: 'attempt-worker-1',
+      fleet: 'test-fleet',
+      role: 'worker',
+      runner: 'agy',
+      brief: 'brief',
+      status: 'running',
+      created: new Date(Date.now() - 1000).toISOString(),
+      directory: attemptDir,
+      checkout: checkoutDir,
+      initialization: expected,
+    };
+
+    // Write ONLY initialization.json in attempt directory (no .epic-status.json or .epic-worklog.md in checkoutDir)
+    writeFileSync(join(attemptDir, 'initialization.json'), JSON.stringify(expected));
+
+    // Must verify successfully without throwing ENOENT for .epic-status.json
+    expect(verifyRoleInitialization(attempt)).toContain('Verified worker initialization');
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
   }
 });

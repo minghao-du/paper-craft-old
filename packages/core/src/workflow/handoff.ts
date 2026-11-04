@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -40,32 +41,41 @@ export interface Preservation {
   worklogMissing: boolean;
 }
 
-/** Copy and verify both state files, leaving source files intact on success and failure. */
+/** Copy and verify checkout files, leaving source files intact on success and failure. */
 export function preserveState(config: FleetConfig, path: string, reason: string): Preservation {
   const source = workflowSource(config, path);
-  const status = join(source, '.epic-status.json');
-  regularFile(status);
-  const statusBytes = readFileSync(status);
-  const parsed: unknown = JSON.parse(statusBytes.toString('utf8'));
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`Expected a JSON status object: ${status}`);
+  const statusPath = join(source, '.epic-status.json');
+  let statusBytes: Buffer | undefined;
+  if (pathExists(statusPath)) {
+    regularFile(statusPath);
+    statusBytes = readFileSync(statusPath);
+    const parsed: unknown = JSON.parse(statusBytes.toString('utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`Expected a JSON status object: ${statusPath}`);
+    }
   }
   const parent = stateDirectory(config, '.preserved');
   const dest = mkdtempSync(join(parent, `${basename(source)}-`));
   const hashes: Record<string, string> = {};
   const worklogMissing = !pathExists(join(source, '.epic-worklog.md'));
   try {
-    for (const name of ['.epic-status.json', '.epic-worklog.md']) {
-      const from = join(source, name);
-      if (name === '.epic-worklog.md' && worklogMissing) continue;
+    const entries = readdirSync(source, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === '.git') continue;
+      const from = join(source, entry.name);
+      if (entry.isSymbolicLink() || lstatSync(from).isSymbolicLink()) {
+        throw new Error(`Expected regular file, not symlink: ${from}`);
+      }
+      if (entry.isDirectory()) continue;
       regularFile(from);
-      const original = name === '.epic-status.json' ? statusBytes : readFileSync(from);
-      const to = join(dest, name);
+      const original =
+        entry.name === '.epic-status.json' && statusBytes ? statusBytes : readFileSync(from);
+      const to = join(dest, entry.name);
       copyFileSync(from, to, constants.COPYFILE_EXCL);
       if (!original.equals(readFileSync(to)) || !original.equals(readFileSync(from))) {
         throw new Error(`State changed while preserving ${from}; retry before deleting anything`);
       }
-      hashes[name] = createHash('sha256').update(original).digest('hex');
+      hashes[entry.name] = createHash('sha256').update(original).digest('hex');
     }
     for (const [name, hash] of Object.entries(hashes)) {
       if (

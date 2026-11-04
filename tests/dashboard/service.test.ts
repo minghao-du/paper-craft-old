@@ -16,22 +16,45 @@ test('protected cached overview preserves registered workflow evidence after fai
     mkdirSync(join(root, 'pool', 'worker'));
     const config = join(root, '.epic-config.json');
     writeFileSync(config, JSON.stringify({ clone_root: 'pool', clone_names: ['worker'] }));
-    const status = join(root, 'pool', 'worker', '.epic-status.json');
-    const original = JSON.stringify({
-      issue: 42,
-      phase: 'implementing',
-      summary: 'Build overview',
-      blockers: ['decision'],
-      stop_reason: 'awaiting-human-merge',
-      lead_guidance: 'Review dataset decision',
+    const configContent = JSON.stringify({ clone_root: 'pool', clone_names: ['worker'] });
+    writeFileSync(config, configContent);
+    const fleetConfig = loadFleetConfig(config);
+    const briefPath = join(root, 'brief.md');
+    writeFileSync(briefPath, '# Brief');
+    updateRunRegistry(fleetConfig, (registry) => {
+      registry.runs.push({
+        id: 'run-overview',
+        subject: { repository: 'owner/repo', number: 42, blockedBy: [10] },
+        provider: 'codex',
+        policy: { name: 'default', revision: 1 },
+        lifecycle: 'running',
+        phase: 'implementing',
+        orchestratorId: 'orch-att',
+        brief: { path: briefPath, hash: 'briefhash' },
+        orchestrator: {
+          id: 'orch-att',
+          fleet: 'fleet-1',
+          role: 'orchestrator',
+          runner: 'codex',
+          brief: 'brief',
+          status: 'running',
+          created: '2026-11-01T01:00:00Z',
+          directory: root,
+          checkout: root,
+          observation: {
+            status: 'running',
+            at: new Date().toISOString(),
+            evidence: 'active prompt',
+          },
+        },
+      });
     });
-    writeFileSync(status, original);
     const cli = await promisify(execFile)(
       './pc',
       ['dashboard', 'status', '--config', config, '--data-dir', join(root, 'cli-data')],
       { timeout: 15000, maxBuffer: 1024 * 1024 },
     );
-    expect(JSON.parse(cli.stdout).fleets[0].tasks[1].summary).toBe('Build overview');
+    expect(JSON.parse(cli.stdout).fleets[0].tasks[0].summary).toContain('owner/repo#42');
     dashboard = await createDashboard({
       dataDir: join(root, 'data'),
       configs: [config],
@@ -54,24 +77,26 @@ test('protected cached overview preserves registered workflow evidence after fai
     ).toBe(403);
     const headers = { authorization: 'Bearer test-secret' };
     const snapshot = await (await request('/api/snapshot', headers)).json();
-    expect(snapshot.fleets[0].tasks[1]).toMatchObject({
+    expect(snapshot.fleets[0].tasks[0]).toMatchObject({
       phase: 'implementing',
-      summary: 'Build overview',
+      summary: expect.stringContaining('owner/repo#42'),
       runtime: 'unknown',
       executionIdentity: 'unknown',
     });
-    expect(snapshot.fleets[0].tasks[1].interventions).toEqual(
+    expect(snapshot.fleets[0].tasks[0].interventions).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ reason: 'awaiting-human-merge' }),
-        expect.objectContaining({ reason: 'Review dataset decision' }),
+        expect.objectContaining({ reason: 'Dependency #10 remains open' }),
       ]),
     );
     expect(await (await request('/api/snapshot', headers)).json()).toEqual(snapshot);
-    writeFileSync(status, '{broken');
+    writeFileSync(config, '{broken');
     await dashboard.refresh(true);
     const failed = await (await request('/api/snapshot', headers)).json();
-    expect(failed.fleets[0].tasks[1]).toMatchObject({ summary: 'Build overview', stale: true });
-    expect(failed.fleets[0].tasks[1].error).toBeTruthy();
+    expect(failed.fleets[0]).toMatchObject({ stale: true });
+    expect(failed.fleets[0].error).toBeTruthy();
+    expect(failed.fleets[0].tasks[0]).toMatchObject({
+      summary: expect.stringContaining('owner/repo#42'),
+    });
     expect(
       (
         await dashboard.app.request('http://127.0.0.1:7777/api/dispatch', {
@@ -80,8 +105,8 @@ test('protected cached overview preserves registered workflow evidence after fai
         })
       ).status,
     ).toBe(405);
-    writeFileSync(status, original);
-    expect(readFileSync(status, 'utf8')).toBe(original);
+    writeFileSync(config, configContent);
+    expect(readFileSync(config, 'utf8')).toBe(configContent);
   } finally {
     dashboard?.stop();
     rmSync(root, { recursive: true, force: true });
