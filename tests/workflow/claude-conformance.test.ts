@@ -9,7 +9,8 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { ClaudeRunner, type ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
+import type { ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
+import { ClaudeRunner } from '../../packages/core/src/workflow/runtime/claude-interactive.js';
 import { verifyRoleInitialization } from '../../packages/core/src/workflow/run/role-initialization.js';
 import {
   startRun,

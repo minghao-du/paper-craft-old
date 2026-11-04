@@ -361,3 +361,255 @@ export class InteractiveCodexRunner implements RunnerAdapter {
     throw new Error('Codex termination unknown; retain checkout ownership');
   }
 }
+
+/**
+ * Temporary legacy internal contract retained for migration slices (#146-#150).
+ * Removed in ticket #150.
+ */
+export class CodexRunner implements RunnerAdapter {
+  readonly name: string = 'codex';
+  readonly interactive: boolean = false;
+  protected command(attempt: ManagedAttempt): string {
+    return `codex exec ${[attempt.directory, ...(attempt.writableDirectories ?? [])].map((path) => `--add-dir ${quote(path)}`).join(' ')} ${attempt.conversation ? `resume ${quote(attempt.conversation)} ` : ''} -c sandbox_mode='"workspace-write"' -c approval_policy='"never"' --json --output-last-message ${quote(join(attempt.directory, 'result.md'))} -`;
+  }
+  protected normalize(event: Record<string, unknown>): Record<string, unknown> {
+    return event;
+  }
+  readonly cancellation: boolean = false;
+  /** Verified process exit releases execution capacity, never checkout ownership. */
+  async termination(attempt: ManagedAttempt): Promise<boolean> {
+    const file = join(attempt.directory, 'exit-code');
+    return existsSync(file) && /^-?\d+$/.test(readFileSync(file, 'utf8').trim());
+  }
+  /** Probe installed CLI capabilities instead of inferring support from its name. */
+  async preflight(): Promise<void> {
+    execFileSync('tmux', ['-V'], { timeout: 5000 });
+    const help = execFileSync('codex', ['exec', '--help'], { encoding: 'utf8', timeout: 5000 });
+    const resume = execFileSync('codex', ['exec', 'resume', '--help'], {
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+    if (
+      !help.includes('--add-dir') ||
+      !help.includes('--json') ||
+      !help.includes('--output-last-message') ||
+      !resume.includes('--json')
+    )
+      throw new Error(
+        'Codex must support JSON event/result output and resume input for automatic round trips',
+      );
+  }
+  /** Exit receipt plus absent or dead panes verifies this managed process stopped. */
+  async stopped(attempt: ManagedAttempt): Promise<boolean> {
+    const terminal = join(attempt.directory, 'terminal.json');
+    const address: string | undefined =
+      attempt.address ??
+      (existsSync(terminal) ? JSON.parse(readFileSync(terminal, 'utf8')).address : undefined);
+    if (!existsSync(join(attempt.directory, 'exit-code')) || !address?.startsWith('tmux:'))
+      return false;
+    try {
+      const panes = execFileSync(
+        'tmux',
+        ['list-panes', '-t', address.slice(5), '-F', '#{pane_dead}'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      ).trim();
+      return !!panes && panes.split('\n').every((value) => value === '1');
+    } catch {
+      return true;
+    }
+  }
+  /** Collect a completed turn from durable Runner output, never from pane disappearance. */
+  /** Recovery never blocks on an execution whose exit is not yet observed. */
+  /** Read this adapter's durable startup protocol after a lost notification. */
+  async recoverReceipt(attempt: ManagedAttempt) {
+    const events = join(attempt.directory, 'events.jsonl');
+    if (!existsSync(events)) return undefined;
+    const lines = readFileSync(events, 'utf8')
+      .split('\n')
+      .flatMap((line) => {
+        try {
+          return [this.normalize(JSON.parse(line))];
+        } catch {
+          return [];
+        }
+      });
+    const thread = lines.find((e) => e.type === 'thread.started' && e.thread_id);
+    if (!thread || !lines.some((e) => e.type === 'turn.started')) return undefined;
+    const terminal = join(attempt.directory, 'terminal.json');
+    return {
+      conversation: thread.thread_id as string,
+      address:
+        attempt.address ??
+        (existsSync(terminal)
+          ? JSON.parse(readFileSync(terminal, 'utf8')).address
+          : `tmux:pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`),
+      evidence: 'Recovered thread.started and turn.started from durable Runner events',
+    };
+  }
+  collectable(attempt: ManagedAttempt): boolean {
+    return existsSync(join(attempt.directory, 'exit-code'));
+  }
+  async collect(attempt: ManagedAttempt): Promise<string> {
+    const exit = join(attempt.directory, 'exit-code');
+    while (!existsSync(exit)) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (readFileSync(exit, 'utf8').trim() !== '0')
+      throw new Error(`Runner failed; inspect ${attempt.directory}`);
+    const events = readFileSync(join(attempt.directory, 'events.jsonl'), 'utf8');
+    if (
+      !events.split('\n').some((line) => {
+        try {
+          return this.normalize(JSON.parse(line)).type === 'turn.completed';
+        } catch {
+          return false;
+        }
+      })
+    )
+      throw new Error('Expected completed turn evidence');
+    return readFileSync(join(attempt.directory, 'result.md'), 'utf8');
+  }
+  /** Start in tmux and wait for the Runner-generated conversation acknowledgement. */
+  async start(
+    attempt: ManagedAttempt,
+  ): Promise<{ conversation: string; address: string; evidence: string }> {
+    const specialist = ['pipeline-audit', 'pipeline-refactor', 'research-state'].includes(
+      attempt.role,
+    );
+    if (specialist && !attempt.terminalSession)
+      throw new Error('Specialist requires a verified existing tmux session');
+    const session = `pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`;
+    let address = specialist ? `${attempt.terminalSession}:${session}` : session;
+    attempt.address = `tmux:${address}`;
+    writeFileSync(
+      join(attempt.directory, 'terminal.json'),
+      JSON.stringify({ address: attempt.address }),
+    );
+    const events = join(attempt.directory, 'events.jsonl');
+    const script = join(attempt.directory, 'launch.sh');
+    writeFileSync(
+      script,
+      `#!/bin/sh\n${attempt.role === 'orchestrator' ? `tmux set-option -w -t ${quote(session + ':0')} remain-on-exit on\n` : ''}${this.command(attempt)} < ${quote(join(attempt.directory, 'brief.md'))} > ${quote(events)} 2> ${quote(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${quote(join(attempt.directory, 'exit-code'))}\n`,
+      { mode: 0o700 },
+    );
+    if (specialist) execFileSync('tmux', ['has-session', '-t', attempt.terminalSession!]);
+    const terminal = execFileSync(
+      'tmux',
+      specialist
+        ? [
+            'new-window',
+            '-P',
+            '-F',
+            '#{window_id} #{pane_id}',
+            '-d',
+            '-t',
+            attempt.terminalSession + ':',
+            '-n',
+            session,
+            '-c',
+            attempt.checkout,
+            'sh',
+            script,
+          ]
+        : [
+            'new-session',
+            '-P',
+            '-F',
+            '#{window_id} #{pane_id}',
+            '-d',
+            '-s',
+            session,
+            '-c',
+            attempt.checkout,
+            'sh',
+            script,
+          ],
+      { timeout: 5000, encoding: 'utf8' },
+    );
+    {
+      const [windowId, paneId] = terminal.trim().split(/\s+/);
+      if (!/^@\d+$/.test(windowId ?? '') || !/^%\d+$/.test(paneId ?? ''))
+        throw new Error('Expected actual tmux window and pane identities');
+      address = `${specialist ? attempt.terminalSession : session}:${windowId}`;
+      Object.assign(attempt, { windowId, paneId, address: `tmux:${address}` });
+      writeFileSync(
+        join(attempt.directory, 'terminal.json'),
+        JSON.stringify({ address: attempt.address, windowId, paneId }),
+      );
+    }
+    const deadline = Date.now() + 15000;
+    let conversation: string | undefined;
+    let receipt: string | undefined;
+    while (Date.now() < deadline) {
+      if (existsSync(events)) {
+        for (const line of readFileSync(events, 'utf8').split('\n')) {
+          try {
+            const event = this.normalize(JSON.parse(line)) as { type: string; thread_id?: string };
+            if (event.type === 'thread.started' && event.thread_id) {
+              conversation = event.thread_id;
+              receipt = line;
+            }
+            if (event.type === 'turn.started' && conversation && receipt)
+              return { conversation, address: `tmux:${address}`, evidence: receipt + '\n' + line };
+          } catch {
+            /* Incomplete final JSONL line is retried. */
+          }
+        }
+      }
+      if (existsSync(join(attempt.directory, 'exit-code')))
+        throw new Error(`Runner exited without acknowledgement; inspect ${attempt.directory}`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(
+      `No Runner acknowledgement within 15s; preserve occupancy and inspect ${attempt.directory}`,
+    );
+  }
+}
+
+/**
+ * Temporary legacy internal contract retained for migration slices (#146-#150).
+ * Removed in ticket #150.
+ */
+export abstract class StreamRunner extends CodexRunner {
+  protected abstract resumeFlag: string;
+  async preflight(): Promise<void> {
+    execFileSync('tmux', ['-V'], { timeout: 5000 });
+    const help = execFileSync(this.name, ['--help'], { encoding: 'utf8', timeout: 5000 });
+    for (const flag of ['--print', '--output-format', '--add-dir', this.resumeFlag]) {
+      if (!help.includes(flag)) throw new Error(`${this.name} lacks managed capability ${flag}`);
+    }
+  }
+  protected command(attempt: ManagedAttempt): string {
+    return `${this.name} --print --output-format stream-json ${this.name === 'claude' ? '--verbose' : ''} ${[attempt.directory, ...(attempt.writableDirectories ?? [])].map((path) => `--add-dir ${quote(path)}`).join(' ')} ${attempt.conversation ? `${this.resumeFlag} ${quote(attempt.conversation)}` : ''}`;
+  }
+  protected normalize(event: Record<string, unknown>): Record<string, unknown> {
+    if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string')
+      return { type: 'thread.started', thread_id: event.session_id };
+    if (event.type === 'assistant') return { type: 'turn.started' };
+    if (
+      event.type === 'result' &&
+      !event.is_error &&
+      (event.subtype === 'success' || event.subtype === undefined)
+    )
+      return { type: 'turn.completed' };
+    return event;
+  }
+  async collect(attempt: ManagedAttempt): Promise<string> {
+    const exit = join(attempt.directory, 'exit-code');
+    while (!existsSync(exit)) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (readFileSync(exit, 'utf8').trim() !== '0')
+      throw new Error(`${this.name} failed; inspect ${attempt.directory}`);
+    const results = readFileSync(join(attempt.directory, 'events.jsonl'), 'utf8')
+      .split('\n')
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch {
+          return [];
+        }
+      });
+    const result = results.findLast((event) => this.normalize(event).type === 'turn.completed');
+    if (!result || typeof result.result !== 'string')
+      throw new Error(`${this.name} lacks completed result evidence`);
+    return result.result;
+  }
+}
+

@@ -2,7 +2,7 @@ import { initializeRole } from './initialize-role.js';
 import { createHash } from 'node:crypto';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 import { readDashboardFleet } from '../../packages/core/src/workflow/fleet/dashboard.js';
-import { managedRunner } from '../../packages/core/src/workflow/runtime/runtime.js';
+import { managedRunner } from '../../packages/cli/src/workflow/composition.js';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -261,18 +261,30 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       evidence: [first.brief],
     });
     await expect(
-      acceptStageReceipt(config, first.orchestratorId, receipt.id, async () => ({
-        currentRevision: 'head-b',
-        ownership: true,
-        evidence: 'checked',
-      })),
+      acceptStageReceipt(
+        config,
+        first.orchestratorId,
+        receipt.id,
+        async () => ({
+          currentRevision: 'head-b',
+          ownership: true,
+          evidence: 'checked',
+        }),
+        runner,
+      ),
     ).rejects.toThrow(/stale/);
     const corrected = publishStageReceipt(config, { ...receipt, corrects: receipt.id });
-    await acceptStageReceipt(config, first.orchestratorId, corrected.id, async () => ({
-      currentRevision: 'head-a',
-      ownership: true,
-      evidence: 'checked current facts',
-    }));
+    await acceptStageReceipt(
+      config,
+      first.orchestratorId,
+      corrected.id,
+      async () => ({
+        currentRevision: 'head-a',
+        ownership: true,
+        evidence: 'checked current facts',
+      }),
+      runner,
+    );
     const acceptedView = await readDashboardFleet({ id: 'fleet', config: config.file });
     expect(
       acceptedView.tasks.find((t) => t.id === `fleet:managed:${stage.id}`)?.executionEvidence,
@@ -327,11 +339,17 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       outcome: 'changes_needed',
     });
     await expect(
-      acceptStageReceipt(config, first.orchestratorId, failed.id, async () => ({
-        currentRevision: 'head-a',
-        ownership: true,
-        evidence: 'Checks still failing',
-      })),
+      acceptStageReceipt(
+        config,
+        first.orchestratorId,
+        failed.id,
+        async () => ({
+          currentRevision: 'head-a',
+          ownership: true,
+          evidence: 'Checks still failing',
+        }),
+        runner,
+      ),
     ).rejects.toThrow(/Rejected/);
     await recoverRun(config, runner, first.id);
     await expect(
@@ -768,7 +786,9 @@ test.each(['direct', 'validated', 'collect', 'followup', 'followup-complete'])(
 );
 
 test('Claude native correlation rejects missing prompt identity and duplicate submissions', async () => {
-  const { ClaudeRunner } = await import('../../packages/core/src/workflow/runtime/runtime.js');
+  const { ClaudeRunner } = await import(
+    '../../packages/core/src/workflow/runtime/claude-interactive.js'
+  );
   const directory = mkdtempSync(join(tmpdir(), 'pc-native-'));
   const hooks = join(directory, 'claude-hooks');
   mkdirSync(hooks);

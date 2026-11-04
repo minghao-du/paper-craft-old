@@ -22,9 +22,10 @@ vi.mock('@paper-craft/core/workflow/issue-driver', async (original) => ({
 vi.mock('@paper-craft/core/workflow/fleet-config', () => ({
   loadFleetConfig: () => ({ project: '/project', file: '/project/.epic-config.json' }),
 }));
-vi.mock('@paper-craft/core/workflow/runtime', async (original) => ({
-  ...(await original<typeof import('@paper-craft/core/workflow/runtime')>()),
-  managedRunner: vi.fn(() => ({ name: 'codex' })),
+vi.mock('../../packages/cli/src/workflow/composition.js', () => ({
+  managedRunner: vi.fn(() => ({ name: 'codex', preflight: async () => {} })),
+  createRunner: vi.fn(() => ({ name: 'codex', preflight: async () => {} })),
+  launchStartupSupervisor: vi.fn(),
 }));
 
 afterEach(() => {

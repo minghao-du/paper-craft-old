@@ -18,9 +18,9 @@ import {
   updateRunRegistry,
 } from '../../packages/core/src/workflow/run/run-driver.js';
 import {
-  managedRunner,
   type ManagedAttempt,
 } from '../../packages/core/src/workflow/runtime/runtime.js';
+import { managedRunner } from '../../packages/cli/src/workflow/composition.js';
 import { initializeRole } from './initialize-role.js';
 
 test.each(['agy', 'codex', 'claude'])(
@@ -47,6 +47,10 @@ test.each(['agy', 'codex', 'claude'])(
       expect((await startRun(f.config, f.runner, f.run.subject, name)).orchestratorId).toBe(
         f.run.orchestratorId,
       );
+    } catch (err) {
+      const logFile = join(directory, 'startup.log');
+      if (existsSync(logFile)) console.error('STARTUP LOG:\n' + readFileSync(logFile, 'utf8'));
+      throw err;
     } finally {
       f.close();
     }
@@ -259,13 +263,14 @@ test.each(['src', 'dist'])(
     save();
     const harness = join(f.project, 'caller.ts');
     const source = join(process.cwd(), 'packages/core', variant, 'workflow');
+    const cliSource = join(process.cwd(), 'packages/cli', variant, 'workflow');
     const extension = variant === 'src' ? '.ts' : '.js';
     writeFileSync(
       harness,
       `
     import { loadFleetConfig } from ${JSON.stringify(source + '/fleet/fleet-config' + extension)};
     import { startRun, inspectRuns } from ${JSON.stringify(source + '/run/run-driver' + extension)};
-    import { managedRunner } from ${JSON.stringify(source + '/runtime/runtime' + extension)};
+    import { managedRunner } from ${JSON.stringify(cliSource + '/composition' + extension)};
     const config = loadFleetConfig(process.argv[2]);
     const run = inspectRuns(config).runs[0];
     const runner = managedRunner('codex');
@@ -282,7 +287,7 @@ test.each(['src', 'dist'])(
         [
           '--import',
           join(process.cwd(), 'node_modules/tsx/dist/loader.mjs'),
-          '--conditions=paper-craft-source',
+          ...(variant === 'src' ? ['--conditions=paper-craft-source'] : []),
           harness,
           f.config.file,
         ],
@@ -332,6 +337,10 @@ test.each(['src', 'dist'])(
       expect(current.orchestrator?.activation?.status).toBe('delivered');
       expect(current.lifecycle).toBe('running');
       expect(JSON.parse(readFileSync(submitted, 'utf8'))).toContain('queue');
+    } catch (err) {
+      const logFile = join(directory, 'startup.log');
+      if (existsSync(logFile)) console.error('STARTUP LOG:\n' + readFileSync(logFile, 'utf8'));
+      throw err;
     } finally {
       if (startupRecoveryStatus(f.config, f.run.id).active) process.kill(lockPid(), 'SIGTERM');
       await wait(() => !startupRecoveryStatus(f.config, f.run.id).active);
@@ -481,6 +490,10 @@ test.each(['codex', 'agy', 'claude'])(
       save();
       expect(await provider.result!(stale, stale.id)).toBe('fixture business output');
       expect(stale.conversation).toBe('original');
+    } catch (err) {
+      const logFile = join(directory, 'startup.log');
+      if (existsSync(logFile)) console.error('STARTUP LOG:\n' + readFileSync(logFile, 'utf8'));
+      throw err;
     } finally {
       f.close();
     }

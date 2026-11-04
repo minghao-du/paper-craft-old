@@ -25,7 +25,6 @@ import {
   cancelAttempt,
   reconcileAttempt,
   inspectAttemptControl,
-  managedRunner,
   startOrchestrator,
   type ManagedAttempt,
   type RunnerAdapter,
@@ -950,7 +949,7 @@ export async function acceptStageReceipt(
   authority: string,
   receiptId: string,
   verify: (dispatch: StageDispatch, receipt: StageReceipt) => Promise<StageFacts>,
-  runner?: RunnerAdapter,
+  runner: RunnerAdapter,
 ): Promise<void> {
   const snapshot = inspectRuns(config);
   const receipt = snapshot.receipts?.find((r) => r.id === receiptId);
@@ -965,7 +964,7 @@ export async function acceptStageReceipt(
     )
       await stopAcceptedExecution(
         config,
-        runner ?? managedRunner(current.provider),
+        runner,
         current.id,
         authority,
       );
@@ -1763,7 +1762,7 @@ export async function acceptValidatedBusinessTurns(
   config: FleetConfig,
   attempts: ManagedAttempt[],
   domainEvidence: string,
-  runner?: RunnerAdapter,
+  runner: RunnerAdapter,
 ): Promise<void> {
   if (!domainEvidence.trim()) throw new Error('Domain acceptance evidence required');
   for (const attempt of attempts) {
@@ -2429,21 +2428,14 @@ export function inspectRunViews(config: FleetConfig): WorkflowRunView[] {
 /** Revoke scheduling and activation before terminating owned executions and helpers, preserving business records. */
 export async function stopRun(
   config: FleetConfig,
-  runnerOrId?: RunnerAdapter | string,
-  runIdOrOptions?:
-    | string
-    | {
-        stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
-        cleanup?: () => void;
-      },
+  runner: RunnerAdapter,
+  runId: string,
   options?: {
     stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
     cleanup?: () => void;
   },
 ): Promise<StopRunResult> {
-  const runId = typeof runnerOrId === 'string' ? runnerOrId : (runIdOrOptions as string);
-  const passedRunner = typeof runnerOrId === 'string' ? undefined : runnerOrId;
-  const opts = (typeof runIdOrOptions === 'object' ? runIdOrOptions : options) ?? {};
+  const opts = options ?? {};
 
   if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
 
@@ -2451,11 +2443,12 @@ export async function stopRun(
   const targetRun = snapshot.runs.find((r) => r.id === runId);
   if (!targetRun) throw new Error(`Unknown Run: expected existing run with id ${runId}`);
 
-  const adapter = passedRunner ?? managedRunner(targetRun.provider);
-  if (adapter.name !== targetRun.provider)
+  if (runner.name !== targetRun.provider)
     throw new Error(
-      `Run provider mismatch: expected provider ${targetRun.provider}, but received ${adapter.name}`,
+      `Run provider mismatch: expected provider ${targetRun.provider}, but received ${runner.name}`,
     );
+
+  const adapter = runner;
 
   // Revoke further scheduling and activation before requesting cancellation
   updateRunRegistry(config, (registry) => {
@@ -2610,21 +2603,14 @@ export async function stopRun(
 /** Terminate remaining executions and helpers for a completed Run without changing business success into failure. */
 export async function releaseRun(
   config: FleetConfig,
-  runnerOrId?: RunnerAdapter | string,
-  runIdOrOptions?:
-    | string
-    | {
-        stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
-        cleanup?: () => void;
-      },
+  runner: RunnerAdapter,
+  runId: string,
   options?: {
     stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
     cleanup?: () => void;
   },
 ): Promise<ReleaseRunResult> {
-  const runId = typeof runnerOrId === 'string' ? runnerOrId : (runIdOrOptions as string);
-  const passedRunner = typeof runnerOrId === 'string' ? undefined : runnerOrId;
-  const opts = (typeof runIdOrOptions === 'object' ? runIdOrOptions : options) ?? {};
+  const opts = options ?? {};
 
   if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
 
@@ -2638,11 +2624,12 @@ export async function releaseRun(
     );
   }
 
-  const adapter = passedRunner ?? managedRunner(targetRun.provider);
-  if (adapter.name !== targetRun.provider)
+  if (runner.name !== targetRun.provider)
     throw new Error(
-      `Run provider mismatch: expected provider ${targetRun.provider}, but received ${adapter.name}`,
+      `Run provider mismatch: expected provider ${targetRun.provider}, but received ${runner.name}`,
     );
+
+  const adapter = runner;
 
   // Stop startup helper
   const helperStopped = await stopStartupRecovery(config, runId);

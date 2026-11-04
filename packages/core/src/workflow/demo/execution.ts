@@ -4,11 +4,23 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
-import { stopRun, releaseRun } from '../run/run-driver.js';
+import { stopRun, releaseRun, inspectRuns } from '../run/run-driver.js';
+import type { RunnerAdapter } from '../runtime/runtime.js';
 import type { DemoExecution } from './control.js';
 
+let demoRunnerResolver: ((provider: string) => RunnerAdapter) | undefined;
+
+/** Set host runner resolver for demo execution stop/release. */
+export function setDemoRunnerResolver(
+  resolver: ((provider: string) => RunnerAdapter) | undefined,
+): void {
+  demoRunnerResolver = resolver;
+}
+
 /** Existing managed Runtime owns startup, detached recovery and termination evidence. */
-export function nativeDemoExecution(): DemoExecution {
+export function nativeDemoExecution(
+  resolveRunner?: (provider: string) => RunnerAdapter,
+): DemoExecution {
   return {
     watch(round) {
       const extension = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
@@ -35,11 +47,16 @@ export function nativeDemoExecution(): DemoExecution {
     async stop(round, runId, completed = false) {
       if (!runId) return true;
       const config = loadFleetConfig(join(round.checkout, '.epic-config.json'));
+      const resolver = resolveRunner ?? demoRunnerResolver;
+      if (!resolver) throw new Error('Runner resolver required for nativeDemoExecution.stop');
+      const run = inspectRuns(config).runs.find((r) => r.id === runId);
+      if (!run) return true;
+      const runner = resolver(run.provider);
       if (completed) {
-        const res = await releaseRun(config, runId);
+        const res = await releaseRun(config, runner, runId);
         return res.released;
       }
-      const res = await stopRun(config, runId);
+      const res = await stopRun(config, runner, runId);
       return res.terminated;
     },
   };

@@ -214,6 +214,7 @@ export async function driveIssue(
               config,
               task.turns,
               'Validated scoped Worker completion and Orchestrator done decision',
+              runner,
             );
             task.status = 'done';
             delete task.error;
