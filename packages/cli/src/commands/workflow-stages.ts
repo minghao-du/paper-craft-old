@@ -10,17 +10,19 @@ import {
   closeStageEpic,
   dispositionStagePipeline,
   publishStageReport,
+  epicDeliveries,
+  canonicalDeliveryFingerprint,
+} from '@paper-craft/core/workflow/run-driver';
+import {
   dispatchStage,
   collectBusinessTurn,
   acceptStageReceipt,
   retryStage,
   sendStageMessage,
-  epicDeliveries,
-  canonicalDeliveryFingerprint,
   type StageRequest,
   type StageDispatch,
   type StageFacts,
-} from '@paper-craft/core/workflow/run-driver';
+} from '@paper-craft/core/workflow/stage-execution';
 import {
   executeDeliveryStage,
   deliveryFacts,

@@ -6,9 +6,11 @@ import { preserveState } from '../handoff.js';
 import {
   inspectRuns,
   updateRunRegistry,
+} from '../run/run-registry.js';
+import {
   type StageDispatch,
   type StageReceipt,
-} from '../run/run-driver.js';
+} from '../run/stage-execution.js';
 import { releaseRunCheckout } from '../run/run-ownership.js';
 import type { FleetConfig } from '../fleet/fleet-config.js';
 import { GitHubPullRequests, type PullRequestProvider } from './pr-driver.js';

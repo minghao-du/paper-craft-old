@@ -162,6 +162,11 @@
       "types": "./dist/workflow/run/run-subject.d.ts",
       "default": "./dist/workflow/run/run-subject.js"
     },
+    "./workflow/stage-execution": {
+      "paper-craft-source": "./src/workflow/run/stage-execution.ts",
+      "types": "./dist/workflow/run/stage-execution.d.ts",
+      "default": "./dist/workflow/run/stage-execution.js"
+    },
     "./workflow/startup": {
       "paper-craft-source": "./src/workflow/run/startup.ts",
       "types": "./dist/workflow/run/startup.d.ts",
