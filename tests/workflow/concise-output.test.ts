@@ -31,6 +31,10 @@ vi.mock('@paper-craft/core/workflow/issue-driver', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/issue-driver')>()),
   readIssue: () => fixture.runs[0].subject,
 }));
+vi.mock('@paper-craft/core/workflow/run-subject', async (original) => ({
+  ...(await original<typeof import('@paper-craft/core/workflow/run-subject')>()),
+  readIssue: () => fixture.runs[0].subject,
+}));
 vi.mock('@paper-craft/core/workflow/fleet-config', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/fleet-config')>()),
   loadFleetConfig: vi.fn(() => ({ project: '/project', file: '/project/.epic-config.json' })),

@@ -5,7 +5,7 @@ import { Command } from 'commander';
 import { afterEach, expect, it, vi } from 'vitest';
 import { registerWorkflowCommands } from '../../packages/cli/src/commands/workflow.js';
 import { startRun } from '@paper-craft/core/workflow/run-driver';
-import { readIssue } from '@paper-craft/core/workflow/issue-driver';
+import { readIssue } from '@paper-craft/core/workflow/run-subject';
 
 vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/run-driver')>()),
@@ -14,6 +14,10 @@ vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
     lifecycle: 'running',
     brief: { path: '/context', hash: 'hash' },
   })),
+}));
+vi.mock('@paper-craft/core/workflow/run-subject', async (original) => ({
+  ...(await original<typeof import('@paper-craft/core/workflow/run-subject')>()),
+  readIssue: vi.fn(),
 }));
 vi.mock('@paper-craft/core/workflow/issue-driver', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/issue-driver')>()),

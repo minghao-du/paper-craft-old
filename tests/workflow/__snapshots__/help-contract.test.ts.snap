@@ -75,6 +75,9 @@ Options:
                               ".epic-config.json")
   --confirmation-file <file>  EPIC professional confirmation JSON: epic, head,
                               evidence
+  --pr <number>               PR whose current external facts must match the
+                              assignment
+  --dispatch <id>             Specific landing dispatch to execute
   -h, --help                  display help for command
 "
 `;

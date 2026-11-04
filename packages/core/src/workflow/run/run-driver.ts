@@ -32,7 +32,7 @@ import {
   type ExecutionTermination,
 } from '../runtime/runtime.js';
 import { pipelineAccepted, type PipelineDisposition } from '../delivery/epic-finalization.js';
-import type { IssueInput } from '../delivery/issue-driver.js';
+import type { IssueInput } from './run-subject.js';
 
 /** Verified tracker subject, with explicit scope rather than title heuristics. */
 export interface RunSubject extends IssueInput {

@@ -157,6 +157,11 @@
       "types": "./dist/workflow/run/run-driver.d.ts",
       "default": "./dist/workflow/run/run-driver.js"
     },
+    "./workflow/run-subject": {
+      "paper-craft-source": "./src/workflow/run/run-subject.ts",
+      "types": "./dist/workflow/run/run-subject.d.ts",
+      "default": "./dist/workflow/run/run-subject.js"
+    },
     "./workflow/startup": {
       "paper-craft-source": "./src/workflow/run/startup.ts",
       "types": "./dist/workflow/run/startup.d.ts",
