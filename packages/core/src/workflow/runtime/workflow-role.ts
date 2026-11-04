@@ -27,6 +27,7 @@ export function assertStageRole(
 ): asserts role is WorkflowRole {
   assertWorkflowRole(role, source);
   const assignments: Record<string, WorkflowRole> = {
+    planning: 'epic',
     'integrated-acceptance': 'epic',
     'pipeline-audit': 'pipeline-audit',
     'pipeline-refactor': 'pipeline-refactor',

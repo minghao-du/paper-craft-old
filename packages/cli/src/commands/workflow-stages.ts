@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 /** Public Orchestrator-requested stage lifecycle; task choice remains with the caller. */
 import { Command } from 'commander';
 import { readFileSync, realpathSync } from 'node:fs';
@@ -16,6 +15,8 @@ import {
   acceptStageReceipt,
   retryStage,
   sendStageMessage,
+  epicDeliveries,
+  canonicalDeliveryFingerprint,
   type StageRequest,
   type StageDispatch,
   type StageFacts,
@@ -231,15 +232,10 @@ export function registerStageCommands(
                   dispatch.stage === 'integrated-acceptance'
                     ? {
                         head: dispatch.inputRevision,
-                        deliveryVersion: createHash('sha256')
-                          .update(
-                            JSON.stringify({
-                              head: dispatch.inputRevision,
-                              deliveries:
-                                registry.deliveries?.filter((d) => d.runId === run.id) ?? [],
-                            }),
-                          )
-                          .digest('hex'),
+                        deliveryVersion: canonicalDeliveryFingerprint(
+                          dispatch.inputRevision,
+                          epicDeliveries(registry, run.id),
+                        ),
                         epic: run.subject.number,
                       }
                     : undefined,
