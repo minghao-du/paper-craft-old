@@ -26,7 +26,10 @@ import {
   type IssueTurn,
   type RoundRunner,
 } from './issue-driver.js';
-/** EPIC professional judgment, separate from mechanical resource allocation. */
+/**
+ * EPIC professional judgment, separate from mechanical resource allocation.
+ * @deprecated EPIC scheduling uses Managed Runs with kind: 'epic' and RunRegistry.
+ */
 export interface EpicTask {
   number: number;
   title: string;
@@ -37,7 +40,10 @@ export interface EpicTask {
   result?: string;
   checkout?: string;
 }
-/** Durable attributed plan and role exchanges; delivered is not EPIC closure. */
+/**
+ * Durable attributed plan and role exchanges; delivered is not EPIC closure.
+ * @deprecated EPIC scheduling uses Managed Runs with kind: 'epic' and RunRegistry.
+ */
 export interface EpicRun {
   repository: string;
   epic: number;
@@ -66,7 +72,10 @@ function location(config: FleetConfig, repository: string, number: number) {
     createHash('sha256').update(`${config.file}:${repository}:${number}`).digest('hex'),
   );
 }
-/** Observe an EPIC without scheduling additional work. */
+/**
+ * Observe an EPIC without scheduling additional work.
+ * @deprecated EPIC scheduling uses Managed Runs with kind: 'epic' and RunRegistry.
+ */
 export function inspectEpicRun(
   config: FleetConfig,
   repository: string,
@@ -75,7 +84,10 @@ export function inspectEpicRun(
   const file = join(location(config, repository, number), 'epic.json');
   return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : undefined;
 }
-/** Compatibility child entry: deliver only the requested child, never expand to its parent. */
+/**
+ * Compatibility child entry: deliver only the requested child, never expand to its parent.
+ * @deprecated EPIC scheduling uses Managed Runs with kind: 'epic' and RunRegistry.
+ */
 export async function driveEpicIssue(
   config: FleetConfig,
   runner: RoundRunner,
@@ -84,7 +96,10 @@ export async function driveEpicIssue(
   if (!issue.parent) throw new Error('Expected issue with verified EPIC parent');
   return driveIssue(config, runner, issue);
 }
-/** Ask the EPIC Agent for professional readiness, then dispatch bounded independent batches. */
+/**
+ * Ask the EPIC Agent for professional readiness, then dispatch bounded independent batches.
+ * @deprecated EPIC scheduling uses Managed Runs with kind: 'epic', RunRegistry, and stage dispatch.
+ */
 export async function driveEpic(
   config: FleetConfig,
   runner: RoundRunner,

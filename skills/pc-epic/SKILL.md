@@ -19,8 +19,11 @@ Return missing identity or scope as a blocker to the Orchestrator.
 
 ## 2. Plan the children
 
+An EPIC starts via a Managed Run (`startRun` with `kind: 'epic'`). Planning is dispatched via `dispatchStage` with `role: 'epic'`, `stage: 'planning'`.
+Child tasks are dispatched through the shared Managed stage lifecycle (`role: 'worker'`, `stage: 'implementation'`, then landing stages) rather than through separate Issue or EPIC drivers.
 For planning assignments, inspect the relevant code and current Issues before proposing work.
 Decompose the objective into bounded child Issues and semantic Worker briefs that point to existing scope rather than repeat it.
+When child tasks are already owned by an external Run, the Orchestrator registers a consuming reference (`referenceRunSubject`) rather than launching a duplicate Worker or transferring live ownership. Exactly one execution owner per Issue is strictly enforced.
 Distinguish prerequisites from parallel-work collisions: a dependency requires an accepted result; a collision constrains concurrent editing without implying semantic order.
 Identify each task's footprint, evidence, resource requirements and blockers.
 Preserve existing tasks and delivered evidence when revising a plan.
@@ -32,7 +35,10 @@ Readiness is a professional recommendation; the Orchestrator verifies authorizat
 
 ## 3. Assess the evidence
 
-For evaluation assignments, compare attributed results and the integrated revision against the original objective.
+For evaluation assignments (`stage: 'integrated-acceptance'`, `role: 'epic'`), compare attributed results and the integrated revision against the original objective.
+All required child deliveries (both owned and referenced external) must finish verified delivery before independent `integrated-acceptance` can be evaluated.
+Completed delivery is verified against `registry.deliveries` requiring recorded final records, verified archive, and resource release. Neither worker success, accepted implementation, nor PR merge alone counts as completed delivery.
+Incomplete or failed required external delivery blocks `integrated-acceptance` evaluation and prevents EPIC completion.
 Check the actual evidence and attribution before repeating a claim.
 A null result supports a conclusion only when the mechanism engaged; a positive check must have been capable of failing.
 For experiments, retain expectations before results and separate them from instructions supplied to the producing arm.
@@ -40,6 +46,7 @@ Assess referenced overlapping-Run deliveries against this EPIC's own objective.
 Child closure alone does not establish EPIC success.
 Return evidence-backed acceptance or scoped rework recommendations using the assignment's actual result contract.
 For revision-specific professional confirmation, identify the full evaluated head SHA, judgment and evidence; a changed head needs renewed assessment.
+The canonical delivery version is bound to the `canonicalDeliveryFingerprint(head, deliveries)` including both owned and referenced external deliveries.
 Route scope corrections and unresolved questions to the Orchestrator with the concrete proposed change and supporting evidence.
 
 **Done:** Each objective has supporting integrated evidence or a specific blocker/rework recommendation, attributed to the evaluated delivery version.
