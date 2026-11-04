@@ -88,6 +88,8 @@ export interface RunnerAdapter {
   /** Observe execution independently of receipt acceptance. */
   observe?(attempt: ManagedAttempt): Promise<ExecutionObservation>;
   stopped?(attempt: ManagedAttempt): Promise<boolean>;
+  /** Terminate execution and verify absence; callers do not manually compose cancel and stopped steps. */
+  terminate?(attempt: ManagedAttempt): Promise<ExecutionTermination>;
   /** Recover normalized startup evidence from this Runner only. */
   recoverReceipt?(
     attempt: ManagedAttempt,
@@ -218,6 +220,77 @@ export interface AttemptControl {
     error?: string;
   };
 }
+
+/**
+ * Execution termination outcome: verified process termination or explicit unconfirmed outcome.
+ * Callers do not need to manually compose provider-specific cancel and stopped steps.
+ */
+export interface ExecutionTermination {
+  status: 'terminated' | 'unconfirmed';
+  evidence?: string;
+  error?: string;
+}
+
+/**
+ * Execute verified termination through the runner contract or return an explicit unconfirmed outcome.
+ * Callers do not need to compose provider-specific cancel and stopped steps.
+ */
+export async function terminateAttempt(
+  attempt: ManagedAttempt,
+  runner: {
+    terminate?(attempt: ManagedAttempt): Promise<ExecutionTermination>;
+    stopped?(attempt: ManagedAttempt): Promise<boolean>;
+    cancellation?: boolean;
+    cancel?(attempt: ManagedAttempt): Promise<{ evidence: string }>;
+  },
+): Promise<ExecutionTermination> {
+  const control = inspectAttemptControl(attempt);
+  let outcome: ExecutionTermination;
+  try {
+    if (runner.terminate) {
+      outcome = await runner.terminate(attempt);
+    } else {
+      const alreadyStopped = runner.stopped ? await runner.stopped(attempt) : false;
+      if (alreadyStopped) {
+        outcome = { status: 'terminated', evidence: 'Process already stopped' };
+      } else if (runner.cancellation && runner.cancel) {
+        const receipt = await runner.cancel(attempt);
+        const confirmed = runner.stopped ? await runner.stopped(attempt) : true;
+        if (confirmed) {
+          outcome = { status: 'terminated', evidence: receipt.evidence ?? 'Cancellation confirmed' };
+        } else {
+          outcome = { status: 'unconfirmed', error: 'Process still running after cancellation' };
+        }
+      } else {
+        outcome = { status: 'unconfirmed', error: 'Runner does not support cancellation or termination' };
+      }
+    }
+  } catch (error) {
+    outcome = {
+      status: 'unconfirmed',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const file = join(attempt.directory, 'control.json');
+  if (outcome.status === 'terminated') {
+    control.execution = { status: 'terminated', evidence: outcome.evidence };
+    control.cancellation = {
+      requested: new Date().toISOString(),
+      outcome: 'confirmed',
+      evidence: outcome.evidence,
+    };
+  } else {
+    control.execution = { status: 'unknown' };
+    control.cancellation = {
+      requested: new Date().toISOString(),
+      outcome: 'failed',
+      error: outcome.error,
+    };
+  }
+  writeFileSync(file, JSON.stringify(control));
+  return outcome;
+}
 /** Read durable wait/cancellation observations, independently of execution status. */
 export function inspectAttemptControl(attempt: ManagedAttempt): AttemptControl {
   const file = join(attempt.directory, 'control.json');
@@ -276,11 +349,15 @@ export async function cancelAttempt(
 /** Reconcile execution without changing logical role or checkout ownership. */
 export async function reconcileAttempt(
   attempt: ManagedAttempt,
-  runner: { termination?(attempt: ManagedAttempt): Promise<boolean> },
+  runner: { termination?(attempt: ManagedAttempt): Promise<boolean>; stopped?(attempt: ManagedAttempt): Promise<boolean> },
 ): Promise<AttemptControl> {
   const control = inspectAttemptControl(attempt);
   if (control.execution?.status === 'terminated') return control;
-  const terminated = runner.termination ? await runner.termination(attempt) : false;
+  const terminated = runner.termination
+    ? await runner.termination(attempt)
+    : runner.stopped
+      ? await runner.stopped(attempt)
+      : false;
   control.execution = terminated
     ? { status: 'terminated', evidence: 'Adapter verified execution exit' }
     : { status: 'unknown' };

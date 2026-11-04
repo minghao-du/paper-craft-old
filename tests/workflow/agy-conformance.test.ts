@@ -112,7 +112,7 @@ test.skipIf(!process.env.PC_AGY_CONFORMANCE)(
       );
     } finally {
       for (const attempt of owned) {
-        if (!(await runner.stopped(attempt))) await runner.cancel(attempt);
+        await runner.terminate(attempt);
       }
       rmSync(root, { recursive: true, force: true });
     }

@@ -22,13 +22,14 @@ import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
 import {
   inspectOrchestrator,
   requireInteractive,
-  cancelAttempt,
+  terminateAttempt,
   reconcileAttempt,
   inspectAttemptControl,
   startOrchestrator,
   type ManagedAttempt,
   type RunnerAdapter,
   type AttemptControl,
+  type ExecutionTermination,
 } from '../runtime/runtime.js';
 import { pipelineAccepted, type PipelineDisposition } from '../delivery/epic-finalization.js';
 import type { IssueInput } from '../delivery/issue-driver.js';
@@ -1347,11 +1348,21 @@ export async function recoverRun(
   }
   let replacement: ManagedAttempt | undefined;
   if (options.replaceOrchestrator) {
+    let predecessorStopped = false;
+    if (orchestrator && orchestrator.run === runId) {
+      if (options.stopped) {
+        predecessorStopped = await options.stopped(orchestrator);
+      } else if (runner.stopped) {
+        predecessorStopped = await runner.stopped(orchestrator);
+      } else {
+        const term = await terminateAttempt(orchestrator, runner);
+        predecessorStopped = term.status === 'terminated';
+      }
+    }
     if (
       !orchestrator ||
       orchestrator.run !== runId ||
-      !options.stopped ||
-      !(await options.stopped(orchestrator))
+      !predecessorStopped
     ) {
       blockers.push('Orchestrator occupancy unresolved; verify termination before replacement');
     } else {
@@ -1363,43 +1374,46 @@ export async function recoverRun(
       const id = randomUUID();
       const directory = join(home(config), 'runs', runId, id);
       mkdirSync(directory, { recursive: true });
+      const dangerouslySkipPermissions = Boolean(
+        run.dangerouslySkipPermissions ?? orchestrator.dangerouslySkipPermissions,
+      );
       replacement = {
-        ...orchestrator,
-        providerState: undefined,
-        observation: undefined,
-        error: undefined,
-        startupFailures: undefined,
-        ...(runner.separateActivation || runner.result || orchestrator.startupGate ? { startupGate: true } : {}),
-        activation: undefined,
-        startupStopped: undefined,
-        predecessor: orchestrator.id,
         id,
-        directory,
-        status: 'starting',
-        created: new Date().toISOString(),
-        conversation: options.newConversation ? undefined : orchestrator.conversation,
+        run: runId,
+        fleet: orchestrator.fleet,
+        role: 'orchestrator',
+        runner: runner.name,
+        persistent: orchestrator.persistent,
         brief: assignmentWithRequirements(
           run,
           `Reconcile durable Run ${runId} evidence before continuing. Scope reference: ${run.brief.path}. Do not replay the original brief or repeat accepted work.`,
         ),
-        address: undefined,
-        evidence: undefined,
+        status: 'starting',
+        created: new Date().toISOString(),
+        directory,
+        checkout: run.subject.repository ? config.project : orchestrator.checkout,
+        writableDirectories: orchestrator.writableDirectories,
+        predecessor: orchestrator.id,
+        conversation: options.newConversation ? undefined : orchestrator.conversation,
+        ...(runner.separateActivation || runner.result || orchestrator.startupGate
+          ? { startupGate: true }
+          : {}),
+        dangerouslySkipPermissions: dangerouslySkipPermissions ? true : undefined,
+        providerState: dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : undefined,
       };
+      if (orchestrator.initialization) {
+        replacement.initialization = {
+          ...orchestrator.initialization,
+          attempt: replacement.id,
+          authority: replacement.id,
+          briefHash: createHash('sha256').update(replacement.brief).digest('hex'),
+        };
+      }
+      writeFileSync(join(replacement.directory, 'brief.md'), replacement.brief, {
+        mode: 0o400,
+        flag: 'wx',
+      });
     }
-  }
-  if (replacement) {
-    if (replacement.initialization) {
-      replacement.initialization = {
-        ...replacement.initialization,
-        attempt: replacement.id,
-        authority: replacement.id,
-        briefHash: createHash('sha256').update(replacement.brief).digest('hex'),
-      };
-    }
-    writeFileSync(join(replacement.directory, 'brief.md'), replacement.brief, {
-      mode: 0o400,
-      flag: 'wx',
-    });
   }
   updateRunRegistry(config, (registry) => {
     if (registry.revision !== snapshot.revision) throw new Error('Recovery inputs changed; retry');
@@ -1948,11 +1962,10 @@ export async function stopAcceptedExecution(
   if (dispatch.lifecycle !== 'accepted' || dispatch.messages?.some((m) => m.status !== 'completed'))
     throw new Error('Acceptance and reconciled input required before release');
   const attempt = dispatch.attempts.at(-1)!;
-  if (!runner.stopped) throw new Error('Verified termination capability required');
-  if (!(await runner.stopped(attempt))) {
-    const cancellation = await cancelAttempt(attempt, runner);
-    if (cancellation.cancellation?.outcome !== 'confirmed' || !(await runner.stopped(attempt)))
-      throw new Error('Unknown termination; checkout remains occupied');
+  if (!runner.stopped && !runner.terminate) throw new Error('Verified termination capability required');
+  const term = await terminateAttempt(attempt, runner);
+  if (term.status !== 'terminated') {
+    throw new Error('Unknown termination; checkout remains occupied');
   }
   // Execution capacity and checkout ownership are independent lifecycle gates.
 }
@@ -2566,18 +2579,11 @@ export async function stopRun(
     blockers.push('Startup helper termination unverified; helper remains active');
   }
 
-  const hasTermination = (
-    r: unknown,
-  ): r is { termination: (a: ManagedAttempt) => Promise<boolean> } =>
-    typeof (r as { termination?: unknown })?.termination === 'function';
-
   const isStopped =
     opts.stopped ??
     (adapter.stopped
       ? (a: ManagedAttempt) => adapter.stopped!(a)
-      : hasTermination(adapter)
-        ? (a: ManagedAttempt) => adapter.termination(a)
-        : async () => false);
+      : async (a: ManagedAttempt) => (await terminateAttempt(a, adapter)).status === 'terminated');
 
   const currentSnapshot = inspectRuns(config);
   const currentRun = currentSnapshot.runs.find((r) => r.id === runId)!;
@@ -2590,22 +2596,27 @@ export async function stopRun(
   const attemptResults: StopRunResult['attempts'] = [];
 
   for (const attempt of attempts) {
-    let stopped = await isStopped(attempt);
-    let cancellationControl: AttemptControl['cancellation'] | undefined;
-    let error: string | undefined;
-
-    if (!stopped) {
-      try {
-        const control = await cancelAttempt(attempt, adapter);
-        cancellationControl = control.cancellation;
-      } catch (err) {
-        error = String(err);
+    let term: ExecutionTermination;
+    if (opts.stopped) {
+      const alreadyStopped = await opts.stopped(attempt);
+      if (alreadyStopped) {
+        term = { status: 'terminated', evidence: 'Verified stopped by predicate' };
+      } else {
+        term = await terminateAttempt(attempt, adapter);
+        if (term.status === 'terminated' && !(await opts.stopped(attempt))) {
+          term = { status: 'unconfirmed', error: 'Termination unverified by stopped predicate' };
+        }
       }
-      stopped = await isStopped(attempt);
+    } else {
+      term = await terminateAttempt(attempt, adapter);
     }
 
+    const stopped = term.status === 'terminated';
+    const cancellationControl = inspectAttemptControl(attempt).cancellation;
+    const error = term.error;
+
     if (stopped) {
-      await reconcileAttempt(attempt, { termination: isStopped });
+      await reconcileAttempt(attempt, { termination: async () => true, stopped: async () => true });
       updateRunRegistry(config, (registry) => {
         const r = registry.runs.find((entry) => entry.id === runId);
         if (!r) return;
@@ -2728,18 +2739,11 @@ export async function releaseRun(
     blockers.push('Startup helper termination unverified; helper remains active');
   }
 
-  const hasTermination = (
-    r: unknown,
-  ): r is { termination: (a: ManagedAttempt) => Promise<boolean> } =>
-    typeof (r as { termination?: unknown })?.termination === 'function';
-
   const isStopped =
     opts.stopped ??
     (adapter.stopped
       ? (a: ManagedAttempt) => adapter.stopped!(a)
-      : hasTermination(adapter)
-        ? (a: ManagedAttempt) => adapter.termination(a)
-        : async () => false);
+      : async (a: ManagedAttempt) => (await terminateAttempt(a, adapter)).status === 'terminated');
 
   const attempts = [
     ...(targetRun.priorOrchestrators ?? []),
@@ -2750,22 +2754,27 @@ export async function releaseRun(
   const attemptResults: ReleaseRunResult['attempts'] = [];
 
   for (const attempt of attempts) {
-    let stopped = await isStopped(attempt);
-    let cancellationControl: AttemptControl['cancellation'] | undefined;
-    let error: string | undefined;
-
-    if (!stopped) {
-      try {
-        const control = await cancelAttempt(attempt, adapter);
-        cancellationControl = control.cancellation;
-      } catch (err) {
-        error = String(err);
+    let term: ExecutionTermination;
+    if (opts.stopped) {
+      const alreadyStopped = await opts.stopped(attempt);
+      if (alreadyStopped) {
+        term = { status: 'terminated', evidence: 'Verified stopped by predicate' };
+      } else {
+        term = await terminateAttempt(attempt, adapter);
+        if (term.status === 'terminated' && !(await opts.stopped(attempt))) {
+          term = { status: 'unconfirmed', error: 'Termination unverified by stopped predicate' };
+        }
       }
-      stopped = await isStopped(attempt);
+    } else {
+      term = await terminateAttempt(attempt, adapter);
     }
 
+    const stopped = term.status === 'terminated';
+    const cancellationControl = inspectAttemptControl(attempt).cancellation;
+    const error = term.error;
+
     if (stopped) {
-      await reconcileAttempt(attempt, { termination: isStopped });
+      await reconcileAttempt(attempt, { termination: async () => true, stopped: async () => true });
       updateRunRegistry(config, (registry) => {
         const r = registry.runs.find((entry) => entry.id === runId);
         if (!r) return;

@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, linkSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { quote, type ManagedAttempt, type ExecutionObservation } from './runtime.js';
+import { quote, type ManagedAttempt, type ExecutionObservation, type ExecutionTermination } from './runtime.js';
 
 const delay = () => new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -200,6 +200,33 @@ export class AgyInteractive {
     if (this.panes().has(addr)) throw new Error('Agy pane termination unverified');
     writeFileSync(join(a.directory, 'agy-terminated'), addr);
     return { evidence: 'Owned Agy pane terminated and absence verified' };
+  }
+
+  async terminate(a: ManagedAttempt): Promise<ExecutionTermination> {
+    try {
+      if (await this.stopped(a)) {
+        return {
+          status: 'terminated',
+          evidence: 'Owned Agy process already exited or terminated',
+        };
+      }
+      const receipt = await this.cancel(a);
+      if (!(await this.stopped(a))) {
+        return {
+          status: 'unconfirmed',
+          error: 'Agy pane termination unverified after cancellation',
+        };
+      }
+      return {
+        status: 'terminated',
+        evidence: receipt.evidence,
+      };
+    } catch (error) {
+      return {
+        status: 'unconfirmed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   async terminated(a: ManagedAttempt): Promise<boolean> {
