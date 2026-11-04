@@ -162,7 +162,10 @@ prerequisite. Its completed JSON result identifies `artifact` and its SHA-256
 coordinator JSON containing `identity`, absolute `entry` and confirmed `brief`.
 Publication verifies the unchanged artifact and uses the normal transactional
 writer, required report sections and provenance receipt. Completion requires a
-published report; inspect resource occupancy separately.
+published report; inspect resource occupancy separately. A closed GitHub EPIC with pending or
+failed post-processing remains visibly incomplete (`phase: 'post_closure_finalization'`).
+Recovery via `pc workflow orchestrator recover <run>` resumes unfinished post-closure stages
+without repeating GitHub close or report publication.
 
 Run `pnpm exec tsx scripts/demos/workflow-demo.ts` for the isolated seven-role scripted
 regression. It retains the temporary evidence directory and makes no model or

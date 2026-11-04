@@ -6,7 +6,6 @@ import {
   recoverRun,
   stopRun,
   releaseRun,
-  orchestratorForSubject,
   closeStageEpic,
   collectBusinessTurn,
   type EpicClosureActions,
@@ -15,7 +14,6 @@ import {
   type StageDispatch,
 } from '@paper-craft/core/workflow/run-driver';
 import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
-import { finishEpic } from '../workflow/epic-completion.js';
 import {
   executeDeliveryStage,
   stagePullRequests,
@@ -30,7 +28,6 @@ import { preserveState } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { quote } from '@paper-craft/core/workflow/runtime';
 import { createRunner } from '../workflow/composition.js';
-import { inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { readIssue } from '@paper-craft/core/workflow/run-subject';
 import { readFileSync, existsSync } from 'node:fs';
 import { output } from '../utils/output.js';
@@ -633,12 +630,22 @@ export function registerWorkflowCommands(
   ).action(async (number: string, options: Options & { repository: string; retry?: boolean }) => {
     try {
       const config = loadFleetConfig(options.config);
-      const runner = getRunner(
-        orchestratorForSubject(config, options.repository, Number(number)).runner,
+      const num = Number(number);
+      const registry = inspectRuns(config);
+      const run = registry.runs.find(
+        (r) =>
+          r.subject.number === num &&
+          r.subject.repository === options.repository &&
+          r.lifecycle !== 'completed',
       );
-      const epic = inspectEpicRun(config, options.repository, Number(number));
-      if (!epic) throw new Error('Expected delivered EPIC record');
-      output(await finishEpic(config, runner, epic, undefined, options.retry), opts.human());
+      if (!run) {
+        throw new Error(
+          `No active Run found for ${options.repository}#${num}. Start a Managed Run with: pc workflow orchestrator start ${num} --type epic --repository ${options.repository}`,
+        );
+      }
+      throw new Error(
+        `EPIC finalization is managed through stage workflow. Use: pc workflow stage dispatch --run ${run.id} --role pipeline-audit --stage pipeline-audit (or pipeline-refactor), then pc workflow stage pipeline and pc workflow stage publish`,
+      );
     } catch (error) {
       run(() => {
         throw error;
@@ -685,6 +692,12 @@ export function registerWorkflowCommands(
                 (!options.repository || r.subject.repository === options.repository),
             );
 
+        if (!run) {
+          throw new Error(
+            `Missing Managed Run for EPIC ${num}. Start a Managed Run with: pc workflow orchestrator start ${num} --type epic`,
+          );
+        }
+
         let confirmation: { deliveryVersion: string; source: 'human'; evidence: string } | undefined;
         if (options.confirmationFile && existsSync(options.confirmationFile)) {
           confirmation = JSON.parse(readFileSync(options.confirmationFile, 'utf8'));
@@ -710,87 +723,70 @@ export function registerWorkflowCommands(
           }
         }
         if (!confirmation) {
+          confirmation = run.humanConfirmation;
+        }
+        if (!confirmation) {
           throw new Error('Expected explicit human confirmation');
         }
 
-        if (run) {
-          const repo = options.repository ?? run.subject.repository;
-          const authority = options.authority ?? run.orchestratorId ?? run.orchestrator?.id;
-          if (!authority) throw new Error('Active Orchestrator authority required');
-          const dispatch = options.dispatch
-            ? registry.dispatches?.find((d) => d.id === options.dispatch && d.runId === run.id)
-            : registry.dispatches?.find(
-                (d) =>
-                  d.runId === run.id &&
-                  d.role === 'epic' &&
-                  d.stage === 'integrated-acceptance' &&
-                  d.lifecycle === 'accepted',
-              );
-          if (!dispatch) {
-            throw new Error(
-              'Active Orchestrator and accepted integrated Dispatch required before GitHub close',
+        const repo = options.repository ?? run.subject.repository;
+        const authority = options.authority ?? run.orchestratorId ?? run.orchestrator?.id;
+        if (!authority) throw new Error('Active Orchestrator authority required');
+        const dispatch = options.dispatch
+          ? registry.dispatches?.find((d) => d.id === options.dispatch && d.runId === run.id)
+          : registry.dispatches?.find(
+              (d) =>
+                d.runId === run.id &&
+                d.role === 'epic' &&
+                d.stage === 'integrated-acceptance' &&
+                d.lifecycle === 'accepted',
             );
-          }
-
-          const projectCwd = config.project;
-          const git = (...args: string[]) =>
-            execFileSync('git', args, { cwd: projectCwd, encoding: 'utf8', timeout: 10000 }).trim();
-
-          const actions: EpicClosureActions = {
-            head: () => git('rev-parse', 'HEAD'),
-            view: async () => {
-              const out = execFileSync(
-                'gh',
-                ['issue', 'view', String(num), '--repo', repo, '--json', 'state'],
-                { cwd: projectCwd, encoding: 'utf8', timeout: 30000 },
-              );
-              return JSON.parse(out);
-            },
-            close: async () => {
-              execFileSync('gh', ['issue', 'close', String(num), '--repo', repo], {
-                cwd: projectCwd,
-                encoding: 'utf8',
-                timeout: 30000,
-              });
-            },
-          };
-
-          const result = await closeStageEpic(
-            config,
-            run.id,
-            authority,
-            dispatch.id,
-            confirmation,
-            actions,
+        if (!dispatch) {
+          throw new Error(
+            'Active Orchestrator and accepted integrated Dispatch required before GitHub close',
           );
-          output(
-            {
-              closed: true,
-              run: run.id,
-              epic: num,
-              deliveryVersion: result.deliveryVersion,
-              head: result.head,
-              phase: 'post_closure_finalization',
-            },
-            opts.human(),
-          );
-          return;
         }
 
-        if (!options.repository) throw new Error('Target repository required');
-        const runner = getRunner(
-          orchestratorForSubject(config, options.repository, num).runner,
+        const projectCwd = config.project;
+        const git = (...args: string[]) =>
+          execFileSync('git', args, { cwd: projectCwd, encoding: 'utf8', timeout: 10000 }).trim();
+
+        const actions: EpicClosureActions = {
+          head: () => git('rev-parse', 'HEAD'),
+          view: async () => {
+            const out = execFileSync(
+              'gh',
+              ['issue', 'view', String(num), '--repo', repo, '--json', 'state'],
+              { cwd: projectCwd, encoding: 'utf8', timeout: 30000 },
+            );
+            return JSON.parse(out);
+          },
+          close: async () => {
+            execFileSync('gh', ['issue', 'close', String(num), '--repo', repo], {
+              cwd: projectCwd,
+              encoding: 'utf8',
+              timeout: 30000,
+            });
+          },
+        };
+
+        const result = await closeStageEpic(
+          config,
+          run.id,
+          authority,
+          dispatch.id,
+          confirmation,
+          actions,
         );
-        const epic = inspectEpicRun(config, options.repository, num);
-        if (!epic) throw new Error('Expected delivered EPIC record');
         output(
-          await finishEpic(config, runner, epic, {
+          {
+            closed: true,
+            run: run.id,
             epic: num,
-            confirmed: true,
-            source: 'human',
-            evidence: confirmation.evidence,
-            deliveryVersion: confirmation.deliveryVersion,
-          }),
+            deliveryVersion: result.deliveryVersion,
+            head: result.head,
+            phase: 'post_closure_finalization',
+          },
           opts.human(),
         );
       } catch (error) {

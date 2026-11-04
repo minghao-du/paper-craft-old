@@ -55,7 +55,9 @@ export interface EpicCompletion {
   finalAccepted?: string;
   error?: string;
 }
-/** Finish each child, evaluate the original objective, and wait for explicit human closure. */
+/**
+ * @deprecated Legacy unmanaged completeEpic is retired. Managed closeStageEpic in run-driver is authoritative.
+ */
 export async function completeEpic(
   config: FleetConfig,
   runner: RoundRunner & { stopped?(turn: IssueTurn): Promise<boolean> },
