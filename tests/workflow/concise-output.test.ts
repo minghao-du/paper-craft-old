@@ -27,10 +27,6 @@ vi.mock('@paper-craft/core/workflow/run-driver', async (original) => ({
     pendingDispatches: ['pending-0'],
   })),
 }));
-vi.mock('@paper-craft/core/workflow/issue-driver', async (original) => ({
-  ...(await original<typeof import('@paper-craft/core/workflow/issue-driver')>()),
-  readIssue: () => fixture.runs[0].subject,
-}));
 vi.mock('@paper-craft/core/workflow/run-subject', async (original) => ({
   ...(await original<typeof import('@paper-craft/core/workflow/run-subject')>()),
   readIssue: () => fixture.runs[0].subject,

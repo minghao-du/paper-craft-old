@@ -13,7 +13,6 @@ for (const command of [
   'stop',
   'release',
   'land',
-  'finalize-epic',
   'close-epic',
 ]) {
   it(`publishes orchestrator ${command || 'group'} help`, () => {
