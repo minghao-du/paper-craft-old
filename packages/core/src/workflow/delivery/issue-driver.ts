@@ -25,9 +25,7 @@ export interface IssueInput {
   blockedBy?: number[];
 }
 /** Runner completion is distinct from startup receipt. */
-export interface RoundRunner extends RunnerAdapter {
-  collect(attempt: ManagedAttempt): Promise<string>;
-}
+export type RoundRunner = RunnerAdapter;
 /** A result belongs to its persisted turn and execution attempt. */
 export interface IssueTurn extends ManagedAttempt {
   /** Explicit replacement after verified termination preserves the old attempt without recollecting it. */

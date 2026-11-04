@@ -626,11 +626,7 @@ export async function dispatchStage(
     )
       continue;
     const attempt = prior.attempts.at(-1)!;
-    if (
-      !(await (
-        runner as RunnerAdapter & { stopped?(a: ManagedAttempt): Promise<boolean> }
-      ).stopped?.(attempt))
-    )
+    if (!(await runner.stopped?.(attempt)))
       throw new Error(
         'Prior execution termination unverified; prerequisite occupancy remains reserved',
       );
@@ -1666,10 +1662,7 @@ export async function startBusinessTurn(
 /** Publish collected evidence; accept only after explicit domain validation. */
 export async function collectBusinessTurn(
   config: FleetConfig,
-  runner: RunnerAdapter & {
-    collect(a: ManagedAttempt): Promise<string>;
-    stopped?(a: ManagedAttempt): Promise<boolean>;
-  },
+  runner: RunnerAdapter,
   attempt: ManagedAttempt,
   validate?: (result: string) => void,
   options?: { timeoutMs?: number; messageIds?: string[] },
@@ -1687,7 +1680,7 @@ export async function collectBusinessTurn(
     );
   }
   let result: string | undefined;
-  if (runner.interactive && runner.result && attempt.dispatchId) {
+  if (runner.result && attempt.dispatchId) {
     const deadline = options?.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;
     for (;;) {
       result = await runner.result(attempt, attempt.dispatchId);
@@ -1701,7 +1694,10 @@ export async function collectBusinessTurn(
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   } else {
-    result = await runner.collect(attempt);
+    result = await runner.collect(attempt, {
+      timeoutMs: options?.timeoutMs,
+      dispatchId: attempt.dispatchId,
+    });
   }
   if (result === undefined) throw new Error('No correlated task result; execution remains pending');
   const dispatch = inspectRuns(config).dispatches?.find((d) =>
@@ -1803,6 +1799,7 @@ export async function sendStageMessage(
   if (!runner.interactive || !runner.send)
     throw new Error('Runner lacks persistent interactive input');
   let send = false;
+  let attemptToReconcile: ManagedAttempt | undefined;
   const attempt = updateRunRegistry(config, (registry) => {
     const dispatch = findDispatch(registry, dispatchId);
     authorize(registry, dispatch.runId, authority);
@@ -1816,6 +1813,9 @@ export async function sendStageMessage(
     if (existing) {
       if (existing.brief !== message.brief)
         throw new Error('Message identity already bound to different input');
+      if (existing.status !== 'delivered' && existing.status !== 'completed') {
+        attemptToReconcile = dispatch.attempts.at(-1)!;
+      }
     } else {
       (dispatch.messages ??= []).push({
         ...message,
@@ -1826,7 +1826,26 @@ export async function sendStageMessage(
     }
     return dispatch.attempts.at(-1)!;
   });
-  if (!send) return;
+  if (!send) {
+    if (!attemptToReconcile) return;
+    // Uncertain delivery is reconciled before retrying.
+    if (runner.messageReceipt) {
+      const evidence = await runner.messageReceipt(attemptToReconcile, message);
+      if (evidence) {
+        updateRunRegistry(config, (registry) => {
+          const dispatch = findDispatch(registry, dispatchId);
+          const persisted = dispatch.messages!.find((m) => m.id === message.id)!;
+          persisted.status = 'delivered';
+          persisted.evidence = evidence;
+        });
+        return;
+      }
+      // Reconciled as NOT delivered; safe to proceed with sending
+    } else {
+      // Cannot reconcile uncertain delivery without messageReceipt capability; forbidden to replay
+      return;
+    }
+  }
   let status: 'delivered' | 'uncertain' = 'uncertain';
   let evidence: string;
   try {
@@ -1842,6 +1861,41 @@ export async function sendStageMessage(
     const persisted = dispatch.messages!.find((m) => m.id === message.id)!;
     Object.assign(persisted, { status, evidence });
   });
+}
+
+/** Reconcile uncertain stage message delivery using adapter receipt evidence without replay. */
+export async function reconcileStageMessage(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  dispatchId: string,
+  authority: string,
+  messageId: string,
+): Promise<{ status: 'delivered' | 'uncertain'; evidence?: string }> {
+  const snapshot = inspectRuns(config);
+  const dispatch = findDispatch(snapshot, dispatchId);
+  authorize(snapshot, dispatch.runId, authority);
+  const message = dispatch.messages?.find((m) => m.id === messageId);
+  if (!message) throw new Error(`Unknown message ${messageId} in dispatch ${dispatchId}`);
+  if (message.status === 'delivered' || message.status === 'completed') {
+    return { status: 'delivered', evidence: message.evidence };
+  }
+  const attempt = dispatch.attempts.at(-1)!;
+  if (!runner.messageReceipt) {
+    return { status: 'uncertain', evidence: message.evidence };
+  }
+  const evidence = await runner.messageReceipt(attempt, message);
+  if (evidence) {
+    updateRunRegistry(config, (registry) => {
+      const d = findDispatch(registry, dispatchId);
+      const m = d.messages?.find((item) => item.id === messageId);
+      if (m) {
+        m.status = 'delivered';
+        m.evidence = evidence;
+      }
+    });
+    return { status: 'delivered', evidence };
+  }
+  return { status: 'uncertain', evidence: message.evidence };
 }
 
 /** Verify accepted execution shutdown while retaining checkout ownership for preservation. */

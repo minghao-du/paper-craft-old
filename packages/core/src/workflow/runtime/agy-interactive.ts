@@ -466,8 +466,23 @@ export class AgyInteractive {
 
   async result(a: ManagedAttempt, id: string): Promise<string | undefined> {
     refreshStartupAttempt(a);
-    if (this.native(a)?.agent_state !== 'idle' || (a.startupGate && !a.activation))
+    if (
+      this.native(a)?.agent_state !== 'idle' ||
+      (a.startupGate && (!a.activation || a.activation.status !== 'delivered'))
+    )
       return undefined;
+    if (existsSync(join(a.directory, 'terminal.json'))) {
+      try {
+        const terminal = JSON.parse(readFileSync(join(a.directory, 'terminal.json'), 'utf8')) as {
+          run?: string;
+          session?: string;
+        };
+        if (a.run && terminal.run && terminal.run !== a.run) return undefined;
+        if (a.run && terminal.session && terminal.session !== `pc-run-${a.run}`) return undefined;
+      } catch {
+        /* ignore */
+      }
+    }
     const isDispatch = id === (a.dispatchId ?? a.id);
     const messageFile = join(a.directory, `message-${id}.json`);
     let targetBrief: string;
@@ -509,9 +524,17 @@ export class AgyInteractive {
 
   async messageReceipt(a: ManagedAttempt, message: { id: string; brief: string }) {
     this.verifyTerminal(a);
-    return this.steps(a).some((s) => this.input(s, message.brief))
-      ? 'Native exact agy activation input'
-      : undefined;
+    const delivered = this.steps(a).some((s) => this.input(s, message.brief));
+    if (!delivered) return undefined;
+    const messageFile = join(a.directory, `message-${message.id}.json`);
+    if (!existsSync(messageFile)) {
+      try {
+        writeFileSync(messageFile, JSON.stringify(message));
+      } catch {
+        /* ignore */
+      }
+    }
+    return 'Native exact agy message input';
   }
   async send(a: ManagedAttempt, message: { id: string; brief: string }) {
     this.verifyTerminal(a);

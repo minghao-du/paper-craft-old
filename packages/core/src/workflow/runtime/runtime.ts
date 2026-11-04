@@ -77,6 +77,11 @@ export interface RunnerAdapter {
   }>;
   /** Durable task output; implementations must not wait for process exit. */
   result?(attempt: ManagedAttempt, dispatchId: string): Promise<string | undefined>;
+  /** Collect task execution result; handles polling, timeout, and stopped execution. */
+  collect(
+    attempt: ManagedAttempt,
+    options?: { timeoutMs?: number; dispatchId?: string },
+  ): Promise<string>;
   /** Observe execution independently of receipt acceptance. */
   observe?(attempt: ManagedAttempt): Promise<ExecutionObservation>;
   stopped?(attempt: ManagedAttempt): Promise<boolean>;
@@ -207,7 +212,7 @@ export function inspectAttemptControl(attempt: ManagedAttempt): AttemptControl {
 /** A bounded wait leaves the original collection running and permits later collection. */
 export async function waitAttempt(
   attempt: ManagedAttempt,
-  runner: { collect(attempt: ManagedAttempt): Promise<string> },
+  runner: Pick<RunnerAdapter, 'collect'>,
   timeoutMs: number,
 ): Promise<{ timedOut: boolean; result?: string }> {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('Expected nonnegative timeout');
