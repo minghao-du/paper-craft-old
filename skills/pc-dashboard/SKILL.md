@@ -18,9 +18,9 @@ Omit `--config` to inspect remembered registrations.
 Build with `pnpm run build` before launch.
 
 Managed execution projects authoritative Runs and stage dispatches from the RunRegistry.
-Configured directories (`config.slots` or `config.worktrees`) without managed tasks show Git, worklog, and terminal observations; legacy slot status does not establish an independent Worker execution identity or duplicate Managed tasks.
+Configured directories (`config.slots` or `config.worktrees`) without managed tasks show Git and terminal observations; legacy slot status does not establish an independent Worker execution identity or duplicate Managed tasks.
 Old lightweight records do not produce extra execution rows.
-Missing legacy `.epic-status.json` files are not collection errors. Invalid evidence still reports an error.
+All tasks and observations are derived strictly from RunRegistry without scanning for legacy `.epic-status.json` or `.epic-worklog.md` files. Invalid evidence still reports an error.
 
 Expand each row for attributed sources, observation times, blockers and collection failures.
 A recorded phase does not establish a live agent, completion or slot availability.
@@ -49,10 +49,10 @@ Each task remains scoped to its Fleet even when Issue numbers match.
 Intervention reasons cite the status source: recorded blockers, `needs-human`/legacy `blocked` phases and overdue saved checks.
 For `awaiting-results`, a valid future `awaiting.next_check_at` means planned waiting, even with old file modification times.
 Missing schedules and runtime evidence remain unknown.
-File activity uses the latest status/worklog modification time; hand-written `updated_at`, quiet output and an open PR alone do not establish stalled work or a request for approval.
+File activity uses the latest attempt log or observation time; hand-written `updated_at`, quiet output and an open PR alone do not establish stalled work or a request for approval.
 
-Expand a task’s Logs to read its worklog (`.epic-worklog.md`) by default, switch to a currently verified terminal, refresh, copy or load the next segment.
-Worklogs use complete-line segments of at most 16 KiB with a 1 MiB context-read ceiling; oversized lines are explicitly omitted and deeper offsets are refused; terminal capture is limited to 200 recent lines and 16 KiB.
+Expand a task’s Logs to read its attempt log or transcript file by default, switch to a currently verified terminal, refresh, copy or load the next segment.
+Logs use complete-line segments of at most 16 KiB with a 1 MiB context-read ceiling; oversized lines are explicitly omitted and deeper offsets are refused; terminal capture is limited to 200 recent lines and 16 KiB.
 Each response names the source and read time; absent files, unavailable capability and read errors remain distinct.
 Terminal reads recheck exact physical directory and pane/PID association before and after capture, refusing ambiguous panes.
 Runner transcripts remain unavailable without a safe verified identity/source contract.

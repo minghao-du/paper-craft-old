@@ -147,22 +147,6 @@ if (fs.existsSync(startupPath)) {
     try {
       const initPayload = JSON.parse(jsonMatch[1]);
       fs.writeFileSync(path.join(attemptDir, 'initialization.json'), JSON.stringify(initPayload));
-      if (role === 'worker') {
-        const checkout = process.cwd();
-        fs.writeFileSync(
-          path.join(checkout, '.epic-status.json'),
-          JSON.stringify({
-            issue: Number(initPayload.subject?.split('#').at(-1) || 1),
-            phase: 'exploring',
-            summary: 'Worker in progress',
-            updated_at: new Date().toISOString(),
-          }),
-        );
-        fs.appendFileSync(
-          path.join(checkout, '.epic-worklog.md'),
-          '\\n' + new Date().toISOString() + ' startup ' + attemptId + '\\n',
-        );
-      }
     } catch {}
   }
 }

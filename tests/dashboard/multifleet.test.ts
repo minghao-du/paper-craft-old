@@ -1,8 +1,10 @@
 import { test, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDashboard } from '../../packages/dashboard/src/server.js';
+import { updateRunRegistry } from '@paper-craft/core/workflow/run-driver';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 
 test('multi-Fleet evidence retains invalid registrations and explains waiting and intervention', async () => {
   const root = mkdtempSync(join(tmpdir(), 'dashboard-multi-'));
@@ -15,27 +17,40 @@ test('multi-Fleet evidence retains invalid registrations and explains waiting an
       writeFileSync(config, JSON.stringify({ clone_root: 'pool' }));
       return config;
     });
-    const status = join(root, 'alpha', '.epic-status.json');
-    writeFileSync(
-      status,
-      JSON.stringify({
-        issue: 42,
-        phase: 'awaiting-results',
-        summary: 'Experiment',
+    const alphaConfig = loadFleetConfig(configs[0]);
+    const alphaBrief = join(root, 'alpha', 'brief.md');
+    writeFileSync(alphaBrief, '# Brief Alpha');
+    updateRunRegistry(alphaConfig, (registry) => {
+      registry.runs.push({
+        id: 'run-alpha',
+        subject: { repository: 'example/repo', number: 42, title: 'Experiment' },
+        provider: 'codex',
+        policy: { name: 'default', revision: 1 },
+        lifecycle: 'running',
+        phase: 'awaiting-results' as any,
+        orchestratorId: 'orch-alpha',
+        brief: { path: alphaBrief, hash: 'h' },
         awaiting: { next_check_at: '2099-01-01T00:00:00Z' },
-      }),
-    );
-    utimesSync(status, new Date('2000-01-01'), new Date('2000-01-01'));
-    writeFileSync(
-      join(root, 'beta', '.epic-status.json'),
-      JSON.stringify({
-        issue: 42,
-        phase: 'needs-human',
-        summary: 'Choose parameter',
+      } as any);
+    });
+
+    const betaConfig = loadFleetConfig(configs[1]);
+    const betaBrief = join(root, 'beta', 'brief.md');
+    writeFileSync(betaBrief, '# Brief Beta');
+    updateRunRegistry(betaConfig, (registry) => {
+      registry.runs.push({
+        id: 'run-beta',
+        subject: { repository: 'example/repo', number: 42, title: 'Choose parameter' },
+        provider: 'codex',
+        policy: { name: 'default', revision: 1 },
+        lifecycle: 'running',
+        phase: 'needs-human' as any,
+        orchestratorId: 'orch-beta',
+        brief: { path: betaBrief, hash: 'h' },
         blockers: ['Choose cutoff'],
         pr: 'https://github.com/example/repo/pull/3',
-      }),
-    );
+      } as any);
+    });
     const options = {
       dataDir: join(root, 'data'),
       configs: [...configs, join(root, 'missing.json')],
@@ -58,7 +73,7 @@ test('multi-Fleet evidence retains invalid registrations and explains waiting an
       expect.arrayContaining([
         expect.objectContaining({
           reason: 'Choose cutoff',
-          source: join(realpathSync(root), 'beta', '.epic-status.json'),
+          source: alphaBrief ? betaBrief : '',
         }),
       ]),
     );
@@ -68,28 +83,20 @@ test('multi-Fleet evidence retains invalid registrations and explains waiting an
       1,
     );
     expect((await read('/api/snapshot?fleet=' + all.fleets[0].id)).fleets).toHaveLength(1);
-    writeFileSync(
-      status,
-      JSON.stringify({
-        phase: 'awaiting-results',
-        awaiting: { next_check_at: '2000-01-01T00:00:00Z' },
-      }),
-    );
+    updateRunRegistry(alphaConfig, (reg) => {
+      (reg.runs[0] as any).awaiting = { next_check_at: '2000-01-01T00:00:00Z' };
+    });
     await dashboard.refresh(true);
     const overdue = (await read('/api/snapshot')).fleets[0].tasks[0];
     expect(overdue.waiting).toBe('overdue');
     expect(overdue.interventions).toContainEqual({
       reason: 'Saved next check is overdue; investigate',
-      source: join(realpathSync(root), 'alpha', '.epic-status.json'),
+      source: alphaBrief,
     });
-    writeFileSync(
-      status,
-      JSON.stringify({
-        phase: 'implementing',
-        pr: 'https://github.com/example/repo/pull/9',
-        updated_at: '2000-01-01',
-      }),
-    );
+    updateRunRegistry(alphaConfig, (reg) => {
+      reg.runs[0].phase = 'implementing' as any;
+      (reg.runs[0] as any).awaiting = undefined;
+    });
     await dashboard.refresh(true);
     expect((await read('/api/snapshot')).fleets[0].tasks[0].interventions).toEqual([]);
     dashboard.stop();

@@ -23,8 +23,8 @@ genuinely complete and the issue is truly resolved.
 
 Read ALL of these before making any judgment:
 
-1. `.epic-status.json` — current phase, summary, stop_reason, lead_notes, lead_guidance
-2. `.epic-worklog.md` — narrative log of what the worker has done
+1. Managed Run, Dispatch, and Attempt receipts/state; `.pc-execution-owner` in checkout (or `.epic-status.json` if inspecting legacy state) — current phase, summary, stop_reason, lead_notes, lead_guidance
+2. Attempt logs and worklogs — narrative log of what the worker has done
 3. Issue body: `gh issue view <N> --json title,body`
 4. Recent commits: `git log main..HEAD --oneline`
 5. Diff summary: `git diff main --stat`
@@ -150,18 +150,18 @@ Before accepting "done" or "phase-complete", ask yourself:
 
 ### Step 6: Check for loops
 
-Read `lead_notes` in `.epic-status.json`:
+Read `lead_notes` in the managed run/receipt state or `.epic-status.json`:
 - If there are **8+ total lead notes** → escalate to `needs-human`
   with a summary of all progress and what's still unresolved
 
 ### Step 7: Write your assessment
 
-Two rules for writing the status file:
+Two rules for writing status:
 
 - **Never construct a timestamp.** Every `updated_at`, `completed_at` and `awaiting.started_at` is the verbatim output of `date -u +%Y-%m-%dT%H:%M:%SZ`. (A constructed time tends to run ahead of the clock, which hides a stall.)
 - **`phase` is one of seven:** `exploring`, `coding`, `testing`, `awaiting-results`, `quality-gate`, `needs-human`, `completed`. `phase` says where the slot is in its lifecycle, and the fleet keys on it. `stop_reason` says why the worker stopped, in your own words. A specific classification goes in `stop_reason` and `lead_guidance`, never in `phase`. If none of the seven fits, escalate rather than invent one.
 
-1. **Update `.epic-status.json`**:
+1. **Update assessment**:
    - Set `phase` (if changing) — one of the seven above, no others
    - Set `stop_reason` to your classification. For clean open PRs awaiting orchestrator
      confirmation or user approval, retain `awaiting-human-merge` and phase `quality-gate`;
@@ -263,8 +263,8 @@ Otherwise:
    section for any failures. If there are no legitimate candidates,
    omit both. Post the comment.
 
-3. Set `.epic-status.json#completed_at` to the current ISO 8601
-   timestamp from `date -u`, then return "PHASE: completed". If the file is missing, report missing final records to the orchestrator and reconstruct them before cleanup.
+3. Set `completed_at` to the current ISO 8601
+   timestamp from `date -u`, then return "PHASE: completed". If final records are missing, report missing final records to the orchestrator and reconstruct them before cleanup.
 
 **Do not file on non-terminal evaluations.** Signals may change as
 the worker addresses feedback; filing only at `completed` means the
@@ -290,6 +290,6 @@ the remaining run is needed.
 - **Scope is sacred.** The issue defines the work. Nothing more.
 - **When in doubt, escalate.** A false `needs-human` is far cheaper
   than a worker spinning on the wrong thing.
-- **Verify issue number.** Check that `.epic-status.json` `issue`
+- **Verify issue number.** Check that the evaluated run or dispatch's `issue`
   field matches the issue you were asked to evaluate. If it doesn't,
-  the clone has stale state from a previous assignment — flag this.
+  the checkout has stale state from a previous assignment — flag this.

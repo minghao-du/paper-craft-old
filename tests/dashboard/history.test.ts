@@ -1,8 +1,10 @@
 import { test, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDashboard } from '../../packages/dashboard/src/server.js';
+import { updateRunRegistry, inspectRuns } from '@paper-craft/core/workflow/run-driver';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 
 test('history retains meaningful observations, marks restart gaps and prunes only owned records', async () => {
   const root = mkdtempSync(join(tmpdir(), 'dashboard-history-'));
@@ -12,11 +14,19 @@ test('history retains meaningful observations, marks restart gaps and prunes onl
     mkdirSync(join(root, 'pool'));
     const config = join(root, '.epic-config.json');
     writeFileSync(config, JSON.stringify({ clone_root: 'pool', clone_names: [] }));
-    const status = join(root, '.epic-status.json');
-    writeFileSync(
-      status,
-      JSON.stringify({ phase: 'implementing', summary: 'private prompt secret' }),
-    );
+    const fleetConfig = loadFleetConfig(config);
+    updateRunRegistry(fleetConfig, (registry) => {
+      registry.runs.push({
+        id: 'run-history',
+        subject: { repository: 'o/r', number: 1 },
+        provider: 'codex',
+        policy: { name: 'default', revision: 1 },
+        lifecycle: 'running',
+        phase: 'implementing',
+        orchestratorId: 'orch-1',
+        brief: { path: join(root, 'brief.md'), hash: 'h' },
+      });
+    });
     const options = {
       dataDir: join(root, 'data'),
       configs: [config],
@@ -42,7 +52,9 @@ test('history retains meaningful observations, marks restart gaps and prunes onl
     await dashboard.refresh(true);
     expect((await read()).events).toEqual(first.events);
     now += 1000;
-    writeFileSync(status, JSON.stringify({ phase: 'testing', summary: 'private prompt secret' }));
+    updateRunRegistry(fleetConfig, (registry) => {
+      registry.runs[0].phase = 'testing';
+    });
     await dashboard.refresh(true);
     const changed = await read();
     expect(changed.events.length).toBeGreaterThan(first.events.length);
@@ -64,7 +76,7 @@ test('history retains meaningful observations, marks restart gaps and prunes onl
         (e: { observedAt: string }) => Date.parse(e.observedAt) >= now - 30 * 86400000,
       ),
     ).toBe(true);
-    expect(readFileSync(status, 'utf8')).toContain('testing');
+    expect(inspectRuns(fleetConfig).runs[0].phase).toBe('testing');
   } finally {
     dashboard?.stop();
     rmSync(root, { recursive: true, force: true });

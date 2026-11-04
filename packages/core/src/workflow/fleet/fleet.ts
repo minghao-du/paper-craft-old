@@ -427,8 +427,14 @@ export function checkReclaim(
     checks.unmergedCommits = Number(
       git(source, 'rev-list', '--count', `${reference(config)}..HEAD`),
     );
-    const status = join(source, '.epic-status.json');
-    checks.workerState = pathExists(status) ? JSON.parse(readFileSync(status, 'utf8')) : null;
+    const registry = inspectRuns(config);
+    const sourcePhysical = pathExists(source) ? realpathSync(source) : source;
+    const resource = (registry.resources ?? []).find(
+      (r) => r.path === source || r.path === sourcePhysical,
+    );
+    checks.resource = resource ?? null;
+    const ownerFile = join(source, '.pc-execution-owner');
+    checks.executionOwner = pathExists(ownerFile) ? JSON.parse(readFileSync(ownerFile, 'utf8')) : null;
   } catch (error) {
     checks.error = error instanceof Error ? error.message : String(error);
   }

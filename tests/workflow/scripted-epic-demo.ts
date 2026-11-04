@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -325,16 +326,20 @@ export async function runDeliveryDemo() {
   if (process.exitCode !== 2)
     throw new Error('Incomplete selected receipt accepted using later evidence');
   process.exitCode = oldExit;
-  const statusPath = join(checkout, '.epic-status.json');
-  const validStatus = readFileSync(statusPath, 'utf8');
-  writeFileSync(statusPath, JSON.stringify({ assessment: 'old incomplete assessment' }));
   const recordReceipt = inspectRuns(demo.config).receipts!.find(
     (r) => r.dispatchId === records.id && r.id !== incompleteReceipt.id,
   )!;
+  const evidencePath = recordReceipt.evidence[0].path;
+  const validEvidence = readFileSync(evidencePath, 'utf8');
+  chmodSync(evidencePath, 0o600);
+  writeFileSync(evidencePath, JSON.stringify({ assessment: 'old incomplete assessment' }));
+  chmodSync(evidencePath, 0o400);
   await demo.cli('accept', ['--receipt', recordReceipt.id, '--decision', decision, '--pr', '2']);
   if (process.exitCode !== 2) throw new Error('Incomplete final records accepted');
   process.exitCode = oldExit;
-  writeFileSync(statusPath, validStatus);
+  chmodSync(evidencePath, 0o600);
+  writeFileSync(evidencePath, validEvidence);
+  chmodSync(evidencePath, 0o400);
   await accept(records.id);
   const cleanup = await task('preservation-cleanup', 'landing', demo.delivery.head);
   // The controlled script has returned and independently reports terminated before releasing its checkout.
@@ -477,21 +482,6 @@ export function prepareDeliveryTasks(demo: Awaited<ReturnType<typeof prepareScri
     });
   });
   demo.tasks.set('final-records', (a) => {
-    writeFileSync(
-      join(checkout, '.epic-status.json'),
-      JSON.stringify({
-        issue: 2,
-        repository: 'toy/epic',
-        pr: 2,
-        releaseEvidence: 'Controlled script termination observed',
-        assessment: 'Toy change delivered at evaluated head',
-        followups: [],
-      }),
-    );
-    writeFileSync(
-      join(checkout, '.epic-worklog.md'),
-      'Worker final records: evaluated head merged; toy.txt delivered.\n',
-    );
     return JSON.stringify({
       complete: true,
       assessment: 'Toy delivered',

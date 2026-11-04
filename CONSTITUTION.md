@@ -20,7 +20,7 @@ automation from spinning.
 ## II. File-Based State, No Hidden Memory
 
 All state that matters MUST survive context compaction and session
-boundaries. Use files (`.epic-status.json`, `.epic-worklog.md`, JSONL
+boundaries. Use files (`initialization.json`, receipt evidence, JSONL
 stores), not conversation history. A fresh agent reading the files MUST
 be able to pick up where the last one left off.
 
