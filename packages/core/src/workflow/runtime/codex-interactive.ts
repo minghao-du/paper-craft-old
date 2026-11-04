@@ -63,12 +63,20 @@ export class InteractiveCodexRunner implements RunnerAdapter {
   collectable(attempt: ManagedAttempt) {
     return existsSync(join(attempt.directory, 'exit-code'));
   }
-  async collect(attempt: ManagedAttempt): Promise<string> {
+  async collect(
+    attempt: ManagedAttempt,
+    options?: { timeoutMs?: number; dispatchId?: string },
+  ): Promise<string> {
+    const id = options?.dispatchId ?? attempt.dispatchId ?? attempt.id;
+    const deadline = options?.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;
     for (;;) {
-      const result = await this.result(attempt, attempt.dispatchId ?? attempt.id);
+      const result = await this.result(attempt, id);
       if (result !== undefined) return result;
       if (await this.stopped(attempt))
         throw new Error('Codex exited without a correlated task result');
+      if (deadline !== undefined && Date.now() >= deadline) {
+        throw new Error('Timed out waiting for correlated task result');
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }

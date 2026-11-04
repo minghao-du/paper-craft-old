@@ -855,7 +855,7 @@ test('collectBusinessTurn polls result until available or stopped', async () => 
     directory: project,
     fleet: 'fleet',
     role: 'worker' as const,
-    runner: 'codex',
+    runner: 'agy',
     brief: 'poll test',
     status: 'running' as const,
     created: '',
@@ -863,28 +863,42 @@ test('collectBusinessTurn polls result until available or stopped', async () => 
   };
   let calls = 0;
   let isStopped = false;
-  const runner = {
-    name: 'codex',
+  const runner: RunnerAdapter = {
+    name: 'agy',
     interactive: true,
     result: vi.fn(async () => {
       calls++;
       return calls >= 3 ? 'delayed result' : undefined;
     }),
-    collect: vi.fn(async () => 'from collect'),
+    collect: vi.fn(async (a, opts) => {
+      const id = opts?.dispatchId ?? a.dispatchId ?? a.id;
+      const deadline = opts?.timeoutMs !== undefined ? Date.now() + opts.timeoutMs : undefined;
+      for (;;) {
+        const res = await runner.result!(a, id);
+        if (res !== undefined) return res;
+        if (await runner.stopped!(a)) {
+          throw new Error('Runner stopped without a correlated task result');
+        }
+        if (deadline !== undefined && Date.now() >= deadline) {
+          throw new Error('Timed out waiting for correlated task result');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }),
     stopped: vi.fn(async () => isStopped),
     preflight: vi.fn(async () => {}),
     start: vi.fn(),
   };
   try {
-    const result = await collectBusinessTurn(config, runner as any, attempt);
+    const result = await collectBusinessTurn(config, runner, attempt);
     expect(result).toBe('delayed result');
     expect(calls).toBe(3);
 
     // If runner stops while result is not yet available, throws
     calls = 0;
     isStopped = true;
-    runner.result.mockImplementation(async () => undefined);
-    await expect(collectBusinessTurn(config, runner as any, attempt)).rejects.toThrow(
+    runner.result = vi.fn(async () => undefined);
+    await expect(collectBusinessTurn(config, runner, attempt)).rejects.toThrow(
       /Runner stopped without a correlated task result/,
     );
   } finally {

@@ -404,11 +404,19 @@ export class ClaudeRunner extends StreamRunner {
     return this.tui.observe(a);
   }
   /** Persistent completion uses correlated native turn output, never process exit. */
-  async collect(a: ManagedAttempt): Promise<string> {
+  async collect(
+    a: ManagedAttempt,
+    options?: { timeoutMs?: number; dispatchId?: string },
+  ): Promise<string> {
+    const id = options?.dispatchId ?? a.dispatchId ?? a.id;
+    const deadline = options?.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;
     for (;;) {
-      const output = await this.tui.result(a, a.dispatchId ?? a.id);
+      const output = await this.tui.result(a, id);
       if (output !== undefined) return output;
       if (await this.stopped(a)) throw new Error('Claude exited without a correlated task result');
+      if (deadline !== undefined && Date.now() >= deadline) {
+        throw new Error('Timed out waiting for correlated task result');
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }

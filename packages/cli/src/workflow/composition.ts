@@ -15,7 +15,6 @@ import { ClaudeRunner } from '@paper-craft/core/workflow/runtime/claude';
 
 export type ComposedRunner = RunnerAdapter & {
   stopped(attempt: ManagedAttempt): Promise<boolean>;
-  collect(attempt: ManagedAttempt): Promise<string>;
   collectable?(attempt: ManagedAttempt): boolean;
 };
 
