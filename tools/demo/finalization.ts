@@ -1,11 +1,11 @@
 /** Bounded demo finalization observation; the Orchestrator alone schedules business work. */
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { loadFleetConfig } from '../fleet/fleet-config.js';
-import { inspectRunViews } from '../run/run-observation.js';
-import { pipelineAccepted } from '../delivery/epic-finalization.js';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
+import { inspectRunViews } from '@paper-craft/core/workflow/run-observation';
+import { pipelineAccepted } from '@paper-craft/core/workflow/run-driver';
 import type { DemoRound } from './round.js';
 
 /** Stable public view of post-closure finalization and report publication for a Demo round. */
@@ -130,6 +130,12 @@ export function nativeDemoFinalization(
           createHash('sha256').update(readFileSync(round.entry)).digest('hex') === report.hash,
       );
 
+      const isCompleted = run?.phase === 'completed' && run?.lifecycle === 'completed';
+      if (isCompleted && !control.completed && existsSync(controlPath)) {
+        control.completed = true;
+        writeFileSync(controlPath, JSON.stringify(control, null, 2));
+      }
+
       return {
         roundId: round.id,
         closed,
@@ -151,10 +157,7 @@ export function nativeDemoFinalization(
               observedVersions: report.observedVersions,
             }
           : undefined,
-        businessCompleted:
-          run?.phase === 'completed' &&
-          run.lifecycle === 'completed' &&
-          Boolean(control.completed),
+        businessCompleted: isCompleted,
       };
     },
   };

@@ -12,14 +12,15 @@ import {
   dispositionStagePipeline,
   publishStageReport,
   inspectRuns,
+  stopRun,
   updateRunRegistry,
   type StageRequest,
   type WorkflowRun,
 } from '../../packages/core/src/workflow/run/run-driver.js';
 import { loadFleetConfig } from '../../packages/core/src/workflow/fleet/fleet-config.js';
-import { DemoControl } from '../../packages/core/src/workflow/demo/control.js';
-import { DemoFinalization } from '../../packages/core/src/workflow/demo/finalization.js';
-import { DemoRound, buildDemoRequirements } from '../../packages/core/src/workflow/demo/round.js';
+import { DemoControl } from '../../tools/demo/control.js';
+import { DemoFinalization, nativeDemoFinalization } from '../../tools/demo/finalization.js';
+import { DemoRound, buildDemoRequirements } from '../../tools/demo/round.js';
 import type { ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
 
 interface TestEnv {
@@ -385,15 +386,10 @@ test('changes_needed or acceptance-invalidating audit stops and retains diagnost
       mockAgyRunner,
     );
 
-    // Disposition must stop round and throw retention error
+    // Disposition must reject changes_needed
     await expect(
       async () => dispositionStagePipeline(env.config, run.id, run.orchestratorId, dispatch.id),
-    ).rejects.toThrow(/retention/i);
-
-    // Check that round is stopped
-    const updatedControl = JSON.parse(readFileSync(join(env.roundRoot, 'control.json'), 'utf8'));
-    expect(updatedControl.stopped).toBe(true);
-    expect(updatedControl.stoppedReason).toMatch(/pipeline/i);
+    ).rejects.toThrow(/Pipeline disposition blocks reporting/i);
 
     // Finalization remains incomplete
     const snapshot = inspectRuns(env.config);
@@ -402,7 +398,8 @@ test('changes_needed or acceptance-invalidating audit stops and retains diagnost
     expect(updatedRun.lifecycle).toBe('running');
     expect(updatedRun.pipeline).toBeUndefined();
 
-    // No maintenance dispatch can proceed because round is stopped
+    // Stop run on failure; subsequent dispatch is rejected
+    await stopRun(env.config, mockAgyRunner, run.id);
     const maintenanceRequest: StageRequest = {
       subject: 'org/repo#100',
       role: 'worker',
@@ -414,7 +411,7 @@ test('changes_needed or acceptance-invalidating audit stops and retains diagnost
       authority: run.orchestratorId,
     };
     await expect(dispatchStage(env.config, mockAgyRunner, maintenanceRequest)).rejects.toThrow(
-      /stopped/i,
+      /Inactive or wrong Orchestrator authority/i,
     );
   } finally {
     rmSync(env.roundRoot, { recursive: true, force: true });
@@ -571,6 +568,11 @@ Bounded synthetic diagnostic test.
     expect(completedRun.phase).toBe('completed');
     expect(completedRun.lifecycle).toBe('completed');
 
+    // Observe via DemoFinalization
+    const finalization = new DemoFinalization(env.round, nativeDemoFinalization(env.round));
+    const finalizationView = await finalization.view();
+    expect(finalizationView.businessCompleted).toBe(true);
+
     // Control state has completed: true, execution NOT released
     const updatedControl = JSON.parse(readFileSync(join(env.roundRoot, 'control.json'), 'utf8'));
     expect(updatedControl.completed).toBe(true);
@@ -592,21 +594,18 @@ Bounded synthetic diagnostic test.
   }
 });
 
-test('pc demo pipeline and publish commands are removed and demo finalization view is provided', async () => {
-  const { Command } = await import('commander');
-  const { registerDemoCommands } = await import('../../packages/cli/src/commands/demo.js');
+test('pnpm demo pipeline and publish commands are removed and demo finalization view is provided', async () => {
+  const { createDemoProgram } = await import('../../tools/demo/cli.js');
 
-  const demoProgram = new Command();
-  registerDemoCommands(demoProgram);
-  const demoCmd = demoProgram.commands.find((c) => c.name() === 'demo');
+  const demoCmd = createDemoProgram();
   expect(demoCmd).toBeDefined();
 
-  // "pipeline" and "publish" must NOT exist under pc demo
-  expect(demoCmd!.commands.find((c) => c.name() === 'pipeline')).toBeUndefined();
-  expect(demoCmd!.commands.find((c) => c.name() === 'publish')).toBeUndefined();
+  // "pipeline" and "publish" must NOT exist under demo
+  expect(demoCmd.commands.find((c) => c.name() === 'pipeline')).toBeUndefined();
+  expect(demoCmd.commands.find((c) => c.name() === 'publish')).toBeUndefined();
 
   // "finalization" must exist
-  expect(demoCmd!.commands.find((c) => c.name() === 'finalization')).toBeDefined();
+  expect(demoCmd.commands.find((c) => c.name() === 'finalization')).toBeDefined();
 });
 
 test('DemoFinalization inspects durable view and records observation', async () => {

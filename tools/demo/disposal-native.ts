@@ -1,5 +1,5 @@
-import { inspectRuns, inspectRun } from '../run/run-observation.js';
-import { loadFleetConfig } from '../fleet/fleet-config.js';
+import { inspectRuns, inspectRun } from '@paper-craft/core/workflow/run-observation';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 /** Native disposal only follows freshly collected verifier evidence and persisted identities. */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync, rmSync, realpathSync } from 'node:fs';

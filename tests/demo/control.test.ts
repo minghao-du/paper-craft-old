@@ -2,7 +2,7 @@ import { test, expect } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DemoControl } from '../../packages/core/src/workflow/demo/control.js';
+import { DemoControl } from '../../tools/demo/control.js';
 test('reconnected control retains observations and unknown stop occupancy', async () => {
   const root = mkdtempSync(join(tmpdir(), 'demo-control-'));
   const round = {
@@ -10,7 +10,7 @@ test('reconnected control retains observations and unknown stop occupancy', asyn
     id: 'test',
     phase: 'provisioned',
     config: { root },
-  } as unknown as import('../../packages/core/src/workflow/demo/round.js').DemoRound;
+  } as unknown as import('../../tools/demo/round.js').DemoRound;
   const adapter = { stop: async () => false };
   try {
     const c = new DemoControl(round, adapter);
@@ -34,7 +34,7 @@ test('active budget excludes human waiting and expires through stop', async () =
     id: 'test',
     phase: 'provisioned',
     config: { root },
-  } as unknown as import('../../packages/core/src/workflow/demo/round.js').DemoRound;
+  } as unknown as import('../../tools/demo/round.js').DemoRound;
   const c = new DemoControl(round, { stop: async () => true });
   try {
     const s = await c.arm(1000);
@@ -56,7 +56,7 @@ test('bind failure preserves observations submitted while round is active', asyn
     id: 'race',
     phase: 'provisioned',
     config: { root },
-  } as unknown as import('../../packages/core/src/workflow/demo/round.js').DemoRound;
+  } as unknown as import('../../tools/demo/round.js').DemoRound;
   const c = new DemoControl(round, {
     stop: async () => false,
   });
@@ -78,7 +78,7 @@ test('permission wait pauses active budget and resumes with explicit evidence', 
     id: 'perm',
     phase: 'provisioned',
     config: { root },
-  } as unknown as import('../../packages/core/src/workflow/demo/round.js').DemoRound;
+  } as unknown as import('../../tools/demo/round.js').DemoRound;
   const c = new DemoControl(round, { stop: async () => true });
   try {
     const s = await c.arm(5000);

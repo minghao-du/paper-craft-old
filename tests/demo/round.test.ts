@@ -2,7 +2,7 @@ import { test, expect } from 'vitest';
 import { mkdirSync, mkdtempSync, realpathSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DemoRounds, type DemoAdapter } from '../../packages/core/src/workflow/demo/round.js';
+import { DemoRounds, type DemoAdapter } from '../../tools/demo/round.js';
 
 test('preflight is read-only; provisioning needs consent and reconnects; failures retain identity', async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-round-')));

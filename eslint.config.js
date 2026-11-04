@@ -25,6 +25,7 @@ export default tseslint.config(
             '@paper-craft/mcp/*',
             '**/cli/**',
             '**/mcp/**',
+            '**/tools/**',
           ],
         },
       ],
@@ -36,7 +37,7 @@ export default tseslint.config(
       'no-restricted-imports': [
         'error',
         {
-          patterns: ['**/core/src/**', '**/core/dist/**'],
+          patterns: ['**/core/src/**', '**/core/dist/**', '**/tools/**'],
         },
       ],
     },

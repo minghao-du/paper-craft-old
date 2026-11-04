@@ -171,56 +171,6 @@
       "paper-craft-source": "./src/workflow/delivery/stage-delivery.ts",
       "types": "./dist/workflow/delivery/stage-delivery.d.ts",
       "default": "./dist/workflow/delivery/stage-delivery.js"
-    },
-    "./workflow/demo": {
-      "paper-craft-source": "./src/workflow/demo/round.ts",
-      "types": "./dist/workflow/demo/round.d.ts",
-      "default": "./dist/workflow/demo/round.js"
-    },
-    "./workflow/demo-native": {
-      "paper-craft-source": "./src/workflow/demo/native.ts",
-      "types": "./dist/workflow/demo/native.d.ts",
-      "default": "./dist/workflow/demo/native.js"
-    },
-    "./workflow/demo-control": {
-      "paper-craft-source": "./src/workflow/demo/control.ts",
-      "types": "./dist/workflow/demo/control.d.ts",
-      "default": "./dist/workflow/demo/control.js"
-    },
-    "./workflow/demo-execution": {
-      "paper-craft-source": "./src/workflow/demo/execution.ts",
-      "types": "./dist/workflow/demo/execution.d.ts",
-      "default": "./dist/workflow/demo/execution.js"
-    },
-    "./workflow/demo-verifier": {
-      "paper-craft-source": "./src/workflow/demo/verifier.ts",
-      "types": "./dist/workflow/demo/verifier.d.ts",
-      "default": "./dist/workflow/demo/verifier.js"
-    },
-    "./workflow/demo-disposition": {
-      "paper-craft-source": "./src/workflow/demo/disposition.ts",
-      "types": "./dist/workflow/demo/disposition.d.ts",
-      "default": "./dist/workflow/demo/disposition.js"
-    },
-    "./workflow/demo-disposal-native": {
-      "paper-craft-source": "./src/workflow/demo/disposal-native.ts",
-      "types": "./dist/workflow/demo/disposal-native.d.ts",
-      "default": "./dist/workflow/demo/disposal-native.js"
-    },
-    "./workflow/demo-delivery": {
-      "paper-craft-source": "./src/workflow/demo/delivery.ts",
-      "types": "./dist/workflow/demo/delivery.d.ts",
-      "default": "./dist/workflow/demo/delivery.js"
-    },
-    "./workflow/demo-delivery-native": {
-      "paper-craft-source": "./src/workflow/demo/delivery-native.ts",
-      "types": "./dist/workflow/demo/delivery-native.d.ts",
-      "default": "./dist/workflow/demo/delivery-native.js"
-    },
-    "./workflow/demo-finalization": {
-      "paper-craft-source": "./src/workflow/demo/finalization.ts",
-      "types": "./dist/workflow/demo/finalization.d.ts",
-      "default": "./dist/workflow/demo/finalization.js"
     }
   },
   "files": [

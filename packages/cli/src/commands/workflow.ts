@@ -240,8 +240,6 @@ export function registerWorkflowCommands(
       )
       .option('--requirements <text>', 'Immutable additional Run Requirements')
       .option('--requirements-file <file>', 'Read immutable Run Requirements from a UTF-8 file')
-      .option('--demo-round <id>', 'Bind Run to an armed Demo round')
-      .option('--demo-config <file>', 'Demo configuration file for Demo-constrained Run')
       .addOption(
         new Option('--type <type>', 'Subject type; must match the title EPIC marker')
           .choices(['issue', 'epic'])
@@ -256,8 +254,6 @@ export function registerWorkflowCommands(
         requirements?: string;
         requirementsFile?: string;
         dangerouslySkipPermissions?: boolean;
-        demoRound?: string;
-        demoConfig?: string;
       },
     ) => {
       let config: FleetConfig | undefined;
@@ -288,31 +284,14 @@ export function registerWorkflowCommands(
             `Type mismatch: --type ${options.type}, but title ${JSON.stringify(subject.title)} identifies ${kind}; correct the title or --type before retrying`,
           );
         startupInvoked = true;
-        const constraints = options.demoRound
-          ? {
-              kind: 'demo' as const,
-              roundId: options.demoRound,
-              demoConfigPath: options.demoConfig,
-            }
-          : undefined;
-        const result = await (constraints !== undefined
-          ? startRun(
-              config,
-              getRunner(options.provider),
-              { ...subject, kind },
-              options.provider,
-              requirements,
-              options.dangerouslySkipPermissions,
-              constraints,
-            )
-          : startRun(
-              config,
-              getRunner(options.provider),
-              { ...subject, kind },
-              options.provider,
-              requirements,
-              options.dangerouslySkipPermissions,
-            ));
+        const result = await startRun(
+          config,
+          getRunner(options.provider),
+          { ...subject, kind },
+          options.provider,
+          requirements,
+          options.dangerouslySkipPermissions,
+        );
         const diagnostics = diagnosticError(config, result.orchestrator?.error, {
           command: 'start',
           run: result.id,

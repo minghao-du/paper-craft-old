@@ -2,8 +2,8 @@ import { test, expect } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DemoFinalization, type DemoFinalizationView } from '../../packages/core/src/workflow/demo/finalization.js';
-import type { DemoRound } from '../../packages/core/src/workflow/demo/round.js';
+import { DemoFinalization, type DemoFinalizationView } from '../../tools/demo/finalization.js';
+import type { DemoRound } from '../../tools/demo/round.js';
 
 test('demo finalization provides stable public view and records boundary', async () => {
   const root = mkdtempSync(join(tmpdir(), 'demo-finalization-'));

@@ -2,9 +2,9 @@ import { test, expect } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DemoVerifier, type DemoEvidence } from '../../packages/core/src/workflow/demo/verifier.js';
-import { demoArtifacts } from '../../packages/core/src/workflow/demo/artifacts.js';
-import type { DemoRound } from '../../packages/core/src/workflow/demo/round.js';
+import { DemoVerifier, type DemoEvidence } from '../../tools/demo/verifier.js';
+import { demoArtifacts } from '../../tools/demo/artifacts.js';
+import type { DemoRound } from '../../tools/demo/round.js';
 
 test('public checker retains premature-start findings even after correct output arrives', async () => {
   const root = mkdtempSync(join(tmpdir(), 'checker-'));
@@ -45,7 +45,7 @@ test('public checker retains premature-start findings even after correct output 
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { nativeDemoEvidence } from '../../packages/core/src/workflow/demo/verifier.js';
+import { nativeDemoEvidence } from '../../tools/demo/verifier.js';
 import { loadFleetConfig } from '../../packages/core/src/workflow/fleet/fleet-config.js';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 

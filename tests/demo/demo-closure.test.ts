@@ -16,12 +16,12 @@ import { loadFleetConfig } from '../../packages/core/src/workflow/fleet/fleet-co
 import {
   DemoControl,
   type DemoExecution,
-} from '../../packages/core/src/workflow/demo/control.js';
+} from '../../tools/demo/control.js';
 import {
   DemoDelivery,
   type DemoDeliveryAdapter,
-} from '../../packages/core/src/workflow/demo/delivery.js';
-import type { DemoRound } from '../../packages/core/src/workflow/demo/round.js';
+} from '../../tools/demo/delivery.js';
+import type { DemoRound } from '../../tools/demo/round.js';
 import type { ManagedAttempt } from '../../packages/core/src/workflow/runtime/runtime.js';
 
 interface TestEnv {
@@ -702,21 +702,18 @@ test('uncertain external close result is reconciled and retained without blind r
   }
 });
 
-test('pc demo close command is removed and routing goes through pc workflow orchestrator close-epic', async () => {
-  const { Command } = await import('commander');
-  const { registerDemoCommands } = await import('../../packages/cli/src/commands/demo.js');
+test('pnpm demo close command is removed and routing goes through pc workflow orchestrator close-epic', async () => {
+  const { createDemoProgram } = await import('../../tools/demo/cli.js');
 
-  const demoProgram = new Command();
-  registerDemoCommands(demoProgram);
-  const demoCmd = demoProgram.commands.find((c) => c.name() === 'demo');
+  const demoCmd = createDemoProgram();
   expect(demoCmd).toBeDefined();
 
-  // "close" must not exist under pc demo
-  const closeSubcmd = demoCmd!.commands.find((c) => c.name() === 'close');
+  // "close" must not exist under demo
+  const closeSubcmd = demoCmd.commands.find((c) => c.name() === 'close');
   expect(closeSubcmd).toBeUndefined();
 
   // "closure-request" and "confirm" must exist
-  expect(demoCmd!.commands.find((c) => c.name() === 'closure-request')).toBeDefined();
-  expect(demoCmd!.commands.find((c) => c.name() === 'confirm')).toBeDefined();
+  expect(demoCmd.commands.find((c) => c.name() === 'closure-request')).toBeDefined();
+  expect(demoCmd.commands.find((c) => c.name() === 'confirm')).toBeDefined();
 });
 

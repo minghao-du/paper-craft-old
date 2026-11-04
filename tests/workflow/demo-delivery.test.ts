@@ -2,8 +2,8 @@ import { test, expect } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DemoDelivery } from '../../packages/core/src/workflow/demo/delivery.js';
-import type { DemoRound } from '../../packages/core/src/workflow/demo/round.js';
+import { DemoDelivery } from '../../tools/demo/delivery.js';
+import type { DemoRound } from '../../tools/demo/round.js';
 import { updateRunRegistry } from '../../packages/core/src/workflow/run/run-driver.js';
 import { loadFleetConfig } from '../../packages/core/src/workflow/fleet/fleet-config.js';
 

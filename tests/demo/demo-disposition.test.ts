@@ -11,9 +11,9 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { DemoDisposition, type DemoDisposalAdapter } from '../../packages/core/src/workflow/demo/disposition.js';
-import type { DemoRound } from '../../packages/core/src/workflow/demo/round.js';
-import type { DemoVerification } from '../../packages/core/src/workflow/demo/verifier.js';
+import { DemoDisposition, type DemoDisposalAdapter } from '../../tools/demo/disposition.js';
+import type { DemoRound } from '../../tools/demo/round.js';
+import type { DemoVerification } from '../../tools/demo/verifier.js';
 
 let nextRepoId = 1000;
 function createMockRound(root: string, id: string = randomUUID(), baseline = 'demo-baseline-1'): DemoRound {
@@ -111,7 +111,7 @@ test('completed-but-live execution is released before reverification/deletion', 
 });
 
 test('clean success survives release and avoids user-stop classification', async () => {
-  const { DemoControl } = await import('../../packages/core/src/workflow/demo/control.js');
+  const { DemoControl } = await import('../../tools/demo/control.js');
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-clean-release-')));
   try {
     const round = createMockRound(root);
@@ -508,21 +508,17 @@ test('fresh validation evidence must remain present before scene deletion', asyn
 });
 
 test('CLI surfaces: dispose options and obsolete create-children removal', async () => {
-  const { Command } = await import('commander');
-  const { registerDemoCommands } = await import('../../packages/cli/src/commands/demo.js');
+  const { createDemoProgram } = await import('../../tools/demo/cli.js');
 
-  const program = new Command();
-  registerDemoCommands(program);
-
-  const demoCmd = program.commands.find((c) => c.name() === 'demo');
+  const demoCmd = createDemoProgram();
   expect(demoCmd).toBeDefined();
 
   // Obsolete direct business entry point create-children must be removed
-  const createChildrenCmd = demoCmd!.commands.find((c) => c.name() === 'create-children');
+  const createChildrenCmd = demoCmd.commands.find((c) => c.name() === 'create-children');
   expect(createChildrenCmd).toBeUndefined();
 
   // Dispose command must have --force-defective and --authorized-by-fresh-round
-  const disposeCmd = demoCmd!.commands.find((c) => c.name() === 'dispose');
+  const disposeCmd = demoCmd.commands.find((c) => c.name() === 'dispose');
   expect(disposeCmd).toBeDefined();
 
   const optionNames = disposeCmd!.options.map((o) => o.long);

@@ -21,10 +21,6 @@ export interface FleetConfig {
   slots: string[];
   worktrees: boolean;
   base: string;
-  demo?: {
-    round: string;
-    config?: string;
-  };
 }
 
 /** Resolve a directory physically; missing or inaccessible directories are errors. */
@@ -73,7 +69,6 @@ export function loadFleetConfig(path = '.epic-config.json'): FleetConfig {
     slots: config.clone_names,
     worktrees: config.local_worktrees,
     base: config.base_branch,
-    ...(raw.demo ? { demo: raw.demo } : {}),
   };
 }
 

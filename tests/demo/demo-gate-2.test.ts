@@ -15,18 +15,18 @@ import {
   DemoRounds,
   type DemoAdapter,
   type DemoConfig,
-} from '../../packages/core/src/workflow/demo/round.js';
+} from '../../tools/demo/round.js';
 import {
   DemoControl,
   type DemoExecution,
-} from '../../packages/core/src/workflow/demo/control.js';
+} from '../../tools/demo/control.js';
 import {
   DemoDelivery,
   demoChronology,
   type DemoDeliveryAdapter,
   type DemoDeliverySnapshot,
-} from '../../packages/core/src/workflow/demo/delivery.js';
-import { nativeDemoDelivery } from '../../packages/core/src/workflow/demo/delivery-native.js';
+} from '../../tools/demo/delivery.js';
+import { nativeDemoDelivery } from '../../tools/demo/delivery-native.js';
 import {
   startRun,
   dispatchStage,
