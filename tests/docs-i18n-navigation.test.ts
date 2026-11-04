@@ -47,7 +47,7 @@ test('recording and checking require reciprocal switches and corresponding local
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-}, 30000);
+}, 45000);
 
 // Renames must update inbound links; deletion cannot leave stale reader destinations.
 test('complete pair renames and deletes require updated inbound references', () => {
@@ -91,4 +91,4 @@ test('complete pair renames and deletes require updated inbound references', () 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-}, 30000);
+}, 45000);

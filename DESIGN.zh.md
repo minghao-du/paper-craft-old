@@ -33,19 +33,16 @@ Skills 以 TypeScript 模块编写——可测试、可调试且类型安全。s
 ## VII. 独立于运行时的工作流
 
 Run 的活跃托管 Orchestrator attempt 决定调度、验收和返工。
-轻量 Bash 命令通过 `pc` 执行 Git worktree、tmux 和 GitHub 操作；
-小型 JavaScript 辅助程序验证并持久化 JSON 状态。Run 入口记录
-议题、透明的 runner 命令及对话中的补充要求。Fleet 是
-运行时资源边界，不是调度代理。
+Fleet 是运行时资源边界，不是调度代理。Managed Workflow
+跨各 provider 协同 run、dispatch、receipt 与 stage execution。
 
-Worker 接收不可变的任务说明文件，并发布持久化的 `RECEIPT.md` 结果。
-同步等待检测已确认的提前退出；状态查看在重新连接时显示尚未处理的结果。
-Runner 命令独立于平台；需要时可通过包装脚本适配提示输入。
-Claude Code 不是必需的。
+Managed Worker 接收不可变的任务说明文件，并发布持久化 receipt。
+Stage execution 与 receipt 通过权威 Run Registry 进行验收。
+Runner 命令与适配器独立于平台。Claude Code 不是必需的。
 
-Worktree 和目录锁隔离并发 worker。未知占用状态绝不意味着空闲。
+Checkout 与目录锁隔离并发 worker。未知占用状态绝不意味着空闲。
 落地时验证已测试的 PR HEAD 和检查结果，保全证据，
-仅在合并得到确认后释放 worktree。
+仅在合并得到确认并完成交付后释放资源。
 
 ## VIII. 宿主适配器依赖 Core
 

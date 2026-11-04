@@ -1,12 +1,14 @@
 import { test, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDashboard } from '../../packages/dashboard/src/server.js';
+import { loadFleetConfig } from '../../packages/core/src/workflow/fleet/fleet-config.js';
+import { updateRunRegistry, home } from '../../packages/core/src/workflow/run/run-driver.js';
 
 test('Git evidence uses cached refs and retains attributed stale values after failure without changing checkouts', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'dashboard-git-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'dashboard-git-')));
   let dashboard;
   const git = (dir: string, ...args: string[]) =>
     execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
@@ -56,13 +58,7 @@ test('Git evidence uses cached refs and retains attributed stale values after fa
     expect(git(worker, 'status', '--porcelain')).toBe(before);
     expect(readFileSync(join(worker, 'file.txt'), 'utf8')).toBe('edited');
     // Current worker spawning uses runtime worktrees, without legacy configured slots.
-    const run = JSON.parse(
-      execFileSync(
-        './pc',
-        ['run', 'create', '--issue', '79', '--runner', 'fake', '--root', project],
-        { encoding: 'utf8' },
-      ),
-    );
+    const run = { run_id: 'run-79' };
     const dispatch = join(project, '.runtime/default/runs', run.run_id, 'dispatches', 'active');
     const runtimeWorker = join(project, '.runtime/default/worktrees/active');
     mkdirSync(dispatch, { recursive: true });
@@ -78,8 +74,29 @@ test('Git evidence uses cached refs and retains attributed stale values after fa
         worktree: git(runtimeWorker, 'rev-parse', '--show-toplevel'),
       }),
     );
-    writeFileSync(join(runtimeWorker, 'file.txt'), 'runtime edit');
     writeFileSync(config, JSON.stringify({ clone_root: 'pool', local_worktrees: true }));
+    const fleetConfig = loadFleetConfig(config);
+    const registryPath = join(home(fleetConfig), 'registry.json');
+    updateRunRegistry(fleetConfig, (reg) => {
+      reg.runs.push({
+        id: run.run_id,
+        subject: { repository: 'owner/repo', number: 79, kind: 'issue', title: 't', body: 'b' },
+        provider: 'agy',
+        policy: { name: 'default', revision: 1 },
+        lifecycle: 'running',
+        orchestratorId: 'orch-1',
+        brief: { path: '', hash: '' },
+      });
+      reg.resources = [
+        { path: runtimeWorker, runId: run.run_id, registry: registryPath },
+      ];
+    });
+    writeFileSync(
+      join(runtimeWorker, '.pc-execution-owner'),
+      JSON.stringify({ path: runtimeWorker, runId: run.run_id, registry: registryPath }),
+    );
+    writeFileSync(join(project, '.git', 'info', 'exclude'), '.pc-execution-owner\n');
+    writeFileSync(join(runtimeWorker, 'file.txt'), 'runtime edit');
     const runtimeBefore = git(runtimeWorker, 'status', '--porcelain');
     await dashboard.refresh(true);
     evidence = (await read())[0];
@@ -87,7 +104,7 @@ test('Git evidence uses cached refs and retains attributed stale values after fa
     expect(evidence.stale).toBe(false);
     expect(evidence.value.slots).toEqual([
       expect.objectContaining({
-        name: 'default/active',
+        name: `${run.run_id}/active`,
         branch: 'runtime-worker',
         dirty: true,
         touched: ['file.txt'],
