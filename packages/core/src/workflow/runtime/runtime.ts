@@ -229,6 +229,20 @@ export interface ExecutionTermination {
 }
 
 /**
+ * Options for terminating an execution attempt, including custom verification hooks.
+ */
+export interface TerminateAttemptOptions {
+  stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
+}
+
+/**
+ * Result of terminating an execution attempt with runtime cancellation summary.
+ */
+export interface TerminateAttemptResult extends ExecutionTermination {
+  cancellation?: AttemptControl['cancellation'];
+}
+
+/**
  * Execute verified termination through the runner contract or return an explicit unconfirmed outcome.
  * Callers do not need to compose provider-specific cancel and stopped steps.
  */
@@ -240,8 +254,24 @@ export async function terminateAttempt(
     cancellation?: boolean;
     cancel?(attempt: ManagedAttempt): Promise<{ evidence: string }>;
   },
-): Promise<ExecutionTermination> {
+  options?: TerminateAttemptOptions,
+): Promise<TerminateAttemptResult> {
   const control = inspectAttemptControl(attempt);
+  const file = join(attempt.directory, 'control.json');
+
+  if (options?.stopped) {
+    const alreadyStopped = await options.stopped(attempt);
+    if (alreadyStopped) {
+      control.execution = { status: 'terminated' };
+      writeFileSync(file, JSON.stringify(control));
+      return {
+        status: 'terminated',
+        evidence: 'Stopped predicate verified prior to termination',
+        cancellation: control.cancellation,
+      };
+    }
+  }
+
   let outcome: ExecutionTermination;
   try {
     if (runner.terminate) {
@@ -269,7 +299,6 @@ export async function terminateAttempt(
     };
   }
 
-  const file = join(attempt.directory, 'control.json');
   if (outcome.status === 'terminated') {
     control.execution = { status: 'terminated', evidence: outcome.evidence };
     control.cancellation = {
@@ -286,7 +315,17 @@ export async function terminateAttempt(
     };
   }
   writeFileSync(file, JSON.stringify(control));
-  return outcome;
+
+  if (outcome.status === 'terminated' && options?.stopped) {
+    const verified = await options.stopped(attempt);
+    if (!verified) {
+      outcome = { status: 'unconfirmed', error: 'Termination unverified by stopped predicate' };
+      control.execution = { status: 'unknown' };
+      writeFileSync(file, JSON.stringify(control));
+    }
+  }
+
+  return { ...outcome, cancellation: control.cancellation };
 }
 /** Read durable wait/cancellation observations, independently of execution status. */
 export function inspectAttemptControl(attempt: ManagedAttempt): AttemptControl {

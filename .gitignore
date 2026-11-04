@@ -1,5 +1,6 @@
 # Private data (not for commit)
 _ignore/
+.agents/
 .bipartite/
 .beads/
 .last-checkin.json

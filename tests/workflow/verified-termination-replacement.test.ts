@@ -602,3 +602,217 @@ test('Criterion 6: Public Runtime and AgyRunner conformance for verified termina
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('terminateAttempt: custom pre-check returning true skips provider termination and preserves unrelated fields', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pc-term-precheck-'));
+  const attempt: ManagedAttempt = {
+    id: 'att-precheck',
+    run: 'run-precheck',
+    directory: dir,
+    address: 'tmux:%701',
+    fleet: 'fleet-1',
+    role: 'orchestrator',
+    runner: 'agy',
+    brief: 'Pre-check test',
+    status: 'running',
+    created: new Date().toISOString(),
+    checkout: dir,
+  };
+
+  // Seed control.json with an existing wait field
+  const initialControl = {
+    wait: { timedOut: false, at: '2026-11-04T12:00:00Z' },
+  };
+  writeFileSync(join(dir, 'control.json'), JSON.stringify(initialControl));
+
+  let providerCalled = false;
+  const runner = {
+    async terminate() {
+      providerCalled = true;
+      return { status: 'terminated' as const, evidence: 'provider-called' };
+    },
+  };
+
+  try {
+    const outcome = await terminateAttempt(attempt, runner, {
+      stopped: async () => true,
+    });
+
+    // 1. Returns terminated with pre-check evidence
+    expect(outcome.status).toBe('terminated');
+    expect(outcome.evidence).toBe('Stopped predicate verified prior to termination');
+
+    // 2. Provider termination is NOT called
+    expect(providerCalled).toBe(false);
+
+    // 3. control.json on disk has execution: terminated and preserved wait field
+    const persisted = inspectAttemptControl(attempt);
+    expect(persisted.execution?.status).toBe('terminated');
+    expect(persisted.wait).toEqual(initialControl.wait);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('terminateAttempt: custom post-check returning false vetoes outcome to unconfirmed, marks execution unknown and preserves cancellation record', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pc-term-postcheck-'));
+  const attempt: ManagedAttempt = {
+    id: 'att-postcheck',
+    run: 'run-postcheck',
+    directory: dir,
+    address: 'tmux:%702',
+    fleet: 'fleet-1',
+    role: 'worker',
+    runner: 'agy',
+    brief: 'Post-check veto test',
+    status: 'running',
+    created: new Date().toISOString(),
+    checkout: dir,
+  };
+
+  // Seed control.json with an existing wait field
+  const initialControl = {
+    wait: { timedOut: true, at: '2026-11-04T13:00:00Z' },
+  };
+  writeFileSync(join(dir, 'control.json'), JSON.stringify(initialControl));
+
+  let providerCalled = false;
+  const runner = {
+    async terminate() {
+      providerCalled = true;
+      return { status: 'terminated' as const, evidence: 'provider-killed' };
+    },
+  };
+
+  let checkCount = 0;
+  const outcome = await terminateAttempt(attempt, runner, {
+    stopped: async () => {
+      checkCount++;
+      return false; // pre-check returns false, post-check returns false
+    },
+  });
+
+  try {
+    // 1. Provider was called
+    expect(providerCalled).toBe(true);
+    expect(checkCount).toBe(2);
+
+    // 2. Post-check vetoes outcome to unconfirmed
+    expect(outcome.status).toBe('unconfirmed');
+    expect(outcome.error).toBe('Termination unverified by stopped predicate');
+
+    // 3. Cancellation summary is retained in the return value
+    expect(outcome.cancellation?.outcome).toBe('confirmed');
+    expect(outcome.cancellation?.evidence).toBe('provider-killed');
+
+    // 4. control.json on disk has execution: unknown, retains provider cancellation, and preserves wait
+    const persisted = inspectAttemptControl(attempt);
+    expect(persisted.execution?.status).toBe('unknown');
+    expect(persisted.cancellation?.outcome).toBe('confirmed');
+    expect(persisted.cancellation?.evidence).toBe('provider-killed');
+    expect(persisted.wait).toEqual(initialControl.wait);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('terminateAttempt: verification callback exceptions propagate upward without being caught or downgraded', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pc-term-error-'));
+  const attempt: ManagedAttempt = {
+    id: 'att-error',
+    run: 'run-error',
+    directory: dir,
+    address: 'tmux:%703',
+    fleet: 'fleet-1',
+    role: 'worker',
+    runner: 'agy',
+    brief: 'Verification exception test',
+    status: 'running',
+    created: new Date().toISOString(),
+    checkout: dir,
+  };
+
+  let providerCalled = false;
+  const runner = {
+    async terminate() {
+      providerCalled = true;
+      return { status: 'terminated' as const, evidence: 'provider-killed' };
+    },
+  };
+
+  try {
+    // Case A: Pre-check exception propagates directly, provider is not called
+    await expect(
+      terminateAttempt(attempt, runner, {
+        stopped: async () => {
+          throw new Error('pre-check explosion');
+        },
+      }),
+    ).rejects.toThrow('pre-check explosion');
+    expect(providerCalled).toBe(false);
+
+    // Case B: Post-check exception propagates directly, provider was called and record persisted
+    let calls = 0;
+    await expect(
+      terminateAttempt(attempt, runner, {
+        stopped: async () => {
+          calls++;
+          if (calls === 1) return false; // pre-check: false -> call provider
+          throw new Error('post-check explosion'); // post-check: throws
+        },
+      }),
+    ).rejects.toThrow('post-check explosion');
+
+    expect(providerCalled).toBe(true);
+    const persisted = inspectAttemptControl(attempt);
+    expect(persisted.cancellation?.outcome).toBe('confirmed');
+    expect(persisted.cancellation?.evidence).toBe('provider-killed');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('terminateAttempt: caller compatibility without options parameter', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pc-term-compat-'));
+  const attempt: ManagedAttempt = {
+    id: 'att-compat',
+    run: 'run-compat',
+    directory: dir,
+    address: 'tmux:%704',
+    fleet: 'fleet-1',
+    role: 'orchestrator',
+    runner: 'agy',
+    brief: 'Compatibility test',
+    status: 'running',
+    created: new Date().toISOString(),
+    checkout: dir,
+  };
+
+  const initialControl = {
+    wait: { timedOut: false, at: '2026-11-04T14:00:00Z' },
+  };
+  writeFileSync(join(dir, 'control.json'), JSON.stringify(initialControl));
+
+  const runner = {
+    async terminate() {
+      return { status: 'terminated' as const, evidence: 'normal-term' };
+    },
+  };
+
+  try {
+    // Caller invokes with 2 arguments only
+    const outcome = await terminateAttempt(attempt, runner);
+
+    expect(outcome.status).toBe('terminated');
+    expect(outcome.evidence).toBe('normal-term');
+    expect(outcome.cancellation?.outcome).toBe('confirmed');
+
+    const persisted = inspectAttemptControl(attempt);
+    expect(persisted.execution?.status).toBe('terminated');
+    expect(persisted.cancellation?.outcome).toBe('confirmed');
+    expect(persisted.wait).toEqual(initialControl.wait);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+

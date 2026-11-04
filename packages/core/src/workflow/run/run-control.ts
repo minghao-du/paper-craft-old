@@ -1,12 +1,7 @@
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { FleetConfig } from '../fleet/fleet-config.js';
 import {
-  inspectAttemptControl,
-  reconcileAttempt,
   terminateAttempt,
   type AttemptControl,
-  type ExecutionTermination,
   type ManagedAttempt,
   type RunnerAdapter,
 } from '../runtime/runtime.js';
@@ -73,28 +68,12 @@ async function terminateAndVerifyAttempt(
   result: StopRunResult['attempts'][number];
   blocker?: string;
 }> {
-  let term: ExecutionTermination;
-  if (options?.stopped) {
-    const alreadyStopped = await options.stopped(attempt);
-    if (alreadyStopped) {
-      term = { status: 'terminated', evidence: 'Verified stopped by predicate' };
-    } else {
-      term = await terminateAttempt(attempt, adapter);
-      if (term.status === 'terminated' && !(await options.stopped(attempt))) {
-        term = { status: 'unconfirmed', error: 'Termination unverified by stopped predicate' };
-      }
-    }
-  } else {
-    term = await terminateAttempt(attempt, adapter);
-  }
+  const term = await terminateAttempt(attempt, adapter, { stopped: options?.stopped });
 
   const stopped = term.status === 'terminated';
-  const cancellationControl = inspectAttemptControl(attempt).cancellation;
-  const error = term.error;
   let blocker: string | undefined;
 
   if (stopped) {
-    await reconcileAttempt(attempt, { termination: async () => true, stopped: async () => true });
     updateRunRegistry(config, (registry) => {
       const r = registry.runs.find((entry) => entry.id === runId);
       if (!r) return;
@@ -110,9 +89,6 @@ async function terminateAndVerifyAttempt(
       }
     });
   } else {
-    const ctrl = inspectAttemptControl(attempt);
-    ctrl.execution = { status: 'unknown' };
-    writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(ctrl));
     blocker = `Attempt ${attempt.id} (${attempt.role}) termination unverified; occupancy remains reserved`;
   }
 
@@ -122,8 +98,8 @@ async function terminateAndVerifyAttempt(
       role: attempt.role,
       status: stopped ? 'unknown' : attempt.status,
       terminated: stopped,
-      cancellation: cancellationControl,
-      error,
+      cancellation: term.cancellation,
+      error: term.error,
     },
     blocker,
   };
