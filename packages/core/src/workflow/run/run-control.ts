@@ -58,35 +58,7 @@ export interface StopRunResult {
 }
 
 /** Result of a completed releaseRun operation. */
-export interface ReleaseRunResult {
-  /** Unique Run identifier. */
-  runId: string;
-  /** Lifecycle status of the Run (must be completed). */
-  lifecycle: WorkflowRun['lifecycle'];
-  /** Whether all attempts were verified as terminated. */
-  terminated: boolean;
-  /** Whether all executions terminated and resources were released. */
-  released: boolean;
-  /** Outcomes for each attempt inspected during release. */
-  attempts: {
-    id: string;
-    role: ManagedAttempt['role'];
-    status: ManagedAttempt['status'];
-    terminated: boolean;
-    cancellation?: AttemptControl['cancellation'];
-    error?: string;
-  }[];
-  /** Status of the startup helper supervisor. */
-  helper: {
-    active: boolean;
-    pending?: boolean;
-    stopped: boolean;
-  };
-  /** Resources currently remaining registered to this Run. */
-  resources: { path: string; runId: string }[];
-  /** Blockers preventing complete release. */
-  blockers: string[];
-}
+export type ReleaseRunResult = StopRunResult;
 
 /**
  * Terminate an attempt and verify its stopped state, recording blockers if unverified.

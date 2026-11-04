@@ -3,32 +3,12 @@ import { join } from 'node:path';
 import { workflowSource, type FleetConfig } from '../fleet/fleet-config.js';
 import type { ManagedAttempt } from '../runtime/runtime.js';
 import {
+  authorize,
   home,
   inspectRuns,
   updateRunRegistry,
   type RunRegistry,
-  type WorkflowRun,
 } from './run-registry.js';
-
-/**
- * Validate that the specified authority currently controls the run.
- */
-function authorizeAuthority(
-  registry: RunRegistry,
-  runId: string,
-  authority: string,
-  allowCompleted = false,
-): WorkflowRun {
-  const run = registry.runs.find((r) => r.id === runId);
-  if (
-    !run ||
-    run.orchestratorId !== authority ||
-    (run.lifecycle !== 'running' && (!allowCompleted || run.lifecycle !== 'completed'))
-  ) {
-    throw new Error('Inactive or wrong Orchestrator authority');
-  }
-  return run;
-}
 
 /**
  * Physically record ownership of a checkout via `.pc-execution-owner` file and registry entry.
@@ -219,7 +199,7 @@ export function reserveRunCheckout(
   const physical = workflowSource(config, checkout);
   const perform = (reg: RunRegistry): void => {
     if (authority) {
-      authorizeAuthority(reg, runId, authority);
+      authorize(reg, runId, authority);
     }
     reserveCheckout(config, reg, runId, physical);
   };

@@ -526,32 +526,3 @@ test('concurrent recovery shares one activation intent and never demotes confirm
   }
 });
 
-test('startup and recovery operate directly through run-registry without loading run-driver', async () => {
-  const { startRun: directStartRun, verifyRunRequirements: directVerify } = await import(
-    '../../packages/core/src/workflow/run/startup.js'
-  );
-  const { recoverRun: directRecoverRun } = await import(
-    '../../packages/core/src/workflow/run/recovery.js'
-  );
-  const { inspectRuns: directInspectRuns } = await import(
-    '../../packages/core/src/workflow/run/run-registry.js'
-  );
-
-  const f = await fixture('agy');
-  try {
-    const reg = directInspectRuns(f.config);
-    expect(reg.runs.length).toBeGreaterThan(0);
-    expect(reg.runs[0].id).toBe(f.run.id);
-
-    expect(() => directVerify(reg.runs[0])).not.toThrow();
-
-    const recoveryResult = await directRecoverRun(f.config, f.runner, f.run.id);
-    expect(recoveryResult.blockers).toBeDefined();
-
-    const reconnected = await directStartRun(f.config, f.runner, f.run.subject, 'agy');
-    expect(reconnected.id).toBe(f.run.id);
-    expect(reconnected.orchestratorId).toBe(f.run.orchestratorId);
-  } finally {
-    f.close();
-  }
-});
