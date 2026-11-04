@@ -55,6 +55,9 @@ Route scope corrections and unresolved questions to the Orchestrator with the co
 
 Professional assessment is distinct from receipt acceptance, dispatch authorization and human closure confirmation.
 The Orchestrator retains [integrated acceptance and closure](../pc-orchestrator/epic-workflow.md#integrated-acceptance-and-closure), delivery-fingerprint verification and [post-closure finalization](../pc-orchestrator/finalization.md).
+Closure strictly requires an accepted `integrated-acceptance` stage receipt and explicit human confirmation bound to the `canonicalDeliveryFingerprint(head, deliveries)`.
+Any scope change (modified or added child deliveries) or revision change invalidates prior confirmation.
+Verified closure transitions the Run to `phase: 'post_closure_finalization'`. Post-closure pipeline and research-state stages run as Managed Dispatches; failure leaves the Run visibly incomplete, and recovery resumes unfinished stages without repeating GitHub closure or report publication.
 Return requested Pipeline or Research-State findings through the assigned task; these gates remain required after verified closure.
 
 ## EPIC body update pattern

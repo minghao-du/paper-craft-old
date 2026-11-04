@@ -23,7 +23,9 @@ import {
   referenceRunSubject,
   updateRunRegistry,
 } from '@paper-craft/core/workflow/run-driver';
-/** No intermediate human approval; head-specific professional judgment comes from EPIC role. */
+/**
+ * @deprecated Legacy unmanaged EPIC completion is retired. Managed closeStageEpic in run-driver is authoritative.
+ */
 export async function finishEpic(
   config: FleetConfig,
   runner: CompletionRunner,
