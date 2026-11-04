@@ -739,6 +739,15 @@ export async function dispatchStage(
       'preservation-cleanup': 'final-records',
     };
     if (
+      (request.stage === 'planning' || request.stage === 'integrated-acceptance') &&
+      run.subject.kind !== 'epic'
+    ) {
+      throw new Error(`Stage ${request.stage} requires an EPIC Run`);
+    }
+    if (request.stage === 'integrated-acceptance') {
+      verifyEpicDeliveries(registry, run.id);
+    }
+    if (
       request.stage === 'pr-quality' &&
       !registry.dispatches.some(
         (d) =>
@@ -1992,6 +2001,71 @@ export interface EpicClosureActions {
   close?: () => Promise<void>;
 }
 
+/** Find all child subjects (both referenced external subjects and owned child subjects) for a Run. */
+export function epicChildSubjects(registry: RunRegistry, runId: string): string[] {
+  const epicRun = registry.runs.find((r) => r.id === runId);
+  const epicSubject = epicRun ? `${epicRun.subject.repository}#${epicRun.subject.number}` : undefined;
+  const referenced =
+    registry.subjects?.filter((s) => s.consumingRunIds?.includes(runId)).map((s) => s.subject) ?? [];
+  const owned =
+    registry.subjects?.filter((s) => s.ownerRunId === runId && s.subject !== epicSubject).map((s) => s.subject) ?? [];
+  const fromDispatches =
+    registry.dispatches?.filter((d) => d.runId === runId && d.subject !== epicSubject).map((d) => d.subject) ?? [];
+  return [...new Set([...referenced, ...owned, ...fromDispatches])];
+}
+
+/** Retrieve all completed or required deliveries associated with an EPIC run (including referenced external deliveries). */
+export function epicDeliveries(
+  registry: RunRegistry,
+  runId: string,
+): NonNullable<RunRegistry['deliveries']> {
+  const children = epicChildSubjects(registry, runId);
+  const allDeliveries = registry.deliveries ?? [];
+  const result: NonNullable<RunRegistry['deliveries']> = [];
+
+  for (const d of allDeliveries) {
+    if (d.runId === runId) {
+      result.push(d);
+    }
+  }
+
+  for (const child of children) {
+    const [repo, numStr] = child.split('#');
+    const num = Number(numStr);
+    const d = allDeliveries.find((del) => del.repository === repo && del.issue === num);
+    if (
+      d &&
+      !result.some(
+        (existing) =>
+          existing === d || (existing.repository === d.repository && existing.issue === d.issue),
+      )
+    ) {
+      result.push(d);
+    }
+  }
+
+  result.sort((a, b) => {
+    const repoCmp = a.repository.localeCompare(b.repository);
+    if (repoCmp !== 0) return repoCmp;
+    return a.issue - b.issue;
+  });
+
+  return result;
+}
+
+/** Verify that all required child deliveries for an EPIC run are completed in registry.deliveries. */
+export function verifyEpicDeliveries(registry: RunRegistry, runId: string): void {
+  const children = epicChildSubjects(registry, runId);
+  for (const child of children) {
+    const [repo, numStr] = child.split('#');
+    const num = Number(numStr);
+    const d = registry.deliveries?.find((del) => del.repository === repo && del.issue === num);
+    if (!d || d.status !== 'done' || !d.recorded || !d.released || !d.archive) {
+      throw new Error(`Incomplete delivery for required child ${child}`);
+    }
+  }
+}
+
 /** Canonical accepted delivery fingerprint for closure request, human consent, native close, and recorded closure. */
 export function canonicalDeliveryFingerprint(head: string, deliveries: unknown[]): string {
   return createHash('sha256')
@@ -2011,7 +2085,8 @@ export async function closeStageEpic(
   const snapshot = inspectRuns(config);
   const run = authorize(snapshot, runId, authority);
   const dispatch = findDispatch(snapshot, dispatchId);
-  const deliveries = snapshot.deliveries?.filter((d) => d.runId === runId) ?? [];
+  verifyEpicDeliveries(snapshot, runId);
+  const deliveries = epicDeliveries(snapshot, runId);
 
   if (run.subject.kind !== 'epic') {
     throw new Error('Issue-only Run cannot close or finalize parent EPIC');

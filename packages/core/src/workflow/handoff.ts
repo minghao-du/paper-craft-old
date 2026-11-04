@@ -19,7 +19,7 @@ export function stateDirectory(config: FleetConfig, ...parts: string[]): string 
   let path = config.root;
   for (const part of parts) {
     const next = join(path, part);
-    if (!pathExists(next)) mkdirSync(next);
+    if (!pathExists(next)) mkdirSync(next, { recursive: true });
     path = realpathSync(next);
     if (!within(config.root, path) || lstatSync(next).isSymbolicLink()) {
       throw new Error(`Workflow directory must not be a symlink: ${next}`);
