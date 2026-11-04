@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import type { DemoRound } from './round.js';
-import { inspectRunViews, type WorkflowRunView } from '../run/run-driver.js';
+import { inspectRunViews, type WorkflowRunView } from '../run/run-observation.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 import { type ManagedAttempt, inspectAttemptControl } from '../runtime/runtime.js';
 import { DemoFinalization, nativeDemoFinalization, type DemoFinalizationView } from './finalization.js';

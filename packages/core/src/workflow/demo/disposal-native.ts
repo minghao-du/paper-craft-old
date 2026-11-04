@@ -1,4 +1,4 @@
-import { inspectRuns, inspectRun } from '../run/run-driver.js';
+import { inspectRuns, inspectRun } from '../run/run-observation.js';
 import { loadFleetConfig } from '../fleet/fleet-config.js';
 /** Native disposal only follows freshly collected verifier evidence and persisted identities. */
 import { execFileSync } from 'node:child_process';
