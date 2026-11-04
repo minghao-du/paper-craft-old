@@ -159,13 +159,15 @@ export async function createDashboard(options: DashboardOptions) {
       for (const task of fleets.flatMap((f) => f.tasks)) {
         if (!force && Date.now() < (runtimeDue.get(task.id) ?? 0)) continue;
         const fleet = fleets.find((f) => f.tasks.some((t) => t.id === task.id));
+        let directory: string;
         try {
-          dashboardTaskSource(fleet!.config, task);
+          const source = dashboardTaskSource(fleet!.config, task);
+          directory = source.directory;
         } catch {
           runtimeCache.delete(task.id);
           continue;
         }
-        const observed = await observeRuntime(task.path, options.executeRuntime ?? executeRuntime);
+        const observed = await observeRuntime(directory, options.executeRuntime ?? executeRuntime);
         const failures = observed.error ? Math.min(5, (runtimeFailures.get(task.id) ?? 0) + 1) : 0;
         runtimeFailures.set(task.id, failures);
         runtimeDue.set(task.id, Date.now() + runtimeInterval * 2 ** failures);

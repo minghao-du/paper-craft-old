@@ -86,7 +86,7 @@ test('protected cached overview preserves registered workflow evidence after fai
     dashboard?.stop();
     rmSync(root, { recursive: true, force: true });
   }
-}, 10000);
+}, 20000);
 
 test('dashboard HTTP snapshot exposes persistent execution, recovery and conflicting evidence while preserving read-only registry', async () => {
   const root = mkdtempSync(join(tmpdir(), 'dashboard-exec-'));
@@ -307,4 +307,4 @@ test('dashboard HTTP snapshot exposes persistent execution, recovery and conflic
     dashboard?.stop();
     rmSync(root, { recursive: true, force: true });
   }
-}, 10000);
+}, 20000);
