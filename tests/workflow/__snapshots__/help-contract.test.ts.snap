@@ -129,7 +129,7 @@ background
 Options:
   --detailed                      Return the complete current structured result;
                                   logs remain referenced
-  --provider <provider>           Managed provider: codex, agy, or claude
+  --provider <provider>           Managed provider: agy
   --dangerously-skip-permissions  Auto-approve agy tool permissions for this Run
                                   (agy only)
   --requirements <text>           Immutable additional Run Requirements

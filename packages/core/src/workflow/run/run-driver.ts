@@ -199,9 +199,9 @@ export async function startRun(
     throw new Error(
       'Resolve an accessible repository owner/name and positive Issue number before launch',
     );
-  if (!['codex', 'agy', 'claude'].includes(provider) || runner.name !== provider)
+  if (!provider || runner.name !== provider)
     throw new Error(
-      'Managed provider must be codex, agy, or claude and match the selected adapter',
+      `Run provider mismatch: expected provider ${provider}, but received ${runner.name}`,
     );
   if (dangerouslySkipPermissions && provider !== 'agy')
     throw new Error('--dangerously-skip-permissions requires --provider agy');
@@ -1628,8 +1628,8 @@ export function orchestratorForSubject(
   const run = inspectRuns(config).runs.find((r) => r.id === attempt?.run);
   const next = `pc workflow orchestrator start ${number} --type <issue|epic> --provider <provider> --config ${config.file}`;
   if (!run) throw new Error(`No Run owns ${repository}#${number}; run ${next}`);
-  if (!['codex', 'agy', 'claude'].includes(run.provider))
-    throw new Error(`Unsupported Run provider: ${String(run.provider)}`);
+  if (!run.provider)
+    throw new Error('Missing Run provider');
   if (run.lifecycle === 'completed')
     throw new Error(`Completed Run ${run.id} authority has ended; start later work with ${next}`);
   if (run.lifecycle !== 'running' || !run.orchestrator || run.orchestrator.status !== 'running')

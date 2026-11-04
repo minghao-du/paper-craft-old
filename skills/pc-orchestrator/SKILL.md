@@ -17,12 +17,12 @@ Without managed context, use Intake as Launcher. Report the actual startup and a
 ## Intake
 
 Require an explicit type (`Issue` or `EPIC`) and issue number.
-Resolve the repository from the authoritative Fleet config and collect or reuse `provider` (`codex`, `agy`, or `claude`), config path and additional scope requirements.
+Resolve the repository from the authoritative Fleet config and collect or reuse `provider` (`agy`), config path and additional scope requirements.
 
 ```text
 Type: Issue
 Issue: #79
-Provider: claude
+Provider: agy
 Config: /absolute/path/.epic-config.json
 Requirements: Keep changes within the requested scope
 ```
@@ -36,12 +36,12 @@ Before any managed launch, read [the shared execution contract](managed-lifecycl
 For EPIC mode, also read [EPIC coordination](epic-workflow.md) before planning or child dispatch.
 
 ```bash
-pc workflow orchestrator start 79 --type issue --provider claude --config /absolute/path/.epic-config.json
+pc workflow orchestrator start 79 --type issue --provider agy --config /absolute/path/.epic-config.json
 pc workflow orchestrator status --config /absolute/path/.epic-config.json
 ```
 
 Supply additional Requirements with `--requirements <text>` or `--requirements-file <file>` (UTF-8), never both. File contents are captured at intake, so later work does not depend on the source file. Requirements become immutable Run context inherited by every role, retry and replacement; child-specific assignments add scope without replacing those constraints. Repeated start may omit Requirements to reuse them or supply identical text; different text rejects. For Demo rounds, pass `--demo-round <id>` and `--demo-config <file>` (or bind via the generated workflow config) to apply minimal immutable demo run constraints. Retain the returned Run identity.
-For agy, follow independent startup in [agy procedure](agy-interactive.md). Codex and Claude retain controlled startup.
+Follow independent startup in [agy procedure](agy-interactive.md).
 
 The startup, provider and ownership gates in the execution contract determine whether dispatch is available.
 

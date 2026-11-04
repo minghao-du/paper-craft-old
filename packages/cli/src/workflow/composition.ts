@@ -10,8 +10,6 @@ import {
 } from '@paper-craft/core/workflow/startup';
 import { setDemoRunnerResolver } from '@paper-craft/core/workflow/demo-execution';
 import { AgyRunner } from '@paper-craft/core/workflow/runtime/agy';
-import { InteractiveCodexRunner } from '@paper-craft/core/workflow/runtime/codex';
-import { ClaudeRunner } from '@paper-craft/core/workflow/runtime/claude';
 
 export type ComposedRunner = RunnerAdapter & {
   stopped(attempt: ManagedAttempt): Promise<boolean>;
@@ -36,14 +34,8 @@ export function createRunner(provider: string): ComposedRunner {
   switch (provider) {
     case 'agy':
       return new AgyRunner();
-    case 'codex':
-      // Temporary legacy internal contract for migration slices until #150
-      return new InteractiveCodexRunner();
-    case 'claude':
-      // Temporary legacy internal contract for migration slices until #150
-      return new ClaudeRunner();
     default:
-      throw new Error(`Unsupported managed provider ${provider}`);
+      throw new Error(`Unsupported managed provider '${provider}'. Only 'agy' is supported.`);
   }
 }
 

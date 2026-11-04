@@ -59,11 +59,14 @@ when behavior changes, skill docs MUST update in the same PR.
 
 The Run's active managed Orchestrator attempt makes scheduling, acceptance and rework decisions.
 Fleet is a runtime resource boundary, not a scheduling agent. Managed Workflow
-coordinates runs, dispatches, receipts, and stage execution across providers.
+coordinates runs, dispatches, receipts, and stage execution. Agy is the supported
+managed provider.
 
 Managed Workers receive immutable brief files and publish durable receipts.
 Stage execution and receipts are accepted through the authoritative Run Registry.
-Runner commands and adapters are platform independent. Claude Code is not required.
+Runner commands and adapters are platform independent. Legacy Claude and Codex
+runtime implementations are removed; no legacy compatibility layer or speculative
+multi-provider abstraction is shipped.
 
 Checkouts and directory locks isolate concurrent workers. Unknown occupancy never
 means free. Landing verifies the tested PR HEAD and checks, preserves evidence,
@@ -80,8 +83,9 @@ dependencies explicitly; Core supervision algorithms receive host launch seams
 without importing concrete providers. General shell-quoting helpers remain in Core
 to serve callers across hosts rather than being provider-exclusive. Core persists
 opaque provider recovery state without interpreting provider-specific internal
-fields; provider adapters validate their own session, pane, permission and execution
-location evidence, while Dashboard observation remains strictly read-only and free
-of execution dependencies. A future native DeepSeek plugin follows the same direction.
-Shared skills remain at the repository root. CLI commands, configuration paths and
-JSONL formats are explicit public contracts.
+fields; provider selection belongs in host composition while Core enforces provider
+identity consistency. Provider adapters validate their own session, pane, permission
+and execution location evidence, while Dashboard observation remains strictly
+read-only and free of execution dependencies. A future native DeepSeek plugin
+follows the same direction. Shared skills remain at the repository root. CLI
+commands, configuration paths and JSONL formats are explicit public contracts.

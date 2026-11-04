@@ -87,10 +87,6 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     await expect(
       startRun(config, { ...managedRunner('agy'), interactive: false }, subject, 'agy'),
     ).rejects.toThrow(/interactive/);
-    expect(managedRunner('claude').interactive).toBe(true);
-    await expect(
-      startRun(config, { ...managedRunner('claude'), interactive: false }, subject, 'claude'),
-    ).rejects.toThrow(/interactive/);
     expect(launches).toBe(0);
     const requirements = 'Keep all source data\nUse TypeScript only';
     first = await startRun(config, runner, subject, 'codex', requirements);
@@ -101,13 +97,13 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     expect((await startRun(config, runner, subject, 'codex', requirements)).id).toBe(first.id);
     expect(orchestratorForSubject(config, subject.repository, 7).runner).toBe('codex');
     updateRunRegistry(config, (registry) => {
-      registry.runs[0].provider = 'unsupported';
+      registry.runs[0].provider = '';
     });
     expect(() => orchestratorForSubject(config, subject.repository, 7)).toThrow(
-      'Unsupported Run provider',
+      'Missing Run provider',
     );
     updateRunRegistry(config, (registry) => {
-      registry.runs[0].provider = 'claude';
+      registry.runs[0].provider = 'different';
     });
     expect(() => orchestratorForSubject(config, subject.repository, 7)).toThrow(
       'Run provider mismatch',
@@ -119,9 +115,9 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     expect((await startRun(config, runner, subject, 'codex')).id).toBe(first.id);
     const other = await startRun(
       config,
-      { ...runner, name: 'claude' },
+      { ...runner, name: 'other' },
       { ...subject, number: 8 },
-      'claude',
+      'other',
     );
     expect(other.orchestratorId).not.toBe(first.orchestratorId);
     expect(launches).toBe(2);
@@ -373,7 +369,7 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
   }
 });
 
-test.each(['agy', 'claude'])(
+test.each(['agy'])(
   'Run retains %s provider across dispatch and rejects conflicting adapter',
   async (provider) => {
     const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-provider-')));
@@ -627,7 +623,7 @@ test('overlapping child intake reconnects ownership and consuming EPIC reference
     referenceRunSubject(config, epic.id, 'owner/repo#21');
     const child = { ...subject, number: 21, kind: 'issue' as const, parent: 20, blockedBy: [] };
     expect((await startRun(config, runner, child, 'codex')).id).toBe(epic.id);
-    await expect(startRun(config, { ...runner, name: 'claude' }, child, 'claude')).rejects.toThrow(
+    await expect(startRun(config, { ...runner, name: 'other' }, child, 'other')).rejects.toThrow(
       /provider conflict/,
     );
     expect(launches).toBe(1);
@@ -789,55 +785,6 @@ test.each(['direct', 'validated', 'collect', 'followup', 'followup-complete'])(
     }
   },
 );
-
-test('Claude native correlation rejects missing prompt identity and duplicate submissions', async () => {
-  const { ClaudeRunner } = await import(
-    '../../packages/core/src/workflow/runtime/claude-interactive.js'
-  );
-  const directory = mkdtempSync(join(tmpdir(), 'pc-native-'));
-  const hooks = join(directory, 'claude-hooks');
-  mkdirSync(hooks);
-  const attempt = {
-    id: 'a',
-    fleet: 'f',
-    runner: 'claude',
-    role: 'worker' as const,
-    brief: 'task',
-    status: 'running' as const,
-    created: 'now',
-    directory,
-    checkout: directory,
-    conversation: 'session',
-    dispatchId: 'dispatch',
-  };
-  const runner = new ClaudeRunner();
-  const emit = (name: string, event: object) =>
-    writeFileSync(join(hooks, name + '.json'), JSON.stringify({ session_id: 'session', ...event }));
-  try {
-    emit('1', { hook_event_name: 'UserPromptSubmit', prompt: 'task' });
-    emit('2', { hook_event_name: 'Stop', last_assistant_message: 'unattributed' });
-    expect(await runner.result(attempt, 'dispatch')).toBeUndefined();
-    emit('1', { hook_event_name: 'UserPromptSubmit', prompt: 'task', prompt_id: 'correct' });
-    emit('2', { hook_event_name: 'Stop', prompt_id: 'manual', last_assistant_message: 'wrong' });
-    expect(await runner.result(attempt, 'dispatch')).toBeUndefined();
-    emit('3', {
-      hook_event_name: 'Stop',
-      prompt_id: 'correct',
-      last_assistant_message: 'accepted candidate',
-    });
-    expect(await runner.result(attempt, 'dispatch')).toBe('accepted candidate');
-    expect(await runner.collect(attempt)).toBe('accepted candidate');
-    expect(await runner.result(attempt, 'another-dispatch')).toBeUndefined();
-    emit('4', { hook_event_name: 'UserPromptSubmit', prompt: 'task', prompt_id: 'duplicate' });
-    expect(await runner.result(attempt, 'dispatch')).toBeUndefined();
-    expect(await runner.send(attempt, { id: 'msg', brief: 'followup' })).toEqual({
-      status: 'uncertain',
-      evidence: 'Claude lacks persisted tmux identity',
-    });
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
 
 test('collectBusinessTurn polls result until available or stopped', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-poll-')));

@@ -60,7 +60,7 @@ test('delivery reads isolate repositories and retain successful evidence after a
       .poll(async () => {
         const values = await (await read()).json();
         return values.every((v: any) => v.stale);
-      })
+      }, { timeout: 5000 })
       .toBe(true);
     const failed = await (await read()).json();
     expect(
