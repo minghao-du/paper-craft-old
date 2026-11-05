@@ -6,7 +6,7 @@
 
 paper-craft 将研究想法与实现连接起来：手稿会话将发现转化为范围明确的 issue，自主工作智能体负责实现和测试。人类把握研究方向并审查变更。
 
-本项目的思想、工作流设计和编排模式源自 Erick Matsen 的 [bipartite](https://github.com/matsen/bipartite)（MIT）。`pc` CLI 替代了 `bip`；TypeScript 带来了共享类型、可测试的技能模块，以及 JavaScript 生态的丰富资源。
+本项目的思想、工作流设计和编排模式源自 Erick Matsen 的 [bipartite](https://github.com/matsen/bipartite)（MIT）。`pc` CLI 替代了 `bip`；TypeScript 带来了共享类型、可测试的技能模块，以及 JavaScript 生态的丰富资源。托管工作流仅支持 `agy`（Antigravity），不支持其他智能体运行时。
 
 ## 技能
 

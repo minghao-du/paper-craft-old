@@ -6,7 +6,7 @@ Manuscript-driven agent development platform, rewritten in TypeScript.
 
 paper-craft connects research ideas and implementation: manuscript sessions turn findings into scoped issues, and autonomous workers implement and test them. Humans steer research and review changes.
 
-The ideas, workflow design and orchestration patterns originate from Erick Matsen's [bipartite](https://github.com/matsen/bipartite) (MIT). The `pc` CLI replaces `bip`; TypeScript brings shared types, testable skill modules and access to the JavaScript ecosystem.
+The ideas, workflow design and orchestration patterns originate from Erick Matsen's [bipartite](https://github.com/matsen/bipartite) (MIT). The `pc` CLI replaces `bip`; TypeScript brings shared types, testable skill modules and access to the JavaScript ecosystem. Managed workflows exclusively support `agy` (Antigravity); other agent runtimes are not supported.
 
 ## Skills
 
